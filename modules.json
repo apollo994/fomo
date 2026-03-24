@@ -1,0 +1,19 @@
+{
+    "name": "dsl2-template-pipeline",
+    "homePage": "https://example.org/dsl2-template",
+    "repos": {
+        "https://github.com/nf-core/modules.git": {
+            "modules": {
+                "nf-core": {
+                    "busco/busco": {
+                        "branch": "master",
+                        "git_sha": "3984c94cb6783f36e97df11b1b4ed0d32bfe0de7",
+                        "installed_by": [
+                            "modules"
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}
