@@ -1,3 +1,6 @@
-./assets/input/
-./assets/samplesheet.csv
-./results/
+assets/input/
+assets/samplesheet.csv
+results/
+.nextflow/
+.nextflow.log*
+
