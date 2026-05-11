@@ -1,0 +1,1 @@
+bash decoy_map_commands/commands_decoymap_Parnassius_apollo_110799_GenBank_GCA_907164705.1_5cf8d7a82e97248c710726737268d983.sh

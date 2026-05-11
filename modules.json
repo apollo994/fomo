@@ -1,6 +1,6 @@
 {
-    "name": "dsl2-template-pipeline",
-    "homePage": "https://example.org/dsl2-template",
+    "name": "fomo",
+    "homePage": "https://github.com/apollo994/fomo",
     "repos": {
         "https://github.com/nf-core/modules.git": {
             "modules": {

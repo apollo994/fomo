@@ -1,31 +1,57 @@
-# Nextflow DSL2 Template Pipeline
+# fomo
 
-Minimal template for a Nextflow pipeline that follows DSL2 structure and conventions.
+A Nextflow DSL2 pipeline that assesses genome annotation completeness by running [BUSCO v6](https://busco.ezlab.org/) in transcriptome mode on mRNA FASTA files. Targets Lepidoptera species using the `lepidoptera_odb12` lineage by default.
 
-## Structure
-
-- `main.nf`: entrypoint and top-level workflow
-- `nextflow.config`: defaults, process settings, profiles
-- `modules/local/echo/main.nf`: example process module
-- `subworkflows/local/run_echo.nf`: example subworkflow using `take/main/emit`
-- `assets/input/example.txt`: sample input file
-- `assets/samplesheet.csv`: optional sample sheet template
-
-## Run
+## Usage
 
 ```bash
+# Default run (uses input pattern from nextflow.config)
 nextflow run main.nf
+
+# Custom parameters
+nextflow run main.nf --input 'path/to/*.fa' --outdir results --lineage insects_odb10
+
+# Execution profiles
+nextflow run main.nf -profile crg     # CRG HPC cluster (Slurm + Apptainer)
+nextflow run main.nf -profile docker  # Docker containers
+nextflow run main.nf -profile conda   # Conda environment
 ```
 
-Or provide your own input:
+## Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--input` | `assets/input/*.mrna.fa` | Glob pattern for input mRNA FASTA files |
+| `--outdir` | `results/` | Output directory |
+| `--lineage` | `lepidoptera_odb12` | BUSCO lineage database |
+| `--busco_mode` | `transcriptome` | BUSCO mode (`genome` / `transcriptome` / `proteins`) |
+| `--busco_lineages_path` | `null` | Path to a pre-downloaded lineage database (skips download step) |
+
+## Pipeline structure
+
+```
+assets/input/*.mrna.fa
+        │
+        ├─► BUSCO_DOWNLOAD (lineage DB) ─────────┐
+        │                                         │
+        └─► BUSCO_BUSCO ◄────────────────────────┘
+                │
+                └─► results/busco/short_summary.*.json
+```
+
+**Modules:**
+- `modules/local/busco_download/` — fetches the BUSCO lineage dataset (1 CPU, 16 GB, 1h)
+- `modules/nf-core/busco/busco/` — runs BUSCO on each input FASTA in parallel (4 CPUs, 4 GB, 20 min per attempt)
+
+## Outputs
+
+BUSCO JSON short summaries are saved to `results/busco/`. Full tables, sequences, and logs are produced in the working directory but not published by default.
+
+## Module management
+
+nf-core modules are tracked in `modules.json`. To update:
 
 ```bash
-nextflow run main.nf --input 'path/to/input.txt' --outdir 'results'
+nf-core modules update busco/busco
+nf-core modules install <module-name>
 ```
-
-## Customize
-
-1. Replace `ECHO_FILE` with your real process logic.
-2. Add more modules under `modules/` and compose them in `subworkflows/`.
-3. Keep top-level orchestration in `main.nf`.
-4. Add profile-specific settings in `nextflow.config` (e.g., Slurm, AWS Batch).

@@ -5,29 +5,33 @@ nextflow.enable.dsl = 2
 include { BUSCO_BUSCO    } from './modules/nf-core/busco/busco/main'
 include { BUSCO_DOWNLOAD } from './modules/local/busco_download/main'
 
-workflow RUN_BUSCO {
+workflow FOMO {
     main:
     Channel
         .fromPath(params.input, checkIfExists: true)
         .map { fasta -> [ [id: fasta.baseName], fasta ] }
         .set { ch_fasta }
 
-    BUSCO_DOWNLOAD(params.lineage)
+    if (params.busco_lineages_path) {
+        ch_lineage_path = Channel.value(file(params.busco_lineages_path))
+    } else {
+        BUSCO_DOWNLOAD(params.lineage)
+        ch_lineage_path = BUSCO_DOWNLOAD.out.lineage_path
+    }
 
     BUSCO_BUSCO(
         ch_fasta,
         params.busco_mode,
         params.lineage,
-        BUSCO_DOWNLOAD.out.lineage_path,
+        ch_lineage_path,
         [],
-        false
+        true
     )
 
     emit:
-    batch_summary = BUSCO_BUSCO.out.batch_summary
-    busco_dir     = BUSCO_BUSCO.out.busco_dir
+    short_summaries_json = BUSCO_BUSCO.out.short_summaries_json
 }
 
 workflow {
-    RUN_BUSCO()
+    FOMO()
 }

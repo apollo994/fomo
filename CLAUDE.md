@@ -39,10 +39,8 @@ nextflow run main.nf -profile conda   # Conda environment
 4. `BUSCO_BUSCO` — runs BUSCO on each FASTA in parallel using the downloaded lineage
 
 **Modules:**
-- `modules/local/busco_download/` — local module to fetch BUSCO lineage datasets (2 CPUs, 4 GB, 2h)
-- `modules/nf-core/busco/busco/` — nf-core BUSCO process (8 CPUs, 16 GB, 4h); handles Augustus path configuration for containerized environments
-- `modules/local/echo/` — unused example process
-- `subworkflows/local/run_echo.nf` — unused example subworkflow
+- `modules/local/busco_download/` — local module to fetch BUSCO lineage datasets (1 CPU, 16 GB, 1h)
+- `modules/nf-core/busco/busco/` — nf-core BUSCO process (4 CPUs, 4 GB, 20 min/attempt); handles Augustus path configuration for containerized environments
 
 **Key data flow:**
 ```
