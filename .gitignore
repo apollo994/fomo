@@ -1,7 +1,4 @@
-assets/input/
-assets/samplesheet.csv
+assets/
 results/
 .nextflow/
 .nextflow.log*
-
-assets/
