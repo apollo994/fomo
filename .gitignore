@@ -2,3 +2,4 @@ assets/
 results/
 .nextflow/
 .nextflow.log*
+.claude
