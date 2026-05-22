@@ -11,7 +11,7 @@ The high level steps are:
 - reporting
 
 
-The fisrt part to implement is:
+The fisrt goal is to implement the following step
 
 ### preprocessing
 - extract lncRNA and mRNA spliced fasta sequence (legacy_script/preprocessing/00_get_feature_annotation.sh)
@@ -19,6 +19,3 @@ The fisrt part to implement is:
 - build decoy sequence (legacy_script/preprocessing/03_relocate_loci.py)
 - extract decoy spliced fasta sequence (legacy_script/preprocessing/04_get_decoy_sequence.sh
 - build preporcessing statistics (legacy_script/preprocessing/05_get_gff_statistics.sh)
-
-
-

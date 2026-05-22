@@ -1,5 +1,9 @@
-assets/
+annotation_downloads/
 results/
+work/
 .nextflow/
 .nextflow.log*
 .claude
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
