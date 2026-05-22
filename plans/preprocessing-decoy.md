@@ -2,7 +2,7 @@
 
 ## Context
 
-Step 00 is done: per source × feature_type (`lnc_RNA`, `mRNA`) the pipeline emits a filtered GFF3 and a spliced FASTA. The next preprocessing chunk produces **decoy** spliced FASTAs — source transcripts randomly relocated into the **target**'s intergenic intervals — which the projection stage uses as a negative-control track.
+Step 00 is done: per source × feature_type (`lnc_RNA`, `mRNA`) the pipeline emits a filtered GFF3 and a spliced FASTA. The next preprocessing chunk produces **decoy** spliced FASTAs — source transcripts randomly relocated into **each source's own** intergenic intervals — which the projection stage uses as a negative-control track. The decoy sequences are extracted from the source FASTA (not the target) because only source-derived sequences are aligned to the target during projection; decoys must mimic source lncRNA composition to serve as a meaningful FP control.
 
 This plan covers legacy steps **02 → 03 → 04**. Step 01 (non-overlapping lncRNA filter) and step 05 (statistics) are explicitly deferred.
 
@@ -11,58 +11,64 @@ This plan covers legacy steps **02 → 03 → 04**. Step 01 (non-overlapping lnc
 | Decision | Choice |
 |----------|--------|
 | Scope | Steps 02 (intergenic) + 03 (relocate) + 04 (decoy FASTA) |
-| Step 02 tool | bedtools `complement` (drop AGAT) |
+| Step 02 tool | bedtools `complement` on a sorted+merged gene BED (drop AGAT) |
+| Step 02 placement | Per **source** species (N runs), not target — decoys serve as source-side FP controls |
 | Step 03 implementation | Refactor `legacy_scripts/preprocessing/03_relocate_loci.py` with argparse, then ship in `bin/` |
 | Relocated feature types | Both `lnc_RNA` and `mRNA` |
-| Source ↔ target pairing | Each source × single target (cartesian; current single-target model) |
-| Decoy FASTA module | `include { GFFREAD as EXTRACT_DECOY_SEQUENCES }` (second alias) |
+| Chromosome selection | Weighted by total eligible intergenic length per chromosome (not uniform) |
+| Decoy marker | `decoy=true` GFF3 attribute on gene + transcript (NOT a `*_decoy` ftype suffix — gffread doesn't recognize non-standard transcript types) |
+| Empty-input behavior | Emit empty GFF3 with header + warning to stderr (exit 0) — pipeline keeps running when test data has no models on a chromosome |
+| Decoy FASTA module | `include { GFFREAD as EXTRACT_DECOY_SEQUENCES }` (second alias); uses source FASTA |
 | Step 01 (non-overlap) | Skipped — revisit after projection results |
 | Step 05 (statistics) | Out of scope for this PR |
 
 ## Channel topology
 
 ```
-ch_input.target (singleton) [meta, fasta, gff3]
+ch_sources [meta, fasta, gff3] × N
    │
-   ├─ GUNZIP_TARGET_FASTA ─► [meta, fa]
+   ├─ GUNZIP_FASTA ──► [meta(source), fa]
    │       │
-   │       ├─ SAMTOOLS_FAIDX ──► [meta, fai]
-   │       │
-   │       └────────────────────────────┐
-   │                                    │
-   └─ GFF_TO_GENE_BED ──► [meta, bed]   │
-                  │                     │
-                  └─ BEDTOOLS_COMPLEMENT(bed, fai) ──► ch_intergenic [meta_target, intergenic.bed]
+   │       └─ SAMTOOLS_FAIDX(fa, get_sizes=true) ──► [meta, sizes]
+   │
+   └─ GFF_TO_GENE_BED ──► [meta(source), sorted+merged genes.bed]
+                              │
+                              × (join by meta.id) sizes
+                              │
+                              └─ BEDTOOLS_COMPLEMENT ──► ch_intergenic [meta(source), intergenic.bed]
 
-FILTER_TRANSCRIPT.out.gff3 [meta(source,ftype), gff3]
-                  ×
-ch_intergenic (broadcast)
+FILTER_TRANSCRIPT.out.gff3 [meta(source, ftype, decoy:false), gff3]
+                  × (join by meta.id) ch_intergenic
                   │
-                  └─ RELOCATE_LOCI ──► [meta(source,ftype,decoy:true), decoy.gff3]
-                                          │
-                                          × GUNZIP_TARGET_FASTA.out.gunzip (broadcast)
-                                          │
-                                          └─ EXTRACT_DECOY_SEQUENCES ──► [meta, decoy.spliced.fasta]
+                  └─ RELOCATE_LOCI ──► [meta(source, ftype, decoy:true), decoy.gff3]
+                                              │
+                                              × (join by meta.id) GUNZIP_FASTA.out.gunzip
+                                              │
+                                              └─ EXTRACT_DECOY_SEQUENCES ──► [meta, decoy.spliced.fasta]
+
+EXTRACT_SEQUENCES.out.gffread_fasta ──┐
+                                       ├─ mix ─► RENAME_FASTA_HEADERS ──► [meta, *.renamed.fasta]
+EXTRACT_DECOY_SEQUENCES.out ──────────┘                                   (split by meta.decoy on emit)
 ```
 
-Per run with N sources: 1 target gunzip + 1 faidx + 1 gene-BED + 1 complement + 2N relocate tasks + 2N decoy gffread tasks.
+Per run with N sources: N gunzip + N faidx + N gene-BED + N complement + 2N filter + 2N extract + 2N relocate + 2N decoy gffread + 4N rename.
 
-## Step 02 — Target intergenic intervals
+## Step 02 — Per-source intergenic intervals
 
-Three modules, nf-core-style decomposition:
+Three modules, nf-core-style decomposition, **run once per source species**:
 
-1. **`GUNZIP_TARGET_FASTA`** — reuse the existing `GUNZIP` nf-core module via a new alias (`include { GUNZIP as GUNZIP_TARGET_FASTA }`). Target FASTA needs decompressing once for both `SAMTOOLS_FAIDX` and `EXTRACT_DECOY_SEQUENCES`.
-2. **`SAMTOOLS_FAIDX`** — nf-core module (`nf-core modules install samtools/faidx`). Output: `.fai` (chrom sizes derivable as `cut -f1,2`).
-3. **`GFF_TO_GENE_BED`** — new local module (`modules/local/gff_to_gene_bed.nf`), ubuntu container. Two-line awk:
+1. **`SAMTOOLS_FAIDX`** — nf-core module. Indexes each decompressed source FASTA (reusing `GUNZIP_FASTA.out.gunzip` from step 00) with `get_sizes = true` to emit a `.sizes` file (`cut -f 1,2` of `.fai`).
+2. **`GFF_TO_GENE_BED`** — local module (`modules/local/gff_to_gene_bed.nf`), ubuntu container. Pipeline runs with `set -euo pipefail`:
    ```bash
-   gunzip -c ${gff3} 2>/dev/null || cat ${gff3} \
-     | awk -F'\t' 'BEGIN{OFS="\t"} $0!~/^#/ && ($3=="gene" || $3=="pseudogene" || $3=="ncRNA_gene") { print $1, $4-1, $5 }' \
-     | sort -k1,1 -k2,2n > ${prefix}.genes.bed
+   gunzip -c "${gff3}" | awk '... gene/pseudogene/ncRNA_gene → BED3 ...' \
+       | sort -k1,1 -k2,2n \
+       | awk '... merge overlapping/adjacent intervals ...' \
+       > ${prefix}.genes.bed
    ```
-   No external deps beyond coreutils. Output: `[meta, bed]`.
-4. **`BEDTOOLS_COMPLEMENT`** — nf-core module (`nf-core modules install bedtools/complement`). Inputs: sorted gene BED + genome file. Note: the nf-core module accepts a sizes file; the recipe in `modules.config` should set `ext.args2` (or pre-build a chrom-sizes file from `.fai`) — exact wiring to be confirmed against the installed module at implementation time.
+   The inline awk-based merge replaces a separate `bedtools merge` call; required because Ensembl annotations have overlapping gene/pseudogene/ncRNA_gene records that would otherwise break `bedtools complement`.
+3. **`BEDTOOLS_COMPLEMENT`** — nf-core module. Inputs: sorted+merged gene BED + `.sizes` file. Output: per-source intergenic BED.
 
-Output: `ch_intergenic = [meta_target, intergenic.bed]`. Singleton, broadcast downstream via `.first()` or `combine`.
+Channel construction pairs `GFF_TO_GENE_BED.out.bed` with `SAMTOOLS_FAIDX.out.sizes` by `meta.id` using `combine(by:0)` + `multiMap` to keep emission pairing safe.
 
 ## Step 03 — Relocate source loci
 
@@ -71,15 +77,16 @@ Output: `ch_intergenic = [meta_target, intergenic.bed]`. Singleton, broadcast do
 Copied from legacy, with these changes:
 - Replace positional argv with `argparse`:
   - `--input-gff` (required) — source filtered GFF3
-  - `--intergenic-bed` (required) — target intergenic BED
+  - `--intergenic-bed` (required) — source-species intergenic BED
   - `--output-gff` (required)
   - `--seed` (int, optional) — deterministic random placement
   - `--feature-type` (default `lnc_RNA`) — drives `transcript_type` in `read_gff3_models`
   - `--exon-type` (default `exon`)
   - `--min-intergenic-length` (int, default 0) — drop intervals shorter than this before random placement
 - Keep all relocation logic (`relocate_model`, `remove_subinterval`, etc.) intact.
-- Keep the `gene_decoy` / `*_decoy` ftype suffix on emitted features (legacy behavior — preserves downstream traceability).
-- Print summary line to stderr (already present) and exit non-zero if zero models could be relocated (to surface bad inputs early).
+- Chromosome placement: legacy script required `source_chrom == target_chrom`, which always fails cross-species. Replaced with weighted random selection across all source chromosomes that have at least one interval ≥ transcript span (weight = total eligible intergenic length on that chromosome, so big chromosomes receive proportionally more decoys).
+- **Decoy marker**: emit standard transcript ftypes (`lnc_RNA`, `mRNA`) and standard `gene` ftype, with a `decoy=true` attribute on both gene and transcript records. (The original plan called for `*_decoy` ftypes, but gffread does not recognize non-standard transcript types and silently emits zero records.)
+- Print summary line to stderr (already present). On zero models relocated: emit a valid empty GFF3 (header only) and warn to stderr; do NOT exit non-zero, since with subsampled test data a single chromosome may legitimately contain zero transcripts of a given feature type.
 
 ### Module (`modules/local/relocate_loci.nf`)
 
@@ -128,14 +135,15 @@ RELOCATE_LOCI(ch_relocate)
 
 ## Step 04 — Extract decoy spliced FASTA
 
-Same shape as existing EXTRACT_SEQUENCES, with the alias `EXTRACT_DECOY_SEQUENCES` and the **target** fasta as the genome:
+Same shape as existing EXTRACT_SEQUENCES, with the alias `EXTRACT_DECOY_SEQUENCES` and the **source** fasta as the genome (the decoy GFF3's seqids are source chromosome names; sequence content must come from the source assembly):
 
 ```groovy
 include { GFFREAD as EXTRACT_DECOY_SEQUENCES } from '../../modules/nf-core/gffread/main'
 
 RELOCATE_LOCI.out.gff3
-    .combine( GUNZIP_TARGET_FASTA.out.gunzip.map { _m, fa -> fa } )  // broadcast
-    .multiMap { meta, gff3, fa ->
+    .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
+    .combine( GUNZIP_FASTA.out.gunzip.map { m, fa -> tuple(m.id, fa) }, by: 0 )
+    .multiMap { id, meta, gff3, fa ->
         gff:   tuple(meta, gff3)
         fasta: fa
     }
@@ -144,12 +152,13 @@ RELOCATE_LOCI.out.gff3
 EXTRACT_DECOY_SEQUENCES(ch_decoy_extract.gff, ch_decoy_extract.fasta)
 ```
 
+## Step 05 — Rename FASTA headers
+
+After both extract steps, a local `RENAME_FASTA_HEADERS` module rewrites each FASTA header to a pipe-delimited form `<transcript_id>|<type>|<species>` so downstream alignment hits can be traced back to source transcript + type + species. The same module handles source and decoy FASTAs — `meta.decoy` and `meta.feature_type` drive the type label (`lncRNA`, `mRNA`, `decoy_lncRNA`, `decoy_mRNA`). Mix the two extract outputs into one channel and split back on `emit` via `.filter { meta, _ -> meta.decoy }`.
+
 ## `conf/modules.config` additions
 
 ```groovy
-withName: 'FOMO:PREPROCESSING:GUNZIP_TARGET_FASTA' {
-    ext.prefix = { "${meta.id}" }
-}
 withName: 'FOMO:PREPROCESSING:GFF_TO_GENE_BED' {
     ext.prefix = { "${meta.id}" }
 }
@@ -157,49 +166,33 @@ withName: 'FOMO:PREPROCESSING:BEDTOOLS_COMPLEMENT' {
     ext.prefix = { "${meta.id}.intergenic" }
 }
 withName: 'FOMO:PREPROCESSING:RELOCATE_LOCI' {
-    ext.prefix = { "${meta.id}.${meta.feature_type}.decoy" }
+    ext.prefix = { "${meta.id}.${meta.feature_type}" }
 }
 withName: 'FOMO:PREPROCESSING:EXTRACT_DECOY_SEQUENCES' {
     ext.args   = '-w'
     ext.prefix = { "${meta.id}.${meta.feature_type}.decoy.spliced" }
 }
+withName: 'FOMO:PREPROCESSING:RENAME_FASTA_HEADERS' {
+    ext.prefix = { "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.spliced" }
+}
 ```
 
 ## Subworkflow integration
 
-`subworkflows/local/preprocessing.nf` signature becomes:
+`subworkflows/local/preprocessing.nf` signature stays as `take: ch_sources` — the target is not needed for the decoy track (target FASTA is consumed in later projection stages). Per-source intergenic + decoy + rename steps slot in after the existing source path.
+
+Emit channels:
 
 ```groovy
-workflow PREPROCESSING {
-    take:
-    ch_sources   // [ meta, fasta, gff3 ]
-    ch_target    // [ meta, fasta, gff3 ]  (singleton)
-
-    main:
-    // ... existing source path (GUNZIP_FASTA, FILTER_TRANSCRIPT, EXTRACT_SEQUENCES) ...
-
-    // Target path → intergenic BED
-    GUNZIP_TARGET_FASTA( ch_target.map { meta, fa, _g -> tuple(meta, fa) } )
-    SAMTOOLS_FAIDX( GUNZIP_TARGET_FASTA.out.gunzip )
-    GFF_TO_GENE_BED( ch_target.map { meta, _f, gff3 -> tuple(meta, gff3) } )
-    BEDTOOLS_COMPLEMENT(
-        GFF_TO_GENE_BED.out.bed,
-        SAMTOOLS_FAIDX.out.fai.map { _m, fai -> fai }
-    )
-
-    // Decoy track
-    // ... RELOCATE_LOCI + EXTRACT_DECOY_SEQUENCES per topology above ...
-
-    emit:
-    spliced_fasta       = EXTRACT_SEQUENCES.out.gffread_fasta
-    filtered_gff3       = FILTER_TRANSCRIPT.out.gff3
-    intergenic_bed      = BEDTOOLS_COMPLEMENT.out.bed
-    decoy_gff3          = RELOCATE_LOCI.out.gff3
-    decoy_spliced_fasta = EXTRACT_DECOY_SEQUENCES.out.gffread_fasta
-}
+emit:
+spliced_fasta       = RENAME_FASTA_HEADERS.out.fasta.filter { meta, fa -> !meta.decoy }
+filtered_gff3       = FILTER_TRANSCRIPT.out.gff3
+intergenic_bed      = BEDTOOLS_COMPLEMENT.out.bed
+decoy_gff3          = RELOCATE_LOCI.out.gff3
+decoy_spliced_fasta = RENAME_FASTA_HEADERS.out.fasta.filter { meta, fa -> meta.decoy }
 ```
 
-`workflows/fomo.nf` already branches `ch_input.target` / `ch_input.source` — pass both into `PREPROCESSING`.
+The `decoy: false` flag is set explicitly on the source path (in the same `.map` that adds `feature_type`) so downstream filters can rely on `meta.decoy` being a proper boolean rather than relying on null-truthiness.
 
 ## Files to add
 
@@ -207,27 +200,30 @@ workflow PREPROCESSING {
 bin/relocate_loci.py                       # refactored from legacy 03_relocate_loci.py
 modules/local/gff_to_gene_bed.nf
 modules/local/relocate_loci.nf
-modules/nf-core/samtools/faidx/main.nf     # via `nf-core modules install`
+modules/local/rename_fasta_headers.nf
+modules/nf-core/samtools/faidx/main.nf     # fetched from nf-core/modules master
 modules/nf-core/samtools/faidx/environment.yml
 modules/nf-core/bedtools/complement/main.nf
 modules/nf-core/bedtools/complement/environment.yml
 ```
 
-Files to edit: `subworkflows/local/preprocessing.nf`, `workflows/fomo.nf`, `conf/modules.config`, `conf/test.config` (add `params.relocate_seed = 42`).
+Files to edit: `subworkflows/local/preprocessing.nf`, `conf/modules.config`, `nextflow.config` (add `params.relocate_seed = 42` as the global default).
 
 ## Verification
 
 1. `nextflow run . -profile test,docker` succeeds.
 2. Outputs under `results/`:
-   - 1× `<target>.intergenic.bed` (non-empty, sorted, no overlap with target gene intervals)
-   - 8× `<source>.<ftype>.decoy.gff3` (4 sources × 2 ftypes)
-   - 8× `<source>.<ftype>.decoy.spliced.fasta`
+   - N× `<source>.intergenic.bed` (one per source species, no overlap with that source's gene intervals)
+   - 2N× `<source>.<ftype>.decoy.gff3`
+   - 2N× `<source>.<ftype>.decoy.spliced.fasta`
+   - 4N× `<source>.<ftype>[.decoy].spliced.renamed.fasta` (source + decoy variants)
 3. Sanity checks:
-   - `bedtools intersect -a <target>.intergenic.bed -b <gene-bed> -u | wc -l` → 0
-   - For each decoy GFF3: every transcript's `seqid` matches the target's chromosome names (not source).
-   - Decoy spliced FASTA record count matches transcript count in matching decoy GFF3.
-   - Re-running with the same `--seed` produces byte-identical decoy GFF3 (modulo header timestamps).
-4. Compare a single decoy GFF3 against legacy output of `03_relocate_loci.py` on the same inputs+seed → structurally identical (exon block shapes preserved, only coordinates shifted).
+   - For each source S: `bedtools intersect -a S.intergenic.bed -b S.genes.bed -u | wc -l` → 0
+   - For each decoy GFF3: every transcript's `seqid` is a chromosome of the **same source species** (not target, not another source)
+   - Decoy spliced FASTA record count matches transcript count in matching decoy GFF3
+   - Renamed FASTA record count matches pre-rename record count (no records dropped)
+   - Renamed headers match `^>\S+\|(lncRNA|mRNA|decoy_lncRNA|decoy_mRNA)\|<species>$`
+   - Re-running with the same `--seed` produces byte-identical decoy GFF3
 
 ## Deliberate omissions
 

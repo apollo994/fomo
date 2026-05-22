@@ -295,16 +295,22 @@ def main() -> None:
         old_span_s, old_span_e = transcript_span(m.exons)
         t_len = old_span_e - old_span_s + 1
 
-        # Collect target chromosomes that have at least one interval large enough
-        eligible_chroms = [
-            chrom for chrom, ivs in intergenic.items()
-            if any(interval_len(iv) >= t_len for iv in ivs)
-        ]
-        if not eligible_chroms:
+        # Weight chromosome selection by total eligible intergenic length so
+        # large chromosomes receive proportionally more decoys (instead of
+        # uniform sampling, which oversamples small contigs).
+        chrom_weights = []
+        for chrom, ivs in intergenic.items():
+            eligible_len = sum(interval_len(iv) for iv in ivs if interval_len(iv) >= t_len)
+            if eligible_len > 0:
+                chrom_weights.append((chrom, eligible_len))
+
+        if not chrom_weights:
             skipped += 1
             continue
 
-        tgt_chrom = random.choice(eligible_chroms)
+        chroms, weights = zip(*chrom_weights)
+        tgt_chrom = random.choices(chroms, weights=weights, k=1)[0]
+
         idx = choose_region_for_length(intergenic[tgt_chrom], t_len)
         if idx is None:
             skipped += 1
@@ -319,7 +325,7 @@ def main() -> None:
 
     with open(args.output_gff, "w", encoding="utf-8") as out:
         out.write("##gff-version 3\n")
-        out.write(f"##source=relocate_loci\n")
+        out.write("##source=relocate_loci\n")
         out.write(f"##feature_type={args.feature_type}\n")
         out.write(f"##relocated_models={len(relocated)}\n")
         out.write(f"##skipped_models={skipped}\n")

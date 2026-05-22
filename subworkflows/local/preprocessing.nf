@@ -24,7 +24,7 @@ workflow PREPROCESSING {
     ch_filter_input = ch_sources
         .combine(Channel.of('lnc_RNA', 'mRNA'))
         .map { meta, fasta, gff3, ftype ->
-            tuple(meta + [feature_type: ftype], gff3, ftype)
+            tuple(meta + [feature_type: ftype, decoy: false], gff3, ftype)
         }
 
     FILTER_TRANSCRIPT(ch_filter_input)

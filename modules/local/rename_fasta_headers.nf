@@ -9,6 +9,7 @@ process RENAME_FASTA_HEADERS {
 
     output:
     tuple val(meta), path("*.renamed.fasta"), emit: fasta
+    tuple val("${task.process}"), val('awk'), eval('awk --version 2>&1 | head -n1'), topic: versions, emit: versions_awk
 
     when:
     task.ext.when == null || task.ext.when
@@ -18,6 +19,8 @@ process RENAME_FASTA_HEADERS {
     def ftype  = meta.feature_type == 'lnc_RNA' ? 'lncRNA' : meta.feature_type
     def type   = meta.decoy ? "decoy_${ftype}" : ftype
     """
+    set -euo pipefail
+
     awk -v type="${type}" -v species="${meta.id}" '
         /^>/ {
             split(\$1, a, ":")
@@ -27,5 +30,11 @@ process RENAME_FASTA_HEADERS {
         }
         { print }
     ' ${fasta} > ${prefix}.renamed.fasta
+    """
+
+    stub:
+    def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
+    """
+    touch ${prefix}.renamed.fasta
     """
 }

@@ -9,6 +9,7 @@ process RELOCATE_LOCI {
 
     output:
     tuple val(meta), path("*.decoy.gff3"), emit: gff3
+    tuple val("${task.process}"), val('python'), eval('python3 --version 2>&1 | sed "s/Python //"'), topic: versions, emit: versions_python
 
     when:
     task.ext.when == null || task.ext.when
@@ -25,5 +26,11 @@ process RELOCATE_LOCI {
         --feature-type ${meta.feature_type} \\
         ${seed} \\
         ${args}
+    """
+
+    stub:
+    def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
+    """
+    touch ${prefix}.decoy.gff3
     """
 }
