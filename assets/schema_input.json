@@ -1,0 +1,39 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/fomo/master/assets/schema_input.json",
+    "title": "FOMO samplesheet schema",
+    "description": "Schema for the FOMO pipeline samplesheet",
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "species": {
+                "type": "string",
+                "pattern": "^\\S+$",
+                "errorMessage": "Species name must be a non-empty string with no spaces",
+                "meta": ["id"]
+            },
+            "role": {
+                "type": "string",
+                "enum": ["source", "target"],
+                "errorMessage": "Role must be either 'source' or 'target'",
+                "meta": ["role"]
+            },
+            "fasta": {
+                "type": "string",
+                "format": "file-path",
+                "exists": true,
+                "pattern": "^\\S+\\.(fa|fasta|fna)(\\.gz)?$",
+                "errorMessage": "FASTA file must exist and end in .fa, .fasta, or .fna (optionally .gz)"
+            },
+            "gff3": {
+                "type": "string",
+                "format": "file-path",
+                "exists": true,
+                "pattern": "^\\S+\\.gff3?(\\.gz)?$",
+                "errorMessage": "GFF3 file must exist and end in .gff or .gff3 (optionally .gz)"
+            }
+        },
+        "required": ["species", "role", "fasta", "gff3"]
+    }
+}

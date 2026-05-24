@@ -1,28 +1,24 @@
-include { PREPROCESSING } from '../subworkflows/local/preprocessing'
+include { PREPROCESSING     } from '../subworkflows/local/preprocessing'
+include { STATS             } from '../subworkflows/local/stats'
+include { samplesheetToList } from 'plugin/nf-schema'
 
 workflow FOMO {
-    // Parse samplesheet
     Channel
-        .fromPath(params.input, checkIfExists: true)
-        .splitCsv(header: true)
-        .map { row ->
-            assert row.species : "Samplesheet row is missing 'species': ${row}"
-            assert row.role in ['source', 'target'] : "Invalid role '${row.role}' for ${row.species} (must be 'source' or 'target')"
-            assert row.fasta : "Samplesheet row for ${row.species} is missing 'fasta'"
-            assert row.gff3  : "Samplesheet row for ${row.species} is missing 'gff3'"
-
-            def meta  = [id: row.species, role: row.role]
-            def fasta = row.fasta.startsWith('/') ? file(row.fasta, checkIfExists: true)
-                                                   : file("${projectDir}/${row.fasta}", checkIfExists: true)
-            def gff3  = row.gff3.startsWith('/') ? file(row.gff3, checkIfExists: true)
-                                                  : file("${projectDir}/${row.gff3}", checkIfExists: true)
-            tuple(meta, fasta, gff3)
-        }
-        .branch {
-            target: it[0].role == 'target'
-            source: it[0].role == 'source'
+        .fromList(samplesheetToList(params.input, "${projectDir}/assets/schema_input.json"))
+        .branch { meta, fasta, gff3 ->
+            target: meta.role == 'target'
+            source: meta.role == 'source'
         }
         .set { ch_input }
 
     PREPROCESSING(ch_input.source)
+
+    STATS(
+        ch_input.source,
+        ch_input.target,
+        PREPROCESSING.out.filtered_gff3,
+        PREPROCESSING.out.decoy_gff3,
+        PREPROCESSING.out.spliced_fasta,
+        PREPROCESSING.out.decoy_spliced_fasta
+    )
 }
