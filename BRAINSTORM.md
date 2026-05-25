@@ -23,7 +23,15 @@ The high level steps are:
 - convert bam to gff (legacy_script/minimap_transfer/01_convert_bam_to_gff.sh)
 
 
+### benchmarking
+- run gffcompare (gffcompare -M --no-exon-merge)
+- extract gffcompare statistics for report
+
 ### statistics 
 - preprocessing statistics
 - extract alignment metrics
 - extract projected gff metrics
+
+### report
+Build a report for each step of the pipeline. Use multiQC when available otherwise build a custom report.
+- if multiQC module is not availabl

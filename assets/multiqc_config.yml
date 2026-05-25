@@ -13,6 +13,7 @@ extra_fn_clean_exts:
   - ".renamed"
   - ".spliced.fasta"
   - ".spliced"
+  - ".gffcompare"
   - ".stats"
   - "_mqc"
   - "_summary"

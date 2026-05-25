@@ -13,6 +13,7 @@ workflow STATS {
     ch_decoy_gff3          // [ meta(decoy:true,  feature_type), gff3 ] × 2N
     ch_spliced_fasta       // [ meta(decoy:false, feature_type), fasta ] × 2N
     ch_decoy_spliced_fasta // [ meta(decoy:true,  feature_type), fasta ] × 2N
+    ch_gffcompare_stats    // [ meta, *.stats ] × 32  (16 with-M + 16 no-M)
 
     main:
 
@@ -53,6 +54,7 @@ workflow STATS {
     ch_mqc_files = SEQKIT_TO_MQC.out.mqc.map { _m, t -> t }
         .mix(AGAT_TO_MQC.out.summary.map { _m, t -> t })
         .mix(AGAT_TO_MQC.out.full   .map { _m, t -> t })
+        .mix(ch_gffcompare_stats     .map { _m, s -> s })
         .collect()
 
     ch_mqc_input = ch_mqc_files.map { files ->
