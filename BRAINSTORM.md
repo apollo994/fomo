@@ -11,11 +11,19 @@ The high level steps are:
 - reporting
 
 
-The fisrt goal is to implement the following step
-
 ### preprocessing
 - extract lncRNA and mRNA spliced fasta sequence (legacy_script/preprocessing/00_get_feature_annotation.sh)
 - extract intergenic intervalas (legacy_script/preprocessing/02_get_intergenic_intervals.sh)
 - build decoy sequence (legacy_script/preprocessing/03_relocate_loci.py)
 - extract decoy spliced fasta sequence (legacy_script/preprocessing/04_get_decoy_sequence.sh
 - build preporcessing statistics (legacy_script/preprocessing/05_get_gff_statistics.sh)
+
+### projection (mapping)
+- map fasta sequence (legacy_script/minimap_transfer/00_run_minimap_base.sh)
+- convert bam to gff (legacy_script/minimap_transfer/01_convert_bam_to_gff.sh)
+
+
+### statistics 
+- preprocessing statistics
+- extract alignment metrics
+- extract projected gff metrics
