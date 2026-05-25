@@ -14,6 +14,12 @@ workflow FOMO {
 
     PREPROCESSING(ch_input.source)
 
+    PROJECTION(
+        ch_input.target,
+        PREPROCESSING.out.spliced_fasta,
+        PREPROCESSING.out.decoy_spliced_fasta
+    )
+
     STATS(
         ch_input.source,
         ch_input.target,
@@ -23,9 +29,4 @@ workflow FOMO {
         PREPROCESSING.out.decoy_spliced_fasta
     )
 
-    PROJECTION(
-        ch_input.target,
-        PREPROCESSING.out.spliced_fasta,
-        PREPROCESSING.out.decoy_spliced_fasta
-    )
 }
