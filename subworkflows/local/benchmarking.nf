@@ -1,7 +1,6 @@
 include { GUNZIP as GUNZIP_TARGET_GFF        } from '../../modules/nf-core/gunzip/main'
 include { FILTER_TRANSCRIPT as FILTER_TARGET } from '../../modules/local/filter_transcript'
-include { GFFCOMPARE as GFFCOMPARE_M         } from '../../modules/nf-core/gffcompare/main'
-include { GFFCOMPARE as GFFCOMPARE_NOM       } from '../../modules/nf-core/gffcompare/main'
+include { GFFCOMPARE                         } from '../../modules/nf-core/gffcompare/main'
 
 workflow BENCHMARKING {
     take:
@@ -31,31 +30,18 @@ workflow BENCHMARKING {
             by: 0
         )
 
-    // Single multiMap with 6 branches — 3 per gffcompare alias — so that each
-    // process receives its own independent 16-element channel derived from one
-    // pass through ch_paired.
     ch_split = ch_paired.multiMap { _ftype, q_meta, q_gff, r_gff ->
-        query_m:       tuple(q_meta, q_gff)
-        empty_ref_m:   tuple([id: q_meta.target_id], [], [])
-        reference_m:   tuple([id: "${q_meta.target_id}.${q_meta.feature_type}"], r_gff)
-        query_nom:     tuple(q_meta, q_gff)
-        empty_ref_nom: tuple([id: q_meta.target_id], [], [])
-        reference_nom: tuple([id: "${q_meta.target_id}.${q_meta.feature_type}"], r_gff)
+        query:     tuple(q_meta, q_gff)
+        empty_ref: tuple([id: q_meta.target_id], [], [])
+        reference: tuple([id: "${q_meta.target_id}.${q_meta.feature_type}"], r_gff)
     }
 
-    GFFCOMPARE_M(
-        ch_split.query_m,
-        ch_split.empty_ref_m,
-        ch_split.reference_m
-    )
-
-    GFFCOMPARE_NOM(
-        ch_split.query_nom,
-        ch_split.empty_ref_nom,
-        ch_split.reference_nom
+    GFFCOMPARE(
+        ch_split.query,
+        ch_split.empty_ref,
+        ch_split.reference
     )
 
     emit:
-    stats_m   = GFFCOMPARE_M.out.stats    // [ meta, *.stats ] × 16
-    stats_nom = GFFCOMPARE_NOM.out.stats  // [ meta, *.stats ] × 16
+    stats = GFFCOMPARE.out.stats    // [ meta, *.stats ] × 16
 }
