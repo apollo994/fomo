@@ -1,7 +1,9 @@
-include { GUNZIP as GUNZIP_TARGET } from '../../modules/nf-core/gunzip/main'
-include { MINIMAP2_INDEX          } from '../../modules/nf-core/minimap2/index/main'
-include { MINIMAP2_ALIGN          } from '../../modules/nf-core/minimap2/align/main'
-include { BAM_TO_GFF              } from '../../modules/local/bam_to_gff'
+include { GUNZIP as GUNZIP_TARGET                  } from '../../modules/nf-core/gunzip/main'
+include { MINIMAP2_INDEX                           } from '../../modules/nf-core/minimap2/index/main'
+include { MINIMAP2_ALIGN                           } from '../../modules/nf-core/minimap2/align/main'
+include { BAM_TO_GFF                               } from '../../modules/local/bam_to_gff'
+include { AGAT_SPSTATISTICS as AGAT_PROJECTED      } from '../../modules/local/agat_spstatistics'
+include { AGAT_TO_MQC       as AGAT_PROJECTED_TO_MQC } from '../../modules/local/agat_to_mqc'
 
 workflow PROJECTION {
     take:
@@ -44,8 +46,26 @@ workflow PROJECTION {
 
     BAM_TO_GFF(MINIMAP2_ALIGN.out.bam)
 
+    // ── Statistics on projected models ───────────────────────────────────────
+    // Pair each projected GFF with the (gunzipped) target genome FASTA so
+    // AGAT can compute genome-coverage metrics via --gs. Join by target_id.
+    ch_projected_agat_in = BAM_TO_GFF.out.gff3
+        .map { meta, gff -> tuple(meta.target_id, meta + [kind: 'projected'], gff) }
+        .combine(
+            GUNZIP_TARGET.out.gunzip.map { meta, fa -> tuple(meta.id, fa) },
+            by: 0
+        )
+        .map { _id, meta, gff, fa -> tuple(meta, gff, fa) }
+
+    AGAT_PROJECTED(ch_projected_agat_in)
+    AGAT_PROJECTED_TO_MQC(AGAT_PROJECTED.out.stats_yaml)
+
+    ch_mqc_files = AGAT_PROJECTED_TO_MQC.out.tsv
+
     emit:
-    bam   = MINIMAP2_ALIGN.out.bam    // [ meta, *.bam     ]
-    index = MINIMAP2_ALIGN.out.index  // [ meta, *.bam.bai ]
-    gff3  = BAM_TO_GFF.out.gff3       // [ meta, *.gff3    ]
+    bam          = MINIMAP2_ALIGN.out.bam      // [ meta, *.bam     ]
+    index        = MINIMAP2_ALIGN.out.index    // [ meta, *.bam.bai ]
+    gff3         = BAM_TO_GFF.out.gff3         // [ meta, *.gff3    ]
+    target_fasta = GUNZIP_TARGET.out.gunzip    // [ meta, fasta     ] × 1
+    mqc_files    = ch_mqc_files                // [ meta, *_mqc.tsv ] × 16
 }

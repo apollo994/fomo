@@ -12,27 +12,36 @@ process AGAT_TO_MQC {
     tuple val(meta), path(yaml)
 
     output:
-    tuple val(meta), path("*_summary_mqc.tsv"), emit: summary
-    tuple val(meta), path("*_full_mqc.tsv"),    emit: full
+    tuple val(meta), path("*_mqc.tsv"), emit: tsv
     tuple val("${task.process}"), val('python'), eval('python3 --version 2>&1 | sed "s/Python //"'), topic: versions, emit: versions_python
 
     when:
     task.ext.when == null || task.ext.when
 
     script:
-    def prefix = task.ext.prefix ?: "${meta.id}.${meta.kind}"
-    def sample = task.ext.sample_name ?: prefix
+    def prefix     = task.ext.prefix     ?: "${meta.id}.${meta.kind}"
+    def sample     = task.ext.sample_name ?: prefix
+    def role       = task.ext.role       ?: 'source'
+    def section_id = task.ext.section_id ?: 'agat_input'
+    // Filename suffix carries the section so MultiQC's sp patterns can match
+    // each section uniquely without overlap (e.g. agat_input vs agat_projection).
+    def suffix     = section_id == 'agat_projection' ? '_agat_projection_mqc.tsv'
+                                                     : '_agat_input_mqc.tsv'
     """
     agat_to_mqc.py \\
         --input ${yaml} \\
         --name ${sample} \\
-        --summary-output ${prefix}_summary_mqc.tsv \\
-        --full-output ${prefix}_full_mqc.tsv
+        --role ${role} \\
+        --section-id ${section_id} \\
+        --output ${prefix}${suffix}
     """
 
     stub:
-    def prefix = task.ext.prefix ?: "${meta.id}.${meta.kind}"
+    def prefix     = task.ext.prefix     ?: "${meta.id}.${meta.kind}"
+    def section_id = task.ext.section_id ?: 'agat_input'
+    def suffix     = section_id == 'agat_projection' ? '_agat_projection_mqc.tsv'
+                                                     : '_agat_input_mqc.tsv'
     """
-    touch ${prefix}_summary_mqc.tsv ${prefix}_full_mqc.tsv
+    touch ${prefix}${suffix}
     """
 }

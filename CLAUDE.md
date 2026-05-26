@@ -51,4 +51,23 @@ The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and 
 - **bedtools** — genomic interval arithmetic
 - **samtools** — BAM handling
 - **gffcompare** — annotation comparison for benchmarking
-- **
+
+# Reporting conventions
+
+Every subworkflow that emits statistics:
+- Runs its stat producers (AGAT, SeqKit, samtools stats, gffcompare, ...) and any
+  required adapter modules (modules named `*_TO_MQC` that emit `*_mqc.tsv` files).
+- Emits a `mqc_files` channel of shape `tuple(meta, path)` — same shape as the rest
+  of the pipeline so the meta is available for tracing.
+- Subworkflows with no stats emit `Channel.empty()` as `mqc_files`.
+
+The top-level workflow mixes `mqc_files` across subworkflows and passes the union to
+`REPORTING`. `REPORTING` strips meta, collects paths, and is the only place that calls
+`MULTIQC`.
+
+MultiQC config lives in two files under `assets/multiqc/`:
+- `main.yml` — top-level layout (title, comment, `extra_fn_clean_exts`, ordering).
+- `sections.yml` — `custom_data` blocks + `sp` patterns for every custom section.
+
+When a new tool produces statistics: add its `custom_data` + `sp` entries to
+`sections.yml`, and add any new filename suffixes to `extra_fn_clean_exts` in `main.yml`.

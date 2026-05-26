@@ -7,7 +7,7 @@ process AGAT_SPSTATISTICS {
         : 'quay.io/biocontainers/agat:1.6.1--pl5321hdfd78af_1'}"
 
     input:
-    tuple val(meta), path(gff)
+    tuple val(meta), path(gff), path(genome)
 
     output:
     tuple val(meta), path("*.stats.txt"),  emit: stats_txt
@@ -20,12 +20,15 @@ process AGAT_SPSTATISTICS {
     script:
     def args   = task.ext.args   ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.kind}"
+    def gs     = genome ? "--gs ${genome}" : ''
     """
     # NOTE: --yaml is a boolean flag in agat_sp_statistics.pl; the YAML
     # filename is derived from --output by appending .yaml. We rename to
     # the cleaner *.stats.yaml form afterwards.
+    # --gs <FASTA> enables genome-coverage metrics in the output.
     agat_sp_statistics.pl \\
         --gff ${gff} \\
+        ${gs} \\
         --output ${prefix}.stats.txt \\
         --yaml \\
         ${args}

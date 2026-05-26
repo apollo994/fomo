@@ -1,11 +1,14 @@
-include { GUNZIP as GUNZIP_TARGET_GFF        } from '../../modules/nf-core/gunzip/main'
-include { FILTER_TRANSCRIPT as FILTER_TARGET } from '../../modules/local/filter_transcript'
-include { GFFCOMPARE                         } from '../../modules/nf-core/gffcompare/main'
+include { GUNZIP as GUNZIP_TARGET_GFF              } from '../../modules/nf-core/gunzip/main'
+include { FILTER_TRANSCRIPT as FILTER_TARGET       } from '../../modules/local/filter_transcript'
+include { GFFCOMPARE                               } from '../../modules/nf-core/gffcompare/main'
+include { AGAT_SPSTATISTICS as AGAT_TARGET         } from '../../modules/local/agat_spstatistics'
+include { AGAT_TO_MQC       as AGAT_TARGET_TO_MQC  } from '../../modules/local/agat_to_mqc'
 
 workflow BENCHMARKING {
     take:
     ch_target          // [ meta(role:'target'), fasta.gz, gff3.gz ] × 1
     ch_projected_gff3  // [ meta(target_id, id, feature_type, decoy), gff3 ] × 16
+    ch_target_fasta    // [ meta(role:'target'), fasta ] × 1  (gunzipped, from PROJECTION)
 
     main:
 
@@ -42,6 +45,28 @@ workflow BENCHMARKING {
         ch_split.reference
     )
 
+    // ── Target statistics & MultiQC adapters ─────────────────────────────────
+    ch_target_agat_gff = GUNZIP_TARGET_GFF.out.gunzip
+        .map  { m, g -> tuple(m + [kind: 'raw'],      g) }
+        .mix(FILTER_TARGET.out.gff3.map { m, g -> tuple(m + [kind: 'filtered'], g) })
+
+    // Pair each target GFF with the (gunzipped) target genome FASTA so AGAT
+    // can compute genome-coverage metrics via --gs.
+    ch_target_agat_in = ch_target_agat_gff
+        .map { meta, gff -> tuple(meta.id, meta, gff) }
+        .combine(
+            ch_target_fasta.map { meta, fa -> tuple(meta.id, fa) },
+            by: 0
+        )
+        .map { _id, meta, gff, fa -> tuple(meta, gff, fa) }
+
+    AGAT_TARGET(ch_target_agat_in)
+    AGAT_TARGET_TO_MQC(AGAT_TARGET.out.stats_yaml)
+
+    ch_mqc_files = GFFCOMPARE.out.stats
+        .mix(AGAT_TARGET_TO_MQC.out.tsv)
+
     emit:
-    stats = GFFCOMPARE.out.stats    // [ meta, *.stats ] × 16
+    stats     = GFFCOMPARE.out.stats    // [ meta, *.stats ] × 16
+    mqc_files = ch_mqc_files            // [ meta, path    ] × 19 (16 stats + 3 AGAT)
 }

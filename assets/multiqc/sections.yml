@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# Custom-content sections
+# ---------------------------------------------------------------------------
+# agat_input       — AGAT stats on input GFFs (source + target, raw/filtered/decoy)
+# agat_projection  — AGAT stats on projected GFFs (minimap2-then-BAM_TO_GFF output)
+# seqkit_stats     — SeqKit FASTA length/composition stats
+# ---------------------------------------------------------------------------
+custom_data:
+  agat_input:
+    file_format: "tsv"
+    section_name: "AGAT statistics — input annotations"
+    description: >
+      Per-annotation counts, length statistics, and genome coverage from
+      agat_sp_statistics --yaml. One row per (species × kind), where
+      `kind` is one of raw / lncRNA / decoy_lncRNA / mRNA / decoy_mRNA.
+    plot_type: "table"
+    pconfig:
+      id: "agat_input_table"
+      namespace: "AGAT input"
+  agat_projection:
+    file_format: "tsv"
+    section_name: "AGAT statistics — projected models"
+    description: >
+      AGAT statistics on the minimap2-projected transcript models, computed
+      against the target genome. One row per (target × source × feature_type
+      × decoy/not).
+    plot_type: "table"
+    pconfig:
+      id: "agat_projection_table"
+      namespace: "AGAT projection"
+  seqkit_stats:
+    file_format: "tsv"
+    section_name: "SeqKit FASTA statistics"
+    description: "Per-FASTA length / composition statistics from seqkit stats --all."
+    plot_type: "table"
+    pconfig:
+      id: "seqkit_stats_table"
+      namespace: "SeqKit"
+
+# Each section uses a unique filename suffix so MultiQC's sp pattern is
+# the single source of routing. AGAT TSVs deliberately do NOT carry a
+# `# id:` header — embedding one would cause MultiQC to discover the
+# section twice (once via sp, once via the embedded id) and render every
+# section twice in the report.
+sp:
+  agat_input:
+    fn: "*_agat_input_mqc.tsv"
+  agat_projection:
+    fn: "*_agat_projection_mqc.tsv"
+  seqkit_stats:
+    fn: "*_seqkit_mqc.tsv"
