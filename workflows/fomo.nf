@@ -30,7 +30,7 @@ workflow FOMO {
         PREPROCESSING.out.decoy_gff3,
         PREPROCESSING.out.spliced_fasta,
         PREPROCESSING.out.decoy_spliced_fasta,
-        BENCHMARKING.out.stats_m.mix(BENCHMARKING.out.stats_nom)
+        BENCHMARKING.out.stats
     )
 
 }

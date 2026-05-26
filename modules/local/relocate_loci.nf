@@ -15,9 +15,10 @@ process RELOCATE_LOCI {
     task.ext.when == null || task.ext.when
 
     script:
-    def args   = task.ext.args   ?: ''
-    def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
-    def seed   = (params.relocate_seed != null) ? "--seed ${params.relocate_seed}" : ''
+    def args       = task.ext.args ?: ''
+    def prefix     = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
+    def seed       = (params.relocate_seed != null) ? "--seed ${params.relocate_seed}" : ''
+    def decoy_cap  = (params.decoy_cap     != null) ? "--decoy-cap ${params.decoy_cap}" : ''
     """
     relocate_loci.py \\
         --input-gff ${gff3} \\
@@ -25,6 +26,7 @@ process RELOCATE_LOCI {
         --output-gff ${prefix}.decoy.gff3 \\
         --feature-type ${meta.feature_type} \\
         ${seed} \\
+        ${decoy_cap} \\
         ${args}
     """
 

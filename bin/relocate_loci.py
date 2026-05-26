@@ -275,6 +275,9 @@ def parse_args() -> argparse.Namespace:
                    help="Exon feature type (default: exon)")
     p.add_argument("--min-intergenic-length", type=int, default=0, metavar="BP",
                    help="Skip intergenic intervals shorter than this (default: 0)")
+    p.add_argument("--decoy-cap",            type=int, default=1000, metavar="N",
+                   help="Randomly sample at most N models before relocation "
+                        "(default: 1000). Use 0 to disable the cap.")
     return p.parse_args()
 
 
@@ -287,6 +290,9 @@ def main() -> None:
     intergenic = read_intergenic_bed(args.intergenic_bed, min_length=args.min_intergenic_length)
     models = read_gff3_models(args.input_gff, transcript_type=args.feature_type, exon_type=args.exon_type)
     random.shuffle(models)
+
+    if args.decoy_cap > 0 and len(models) > args.decoy_cap:
+        models = models[:args.decoy_cap]
 
     relocated: List[TranscriptModel] = []
     skipped = 0
