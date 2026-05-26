@@ -36,6 +36,16 @@ custom_data:
     pconfig:
       id: "seqkit_stats_table"
       namespace: "SeqKit"
+  samtools_align:
+    file_format: "tsv"
+    section_name: "Samtools — Alignment statistics (curated)"
+    description: >
+      Curated set of alignment metrics parsed from `samtools stats` SN lines.
+      One row per projected (target, source, feature_type, decoy/not) tuple.
+    plot_type: "table"
+    pconfig:
+      id: "samtools_align_table"
+      namespace: "Samtools alignment"
 
 # Each section uses a unique filename suffix so MultiQC's sp pattern is
 # the single source of routing. AGAT TSVs deliberately do NOT carry a
@@ -49,3 +59,5 @@ sp:
     fn: "*_agat_projection_mqc.tsv"
   seqkit_stats:
     fn: "*_seqkit_mqc.tsv"
+  samtools_align:
+    fn: "*_samtools_align_mqc.tsv"

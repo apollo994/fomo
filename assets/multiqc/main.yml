@@ -23,5 +23,20 @@ report_section_order:
     order: 1000
   agat_projection:
     order: 900
+  samtools:
+    order: 850
+  samtools_align:
+    order: 845
   seqkit_stats:
     order: 800
+
+# Hide the top General Statistics table entirely — per-module sections
+# below carry all the curated metrics we care about.
+skip_generalstats: true
+
+# Suppress the native Samtools "Alignment stats" violin (its column set is
+# hardcoded in the samtools module and doesn't match our curated 7-column
+# table). The "Percent mapped" bar chart (anchor: samtools-stats-alignment)
+# and our `samtools_align` custom-content table are preserved.
+remove_sections:
+  - samtools-stats

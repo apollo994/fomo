@@ -4,8 +4,8 @@ process MULTIQC {
 
     conda "${moduleDir}/environment.yml"
     container "${workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container
-        ? 'https://depot.galaxyproject.org/singularity/multiqc:1.25.1--pyhdfd78af_0'
-        : 'quay.io/biocontainers/multiqc:1.25.1--pyhdfd78af_0'}"
+        ? 'https://depot.galaxyproject.org/singularity/multiqc:1.35--pyhdfd78af_1'
+        : 'quay.io/biocontainers/multiqc:1.35--pyhdfd78af_1'}"
 
     input:
     tuple val(meta), path(multiqc_files, stageAs: "?/*"), path(multiqc_config, stageAs: "?/*"), path(multiqc_logo), path(replace_names), path(sample_names)
