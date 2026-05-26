@@ -34,4 +34,3 @@ The high level steps are:
 
 ### report
 Build a report for each step of the pipeline. Use multiQC when available otherwise build a custom report.
-- if multiQC module is not availabl

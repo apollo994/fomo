@@ -51,10 +51,19 @@ workflow PREPROCESSING {
         true
     )
 
-    // Extract gene-level features from each source GFF3 → sorted BED
-    GFF_TO_GENE_BED(
-        ch_sources.map { meta, fasta, gff3 -> tuple(meta, gff3) }
-    )
+    // Extract gene-level features from each source GFF3 → BED, sorted in the
+    // chromosome order of the FASTA-derived sizes file (required so bedtools
+    // complement downstream accepts the input).
+    ch_sources
+        .map { meta, fasta, gff3 -> tuple(meta.id, meta, gff3) }
+        .combine(
+            SAMTOOLS_FAIDX.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
+            by: 0
+        )
+        .map { id, meta, gff3, sizes -> tuple(meta, gff3, sizes) }
+        .set { ch_gff_to_bed }
+
+    GFF_TO_GENE_BED(ch_gff_to_bed)
 
     // Pair each source gene BED with its chromosome sizes, then complement
     GFF_TO_GENE_BED.out.bed
