@@ -4,33 +4,12 @@ The goal of the pipeline is to take a target .fa assembly as input and return a 
 The candidates long non-coding RNA are identified in the target assembly using lncRNA annotation from source assembly/annotations of other species.  
 
 The high level steps are:
-- collect source annotation
+- collect source annotation (defer implementation)
 - preprocessing
 - projection
 - validation
+- benchmarking (only if reference annotation is available)
 - reporting
 
-
-### preprocessing
-- extract lncRNA and mRNA spliced fasta sequence (legacy_script/preprocessing/00_get_feature_annotation.sh)
-- extract intergenic intervalas (legacy_script/preprocessing/02_get_intergenic_intervals.sh)
-- build decoy sequence (legacy_script/preprocessing/03_relocate_loci.py)
-- extract decoy spliced fasta sequence (legacy_script/preprocessing/04_get_decoy_sequence.sh
-- build preporcessing statistics (legacy_script/preprocessing/05_get_gff_statistics.sh)
-
-### projection (mapping)
-- map fasta sequence (legacy_script/minimap_transfer/00_run_minimap_base.sh)
-- convert bam to gff (legacy_script/minimap_transfer/01_convert_bam_to_gff.sh)
-
-
-### benchmarking
-- run gffcompare (gffcompare -M --no-exon-merge)
-- extract gffcompare statistics for report
-
-### statistics 
-- preprocessing statistics
-- extract alignment metrics
-- extract projected gff metrics
-
-### report
-Build a report for each step of the pipeline. Use multiQC when available otherwise build a custom report.
+### Next step to implememt
+- add samtools stats after the alignement step and send the result to MultiQC
