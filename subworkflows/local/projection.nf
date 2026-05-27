@@ -6,6 +6,8 @@ include { SAMTOOLS_TO_MQC                          } from '../../modules/local/s
 include { BAM_TO_GFF                               } from '../../modules/local/bam_to_gff'
 include { AGAT_SPSTATISTICS as AGAT_PROJECTED      } from '../../modules/local/agat_spstatistics'
 include { AGAT_TO_MQC       as AGAT_PROJECTED_TO_MQC } from '../../modules/local/agat_to_mqc'
+include { GFFCOMPARE        as GFFCOMPARE_COMBINE  } from '../../modules/nf-core/gffcompare/main'
+include { GFFREAD           as COMBINED_GTF_TO_GFF } from '../../modules/nf-core/gffread/main'
 
 workflow PROJECTION {
     take:
@@ -63,10 +65,44 @@ workflow PROJECTION {
 
     BAM_TO_GFF(MINIMAP2_ALIGN.out.bam)
 
+    // ── Combine projected models per gene type ────────────────────────────────
+    // Group every projected GFF3 by gene type — feature_type plus the decoy
+    // flag → {lnc_RNA, mRNA, lnc_RNA_decoy, mRNA_decoy} — and run gffcompare in
+    // combine mode (no reference annotation) to build one consensus
+    // <prefix>.combined.gtf per gene type across all source species.
+    ch_combine_in = BAM_TO_GFF.out.gff3
+        .map { meta, gff ->
+            def gtype = meta.feature_type + (meta.decoy ? '_decoy' : '')
+            tuple([id: "${meta.target_id}.${gtype}", target_id: meta.target_id,
+                   feature_type: meta.feature_type, decoy: meta.decoy, gtype: gtype], gff)
+        }
+        .groupTuple()
+        .map { meta, gffs -> tuple(meta, gffs.sort { it.name }) }   // deterministic input order
+
+    GFFCOMPARE_COMBINE(
+        ch_combine_in,
+        [[:], [], []],   // no reference sequence  (-s)
+        [[:], []]        // no reference annotation (-r) → pure combine mode
+    )
+
+    // Convert each combined GTF → GFF3 so it matches the rest of the pipeline,
+    // and reshape meta to the projection convention (id = 'combined') so the
+    // consensus models flow through the same AGAT / benchmarking naming closures
+    // as per-source projections (yielding "from_combined" rows).
+    COMBINED_GTF_TO_GFF(
+        GFFCOMPARE_COMBINE.out.combined_gtf.map { meta, gtf -> tuple(meta + [id: 'combined'], gtf) },
+        []   // no genome FASTA needed for a pure GTF→GFF3 conversion
+    )
+
+    // Union of per-source projections (16) + per-gene-type consensus (4). All
+    // downstream stats/benchmarking treat the combined models as an extra
+    // "from_combined" source.
+    ch_projected = BAM_TO_GFF.out.gff3.mix(COMBINED_GTF_TO_GFF.out.gffread_gff)
+
     // ── Statistics on projected models ───────────────────────────────────────
     // Pair each projected GFF with the (gunzipped) target genome FASTA so
     // AGAT can compute genome-coverage metrics via --gs. Join by target_id.
-    ch_projected_agat_in = BAM_TO_GFF.out.gff3
+    ch_projected_agat_in = ch_projected
         .map { meta, gff -> tuple(meta.target_id, meta + [kind: 'projected'], gff) }
         .combine(
             GUNZIP_TARGET.out.gunzip.map { meta, fa -> tuple(meta.id, fa) },
@@ -86,9 +122,10 @@ workflow PROJECTION {
         .mix(SAMTOOLS_TO_MQC.out.tsv)
 
     emit:
-    bam          = MINIMAP2_ALIGN.out.bam      // [ meta, *.bam     ]
-    index        = MINIMAP2_ALIGN.out.index    // [ meta, *.bam.bai ]
-    gff3         = BAM_TO_GFF.out.gff3         // [ meta, *.gff3    ]
-    target_fasta = GUNZIP_TARGET.out.gunzip    // [ meta, fasta     ] × 1
-    mqc_files    = ch_mqc_files                // [ meta, *_mqc.tsv ] × 16
+    bam          = MINIMAP2_ALIGN.out.bam            // [ meta, *.bam          ]
+    index        = MINIMAP2_ALIGN.out.index          // [ meta, *.bam.bai      ]
+    gff3         = ch_projected                      // [ meta, *.gff3         ] × 20 (16 per-source + 4 combined)
+    combined_gff = COMBINED_GTF_TO_GFF.out.gffread_gff // [ meta, *.gff3        ] × 4 (consensus per gene type)
+    target_fasta = GUNZIP_TARGET.out.gunzip          // [ meta, fasta          ] × 1
+    mqc_files    = ch_mqc_files                      // [ meta, *_mqc.tsv      ] × 16
 }

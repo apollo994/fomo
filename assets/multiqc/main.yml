@@ -40,3 +40,8 @@ skip_generalstats: true
 # and our `samtools_align` custom-content table are preserved.
 remove_sections:
   - samtools-stats
+  # Native gffcompare "Accuracy values" scatter names points by feature level,
+  # not by sample, so its tooltips are uninformative. Replaced by our custom
+  # scatter (gffcompare_accuracy_custom) which colours by source and shapes by
+  # feature class. Native novel/missing charts are unaffected.
+  - gffcompare_accuracy

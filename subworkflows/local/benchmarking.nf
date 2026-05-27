@@ -63,10 +63,13 @@ workflow BENCHMARKING {
     AGAT_TARGET(ch_target_agat_in)
     AGAT_TARGET_TO_MQC(AGAT_TARGET.out.stats_yaml)
 
+    // The custom accuracy scatter is built in REPORTING (over the union of these
+    // stats and the top-3 consensus stats) so the consensus shows as its own dot.
     ch_mqc_files = GFFCOMPARE.out.stats
         .mix(AGAT_TARGET_TO_MQC.out.tsv)
 
     emit:
-    stats     = GFFCOMPARE.out.stats    // [ meta, *.stats ] × 16
-    mqc_files = ch_mqc_files            // [ meta, path    ] × 19 (16 stats + 3 AGAT)
+    stats         = GFFCOMPARE.out.stats        // [ meta, *.stats ] × 20
+    target_refs   = FILTER_TARGET.out.gff3      // [ meta(feature_type), gff3 ] × 2 (lnc_RNA, mRNA)
+    mqc_files     = ch_mqc_files                // [ meta, path    ] (20 stats + 3 AGAT)
 }

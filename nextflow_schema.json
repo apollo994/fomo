@@ -75,6 +75,14 @@
                     "help_text": "Off by default: single-exon projections (alignments with no splice gap) are discarded by bam_to_gff.sh, since source transcripts are spliced and a single-exon projection is usually a collapsed or spurious mapping. Turn on to retain them.",
                     "fa_icon": "fas fa-stream"
                 },
+                "top_consensus_n": {
+                    "type": "integer",
+                    "default": 3,
+                    "minimum": 1,
+                    "description": "Number of top sources (by lncRNA transcript F1) pooled into the consensus annotation.",
+                    "help_text": "Sources are ranked by lncRNA transcript-level F1 from their gffcompare-vs-reference stats; the top N feed a gffcompare-combine consensus of both their lncRNA and mRNA projections (emitted as the 'top3' / from_top3 models). If fewer than N sources exist, all are combined.",
+                    "fa_icon": "fas fa-medal"
+                },
                 "multiqc_main_config": {
                     "type": "string",
                     "format": "file-path",
