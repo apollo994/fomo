@@ -1,4 +1,4 @@
-include { GUNZIP as GUNZIP_TARGET                  } from '../../modules/nf-core/gunzip/main'
+include { MAYBE_GUNZIP as GUNZIP_TARGET            } from '../../modules/local/maybe_gunzip'
 include { MINIMAP2_INDEX                           } from '../../modules/nf-core/minimap2/index/main'
 include { MINIMAP2_ALIGN                           } from '../../modules/nf-core/minimap2/align/main'
 include { SAMTOOLS_STATS                           } from '../../modules/nf-core/samtools/stats/main.nf'
@@ -9,7 +9,7 @@ include { AGAT_TO_MQC       as AGAT_PROJECTED_TO_MQC } from '../../modules/local
 
 workflow PROJECTION {
     take:
-    ch_target            // [ meta(role:'target'), fasta.gz, gff3.gz ] × 1
+    ch_target            // [ meta(role:'target'), fasta[.gz], gff3[.gz] ] × 1
     ch_spliced_fasta     // [ meta(decoy:false, feature_type), fasta ] × 2N
     ch_decoy_spliced     // [ meta(decoy:true,  feature_type), fasta ] × 2N
 
