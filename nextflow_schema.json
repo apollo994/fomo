@@ -68,6 +68,13 @@
                     "help_text": "Random sample of N models taken before relocation. Set to 0 to disable the cap (use all eligible models).",
                     "fa_icon": "fas fa-filter"
                 },
+                "include_single_exon": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Keep single-exon projected models in the BAM-to-GFF3 conversion.",
+                    "help_text": "Off by default: single-exon projections (alignments with no splice gap) are discarded by bam_to_gff.sh, since source transcripts are spliced and a single-exon projection is usually a collapsed or spurious mapping. Turn on to retain them.",
+                    "fa_icon": "fas fa-stream"
+                },
                 "multiqc_main_config": {
                     "type": "string",
                     "format": "file-path",

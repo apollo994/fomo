@@ -6,16 +6,48 @@
 # <tid>; <source> and <gene_class> are promoted to 9th-column attributes.
 # NM, AS and de tags from the BAM are also copied onto the transcript row.
 #
-# Usage: bam_to_gff.sh <input.bam> > <output.gff3>
+# By default, single-exon projected models (alignments with no N/splice gap,
+# i.e. one exon block) are discarded — the source annotations are spliced
+# transcripts, so a single-exon projection usually reflects a collapsed or
+# spurious mapping. Pass --include-single-exon to keep them.
+#
+# Usage: bam_to_gff.sh [--include-single-exon] <input.bam> > <output.gff3>
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 <input.bam>" >&2
+include_single_exon=0
+bam_file=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --include-single-exon)
+            include_single_exon=1
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--include-single-exon] <input.bam> > <output.gff3>" >&2
+            exit 0
+            ;;
+        -*)
+            echo "Error: unknown option '$1'" >&2
+            echo "Usage: $0 [--include-single-exon] <input.bam>" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "$bam_file" ]]; then
+                echo "Error: unexpected extra argument '$1'" >&2
+                exit 1
+            fi
+            bam_file="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$bam_file" ]]; then
+    echo "Usage: $0 [--include-single-exon] <input.bam>" >&2
     exit 1
 fi
-
-bam_file="$1"
 if [[ ! -f "$bam_file" ]]; then
     echo "Error: input BAM '$bam_file' not found." >&2
     exit 1
@@ -27,7 +59,7 @@ printf '##gff-version 3\n'
 # supplementary (0x800) records (-F 2308), then walk the CIGAR to derive
 # exon blocks in target genomic coordinates.
 samtools view -F 2308 "$bam_file" |
-awk -v OFS='\t' '
+awk -v OFS='\t' -v include_single_exon="$include_single_exon" '
     {
         qname  = $1
         flag   = $2
@@ -108,6 +140,11 @@ awk -v OFS='\t' '
             block_ends[++n_blocks] = block_start "," (block_start + block_len - 1)
         }
         if (n_blocks == 0) next   # nothing to emit
+
+        # Drop single-exon models unless explicitly kept. Source transcripts are
+        # spliced, so a single exon block (no N gap) is usually a collapsed or
+        # spurious projection.
+        if (n_blocks == 1 && include_single_exon == 0) next
 
         # transcript/gene span = first block start .. last block end
         split(block_ends[1],        first, ",")

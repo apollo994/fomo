@@ -17,9 +17,10 @@ process BAM_TO_GFF {
     task.ext.when == null || task.ext.when
 
     script:
+    def args   = task.ext.args ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}"
     """
-    bam_to_gff.sh ${bam} > ${prefix}.gff3
+    bam_to_gff.sh ${args} ${bam} > ${prefix}.gff3
     """
 
     stub:
