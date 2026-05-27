@@ -22,15 +22,33 @@ When developing pipelines:
 
 # Pipeline Architecture
 
-The pipeline has five stages (only **preprocessing** is currently being implemented):
+Conceptual stages and their **implementation status**:
 
-1. **Collect source annotation** — gather lncRNA/mRNA GFF3 + FASTA from source species
-2. **Preprocessing** — prepare spliced sequences and decoy sequences for alignment
-3. **Projection** — minimap2 splice-aware alignment of source sequences onto target
-4. **Validation** — splice-junction validation and gffcompare benchmarking
-5. **Reporting** — statistics and plots
+1. **Collect source annotation** — gather lncRNA/mRNA GFF3 + FASTA from source species. *Deferred* — sources are supplied directly via the samplesheet.
+2. **Preprocessing** — prepare spliced sequences and decoy sequences for alignment. ✅ Implemented.
+3. **Projection** — minimap2 splice-aware alignment of source sequences onto target. ✅ Implemented.
+4. **Benchmarking** — gffcompare of projected models vs. target reference annotation. ✅ Implemented.
+5. **Validation** — splice-junction validation of projected models. ❌ Not yet implemented (next step, see `BRAINSTORM.md`).
+6. **Reporting** — MultiQC report. ✅ Implemented.
 
-### Preprocessing detail (current focus)
+### Subworkflow map
+
+The top-level `workflows/fomo.nf` wires four subworkflows under `subworkflows/local/`:
+
+| Subworkflow | Does | Emits |
+|-------------|------|-------|
+| `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; AGAT + SeqKit stats | `spliced_fasta`, `decoy_spliced_fasta`, `filtered_gff3`, `decoy_gff3`, `intergenic_bed`, `mqc_files` |
+| `PROJECTION` | minimap2 align (source spliced FASTA → target), BAM→GFF; samtools stats + AGAT on projected models | `gff3`, `bam`, `index`, `target_fasta`, `mqc_files` |
+| `BENCHMARKING` | filter target ref, gffcompare projected vs. reference; AGAT on target GFFs | `stats`, `mqc_files` |
+| `REPORTING` | the single MULTIQC invocation | `report`, `data` |
+
+**Single-target assumption:** `PROJECTION` calls `.first()` on the index channel, so it indexes/aligns against exactly one target. The samplesheet schema permits more, but only the first target is used. Generalise here if multi-target support is needed.
+
+**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `target_id` (PROJECTION), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring.
+
+**Always-on filters:** `FILTER_TRANSCRIPT` keeps only multi-exon (spliced) transcripts; `RELOCATE_LOCI` caps decoys at `params.decoy_cap` (default 1000; 0 disables) using `params.relocate_seed` for reproducibility.
+
+### Preprocessing detail
 
 Each step maps to a legacy script in `legacy_scripts/preprocessing/` which serves as the reference implementation:
 
@@ -56,18 +74,54 @@ The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and 
 
 Every subworkflow that emits statistics:
 - Runs its stat producers (AGAT, SeqKit, samtools stats, gffcompare, ...) and any
-  required adapter modules (modules named `*_TO_MQC` that emit `*_mqc.tsv` files).
+  required adapter modules (modules named `*_TO_MQC` that parse a tool's output into
+  a one-row `*_mqc.tsv`).
 - Emits a `mqc_files` channel of shape `tuple(meta, path)` — same shape as the rest
   of the pipeline so the meta is available for tracing.
 - Subworkflows with no stats emit `Channel.empty()` as `mqc_files`.
 
 The top-level workflow mixes `mqc_files` across subworkflows and passes the union to
 `REPORTING`. `REPORTING` strips meta, collects paths, and is the only place that calls
-`MULTIQC`.
+`MULTIQC` (pinned to **v1.35**; bump in `modules/nf-core/multiqc/{main.nf,environment.yml}`
+and `modules/local/{agat,samtools}_to_mqc.nf`, which reuse the MultiQC container).
 
-MultiQC config lives in two files under `assets/multiqc/`:
-- `main.yml` — top-level layout (title, comment, `extra_fn_clean_exts`, ordering).
+MultiQC config lives in two files under `assets/multiqc/` (wired via
+`params.multiqc_main_config` / `params.multiqc_sections_config`, passed as a 2-item
+list to MULTIQC's single config slot):
+- `main.yml` — top-level layout: `report_title`, `report_comment`, `extra_fn_clean_exts`,
+  `report_section_order`, `skip_generalstats: true`, `remove_sections`.
 - `sections.yml` — `custom_data` blocks + `sp` patterns for every custom section.
 
-When a new tool produces statistics: add its `custom_data` + `sp` entries to
-`sections.yml`, and add any new filename suffixes to `extra_fn_clean_exts` in `main.yml`.
+### Adding a new custom-content section — rules learned the hard way
+
+1. **Route by `sp` pattern only, never both `sp` and an embedded `# id:` header.**
+   Each adapter emits a file with a **unique suffix** (`*_agat_input_mqc.tsv`,
+   `*_agat_projection_mqc.tsv`, `*_seqkit_mqc.tsv`, `*_samtools_align_mqc.tsv`) matched
+   1:1 by an `sp.<section>.fn` pattern. The `*_TO_MQC` adapters deliberately do **not**
+   write a `# id:` header — a file discovered by both `sp` *and* a header renders the
+   section **twice**.
+2. **Order sections with `report_section_order` (numeric `order`), not
+   `custom_content.order`.** Combining `custom_content.order` with default discovery
+   also double-renders every listed section.
+3. **Native modules' tables are not configurable column-by-column.** To show a curated
+   column set (e.g. the samtools alignment metrics), write a small `*_TO_MQC` adapter
+   that emits exactly the wanted columns as a custom-content table, then hide the native
+   section via `remove_sections` (samtools' `samtools-stats` violin is removed this way;
+   its "Percent mapped" bar chart is kept).
+
+When a new tool produces statistics: add a `custom_data` block + a uniquely-suffixed
+`sp` pattern to `sections.yml`, give it a slot in `report_section_order` in `main.yml`,
+and add any new filename suffixes to `extra_fn_clean_exts`.
+
+# Parameters & validation
+
+Pipeline params live in `nextflow.config` and are validated against `nextflow_schema.json`
+by `validateParameters()` (nf-schema) at the top of `workflows/fomo.nf`. Validation runs
+with `failUnrecognisedParams = true`.
+
+**Therefore: any new param added to `nextflow.config` MUST also be added to
+`nextflow_schema.json`, or the pipeline aborts at launch.** Keep the two in sync.
+Profile-metadata params that aren't pipeline inputs go in
+`validation.defaultIgnoreParams` instead of the schema. `nextflow run . --help` renders
+the schema as a grouped help menu. The samplesheet (not params) is validated separately
+by `assets/schema_input.json`.

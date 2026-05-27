@@ -1,0 +1,100 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/fomo/master/nextflow_schema.json",
+    "title": "FOMO pipeline parameters",
+    "description": "Annotates candidate lncRNAs on a target assembly by transferring annotation from source species",
+    "type": "object",
+    "$defs": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": ["input", "outdir"],
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "format": "file-path",
+                    "exists": true,
+                    "mimetype": "text/csv",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "Path to the samplesheet CSV describing source and target species.",
+                    "help_text": "Each row needs species, role (source|target), fasta and gff3 columns. See assets/schema_input.json for the per-row schema.",
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "outdir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Directory where the pipeline results are published.",
+                    "default": "results",
+                    "fa_icon": "fas fa-folder-open"
+                },
+                "publish_dir_mode": {
+                    "type": "string",
+                    "default": "copy",
+                    "description": "Method used to publish files into the output directory.",
+                    "enum": [
+                        "symlink",
+                        "rellink",
+                        "link",
+                        "copy",
+                        "copyNoFollow",
+                        "move"
+                    ],
+                    "fa_icon": "fas fa-copy",
+                    "hidden": true
+                }
+            }
+        },
+        "pipeline_options": {
+            "title": "Pipeline options",
+            "type": "object",
+            "fa_icon": "fas fa-cogs",
+            "description": "Parameters controlling decoy generation and the MultiQC report.",
+            "properties": {
+                "relocate_seed": {
+                    "type": "integer",
+                    "default": 42,
+                    "minimum": 0,
+                    "description": "Random seed for deterministic decoy relocation.",
+                    "help_text": "Forwarded to relocate_loci.py --seed so decoy placement is reproducible across runs.",
+                    "fa_icon": "fas fa-dice"
+                },
+                "decoy_cap": {
+                    "type": "integer",
+                    "default": 1000,
+                    "minimum": 0,
+                    "description": "Maximum number of decoy models to generate per source feature type.",
+                    "help_text": "Random sample of N models taken before relocation. Set to 0 to disable the cap (use all eligible models).",
+                    "fa_icon": "fas fa-filter"
+                },
+                "multiqc_main_config": {
+                    "type": "string",
+                    "format": "file-path",
+                    "exists": true,
+                    "default": "${projectDir}/assets/multiqc/main.yml",
+                    "description": "MultiQC layout config (title, report comment, section ordering, fn-clean exts).",
+                    "fa_icon": "fas fa-cog",
+                    "hidden": true
+                },
+                "multiqc_sections_config": {
+                    "type": "string",
+                    "format": "file-path",
+                    "exists": true,
+                    "default": "${projectDir}/assets/multiqc/sections.yml",
+                    "description": "MultiQC content config (custom_data blocks and sp search patterns).",
+                    "fa_icon": "fas fa-cog",
+                    "hidden": true
+                }
+            }
+        }
+    },
+    "allOf": [
+        {
+            "$ref": "#/$defs/input_output_options"
+        },
+        {
+            "$ref": "#/$defs/pipeline_options"
+        }
+    ]
+}
