@@ -9,3 +9,5 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 local_MD
+notebooks
+tmp
