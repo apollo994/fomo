@@ -83,6 +83,15 @@
                     "help_text": "Sources are ranked by lncRNA transcript-level F1 from their gffcompare-vs-reference stats; the top N feed a gffcompare-combine consensus of both their lncRNA and mRNA projections (emitted as the 'top3' / from_top3 models). If fewer than N sources exist, all are combined.",
                     "fa_icon": "fas fa-medal"
                 },
+                "td2_psauron_min": {
+                    "type": "number",
+                    "default": 0.5,
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "PSAURON score at/above which a complete TD2 ORF marks a lncRNA as coding (and drops it).",
+                    "help_text": "Real lncRNA (input and per-source projected) are run through TD2 (TransDecoder2); a transcript with a complete ORF whose psauron_score >= this cutoff is treated as coding-potential and removed. mRNA and decoy tracks are never filtered.",
+                    "fa_icon": "fas fa-filter"
+                },
                 "multiqc_main_config": {
                     "type": "string",
                     "format": "file-path",

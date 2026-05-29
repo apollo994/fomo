@@ -8,6 +8,9 @@ include { AGAT_SPSTATISTICS as AGAT_PROJECTED      } from '../../modules/local/a
 include { AGAT_TO_MQC       as AGAT_PROJECTED_TO_MQC } from '../../modules/local/agat_to_mqc'
 include { GFFCOMPARE        as GFFCOMPARE_COMBINE  } from '../../modules/nf-core/gffcompare/main'
 include { GFFREAD           as COMBINED_GTF_TO_GFF } from '../../modules/nf-core/gffread/main'
+include { GFFREAD           as EXTRACT_PROJECTED_LNC } from '../../modules/nf-core/gffread/main'
+include { TD2_NONCODING     as TD2_NONCODING_PROJ  } from './td2_noncoding'
+include { FILTER_GFF_BY_ID  as FILTER_PROJ_LNC_GFF } from '../../modules/local/filter_gff_by_id'
 
 workflow PROJECTION {
     take:
@@ -65,12 +68,39 @@ workflow PROJECTION {
 
     BAM_TO_GFF(MINIMAP2_ALIGN.out.bam)
 
+    // ── TD2 coding-potential filter on projected lncRNA (real, per-source) ────
+    // Extract each per-source projected lncRNA's transcript FASTA from the
+    // target genome, run TD2, and drop coding-potential models from the GFF3
+    // BEFORE the per-gene-type combine — so combined + top-3 consensus inherit
+    // the filtering. Real mRNA and all decoys pass through untouched.
+    BAM_TO_GFF.out.gff3
+        .branch { meta, _g ->
+            lnc:  !meta.decoy && meta.feature_type == 'lnc_RNA'
+            rest: true
+        }
+        .set { ch_proj }
+
+    // Single target genome FASTA, broadcast to every gffread task.
+    ch_target_fa = GUNZIP_TARGET.out.gunzip.map { _m, fa -> fa }.first()
+
+    EXTRACT_PROJECTED_LNC(ch_proj.lnc, ch_target_fa)
+
+    TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.gffread_fasta)
+
+    // Drop coding lncRNA from each per-source projected GFF3 (join gff + ids on
+    // the shared meta, preserved unchanged through gffread + TD2).
+    ch_proj_lnc_filter_in = ch_proj.lnc.join(TD2_NONCODING_PROJ.out.coding_ids)
+    FILTER_PROJ_LNC_GFF(ch_proj_lnc_filter_in)
+
+    // Filtered real lncRNA ⊕ untouched (real mRNA + all decoys).
+    ch_projected_persource = FILTER_PROJ_LNC_GFF.out.gff3.mix(ch_proj.rest)
+
     // ── Combine projected models per gene type ────────────────────────────────
     // Group every projected GFF3 by gene type — feature_type plus the decoy
     // flag → {lnc_RNA, mRNA, lnc_RNA_decoy, mRNA_decoy} — and run gffcompare in
     // combine mode (no reference annotation) to build one consensus
     // <prefix>.combined.gtf per gene type across all source species.
-    ch_combine_in = BAM_TO_GFF.out.gff3
+    ch_combine_in = ch_projected_persource
         .map { meta, gff ->
             def gtype = meta.feature_type + (meta.decoy ? '_decoy' : '')
             tuple([id: "${meta.target_id}.${gtype}", target_id: meta.target_id,
@@ -94,10 +124,10 @@ workflow PROJECTION {
         []   // no genome FASTA needed for a pure GTF→GFF3 conversion
     )
 
-    // Union of per-source projections (16) + per-gene-type consensus (4). All
-    // downstream stats/benchmarking treat the combined models as an extra
-    // "from_combined" source.
-    ch_projected = BAM_TO_GFF.out.gff3.mix(COMBINED_GTF_TO_GFF.out.gffread_gff)
+    // Union of per-source projections (lncRNA coding-filtered) + per-gene-type
+    // consensus. All downstream stats/benchmarking treat the combined models as
+    // an extra "from_combined" source.
+    ch_projected = ch_projected_persource.mix(COMBINED_GTF_TO_GFF.out.gffread_gff)
 
     // ── Statistics on projected models ───────────────────────────────────────
     // Pair each projected GFF with the (gunzipped) target genome FASTA so
@@ -120,6 +150,7 @@ workflow PROJECTION {
     ch_mqc_files = AGAT_PROJECTED_TO_MQC.out.tsv
         .mix(SAMTOOLS_STATS.out.stats)
         .mix(SAMTOOLS_TO_MQC.out.tsv)
+        .mix(TD2_NONCODING_PROJ.out.mqc)
 
     emit:
     bam          = MINIMAP2_ALIGN.out.bam            // [ meta, *.bam          ]

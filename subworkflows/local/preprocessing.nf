@@ -2,6 +2,8 @@ include { FILTER_TRANSCRIPT                  } from '../../modules/local/filter_
 include { GFF_TO_GENE_BED                    } from '../../modules/local/gff_to_gene_bed'
 include { RELOCATE_LOCI                      } from '../../modules/local/relocate_loci'
 include { RENAME_FASTA_HEADERS               } from '../../modules/local/rename_fasta_headers'
+include { TD2_NONCODING                      } from './td2_noncoding'
+include { FILTER_GFF_BY_ID as FILTER_LNC_GFF } from '../../modules/local/filter_gff_by_id'
 include { MAYBE_GUNZIP as GUNZIP_FASTA       } from '../../modules/local/maybe_gunzip'
 include { MAYBE_GUNZIP as GUNZIP_RAW_SOURCE_GFF } from '../../modules/local/maybe_gunzip'
 include { GFFREAD as EXTRACT_SEQUENCES       } from '../../modules/nf-core/gffread/main'
@@ -121,16 +123,59 @@ workflow PREPROCESSING {
             .mix(EXTRACT_DECOY_SEQUENCES.out.gffread_fasta)
     )
 
+    // ── TD2 coding-potential filter (real lncRNA only) ────────────────────────
+    // Split the renamed FASTAs: real lncRNA go through TD2; everything else
+    // (real mRNA + all decoys) passes through untouched. A real lncRNA with a
+    // complete, PSAURON-confident ORF is dropped (coding potential).
+    RENAME_FASTA_HEADERS.out.fasta
+        .branch { meta, _fa ->
+            lnc:  !meta.decoy && meta.feature_type == 'lnc_RNA'
+            rest: true
+        }
+        .set { ch_renamed }
+
+    TD2_NONCODING(ch_renamed.lnc)
+
+    // Non-coding lncRNA ⊕ untouched (real mRNA + decoys) → the full renamed set
+    // with lncRNA coding-filtered. spliced_fasta / decoy_spliced_fasta and
+    // SeqKit stats are all derived from this so they reflect the filtering.
+    ch_renamed_final = TD2_NONCODING.out.kept_fasta.mix(ch_renamed.rest)
+
+    // Subset the lncRNA filtered_gff3 by the coding IDs so the input AGAT
+    // "filtered" stats reflect the drop. mRNA GFF3 is untouched. The decoy
+    // branch (RELOCATE_LOCI) still consumes the PRE-filter GFF3 upstream, so
+    // decoys remain an unfiltered null baseline.
+    FILTER_TRANSCRIPT.out.gff3
+        .branch { meta, _g ->
+            lnc:  meta.feature_type == 'lnc_RNA'
+            mrna: true
+        }
+        .set { ch_filt_gff }
+
+    ch_lnc_gff_filter_in = ch_filt_gff.lnc
+        .map { meta, gff -> tuple(meta.id, meta, gff) }
+        .combine(
+            TD2_NONCODING.out.coding_ids.map { meta, ids -> tuple(meta.id, ids) },
+            by: 0
+        )
+        .map { _id, meta, gff, ids -> tuple(meta, gff, ids) }
+
+    FILTER_LNC_GFF(ch_lnc_gff_filter_in)
+
+    ch_filtered_gff3 = FILTER_LNC_GFF.out.gff3.mix(ch_filt_gff.mrna)
+
     // ── Statistics & MultiQC adapters ─────────────────────────────────────────
     // AGAT does not handle .gff3.gz transparently — gunzip raw source GFFs first.
     GUNZIP_RAW_SOURCE_GFF(
         ch_sources.map { meta, _fa, gff3 -> tuple(meta + [kind: 'raw'], gff3) }
     )
 
-    // Union of raw/filtered/decoy GFFs, all on the source genome.
+    // Union of raw/filtered/decoy GFFs, all on the source genome. The
+    // "filtered" set uses the TD2-filtered lncRNA GFF3 (+ untouched mRNA) so the
+    // input stats reflect the coding-potential drop.
     ch_agat_gff = GUNZIP_RAW_SOURCE_GFF.out.gunzip
-        .mix(FILTER_TRANSCRIPT.out.gff3.map { m, g -> tuple(m + [kind: 'filtered'], g) })
-        .mix(RELOCATE_LOCI    .out.gff3.map { m, g -> tuple(m + [kind: 'decoy'],    g) })
+        .mix(ch_filtered_gff3.map { m, g -> tuple(m + [kind: 'filtered'], g) })
+        .mix(RELOCATE_LOCI  .out.gff3.map { m, g -> tuple(m + [kind: 'decoy'],    g) })
 
     // Pair each GFF with its source genome FASTA (needed by AGAT --gs for
     // genome-coverage metrics) by joining on meta.id.
@@ -145,17 +190,18 @@ workflow PREPROCESSING {
     AGAT_SPSTATISTICS(ch_agat_in)
     AGAT_TO_MQC(AGAT_SPSTATISTICS.out.stats_yaml)
 
-    SEQKIT_STATS(RENAME_FASTA_HEADERS.out.fasta)
+    SEQKIT_STATS(ch_renamed_final)
     SEQKIT_TO_MQC(SEQKIT_STATS.out.stats)
 
     ch_mqc_files = AGAT_TO_MQC.out.tsv
         .mix(SEQKIT_TO_MQC.out.mqc)
+        .mix(TD2_NONCODING.out.mqc)
 
     emit:
-    spliced_fasta       = RENAME_FASTA_HEADERS.out.fasta.filter { meta, fa -> !meta.decoy } // [ meta, fasta ] × 2N
-    filtered_gff3       = FILTER_TRANSCRIPT.out.gff3                                        // [ meta, gff3  ] × 2N
-    intergenic_bed      = BEDTOOLS_COMPLEMENT.out.bed                                       // [ meta, bed   ] × N
-    decoy_gff3          = RELOCATE_LOCI.out.gff3                                            // [ meta, gff3  ] × 2N
-    decoy_spliced_fasta = RENAME_FASTA_HEADERS.out.fasta.filter { meta, fa -> meta.decoy }  // [ meta, fasta ] × 2N
-    mqc_files           = ch_mqc_files                                                      // [ meta, path  ] × 6N
+    spliced_fasta       = ch_renamed_final.filter { meta, fa -> !meta.decoy }  // [ meta, fasta ] × 2N (lncRNA coding-filtered)
+    filtered_gff3       = ch_filtered_gff3                                     // [ meta, gff3  ] × 2N (lncRNA coding-filtered)
+    intergenic_bed      = BEDTOOLS_COMPLEMENT.out.bed                          // [ meta, bed   ] × N
+    decoy_gff3          = RELOCATE_LOCI.out.gff3                               // [ meta, gff3  ] × 2N
+    decoy_spliced_fasta = ch_renamed_final.filter { meta, fa -> meta.decoy }   // [ meta, fasta ] × 2N
+    mqc_files           = ch_mqc_files                                         // [ meta, path  ]
 }

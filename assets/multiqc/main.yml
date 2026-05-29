@@ -19,6 +19,8 @@ extra_fn_clean_exts:
   - ".tsv"
 
 report_section_order:
+  td2_coding:
+    order: 1050
   agat_input:
     order: 1000
   agat_projection:

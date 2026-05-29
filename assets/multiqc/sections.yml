@@ -4,6 +4,7 @@
 # agat_input       — AGAT stats on input GFFs (source + target, raw/filtered/decoy)
 # agat_projection  — AGAT stats on projected GFFs (minimap2-then-BAM_TO_GFF output)
 # seqkit_stats     — SeqKit FASTA length/composition stats
+# td2_coding       — TD2 coding-potential drops for real lncRNA (input + projected)
 # ---------------------------------------------------------------------------
 custom_data:
   agat_input:
@@ -46,6 +47,18 @@ custom_data:
     pconfig:
       id: "samtools_align_table"
       namespace: "Samtools alignment"
+  td2_coding:
+    file_format: "tsv"
+    section_name: "TD2 coding potential — lncRNA filtered"
+    description: >
+      Real lncRNA dropped because TD2 (TransDecoder2) found a complete ORF with
+      psauron_score >= the configured cutoff. One row per (sample × stage):
+      `input` = source lncRNA before projection, `projected` = per-source
+      projected lncRNA before consensus. mRNA and decoy tracks are not filtered.
+    plot_type: "table"
+    pconfig:
+      id: "td2_coding_table"
+      namespace: "TD2"
 
 # Each section uses a unique filename suffix so MultiQC's sp pattern is
 # the single source of routing. AGAT TSVs deliberately do NOT carry a
@@ -61,3 +74,5 @@ sp:
     fn: "*_seqkit_mqc.tsv"
   samtools_align:
     fn: "*_samtools_align_mqc.tsv"
+  td2_coding:
+    fn: "*_td2_coding_mqc.tsv"
