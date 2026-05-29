@@ -11,3 +11,4 @@ __pycache__/
 local_MD
 notebooks
 tmp
+results_full

@@ -26,14 +26,25 @@ process AGAT_SPSTATISTICS {
     # filename is derived from --output by appending .yaml. We rename to
     # the cleaner *.stats.yaml form afterwards.
     # --gs <FASTA> enables genome-coverage metrics in the output.
-    agat_sp_statistics.pl \\
-        --gff ${gff} \\
-        ${gs} \\
-        --output ${prefix}.stats.txt \\
-        --yaml \\
-        ${args}
+    # if/else (not early exit) so Nextflow's appended eval block always runs.
+    if ! awk 'BEGIN{found=0} /^[[:space:]]*#/ {next} NF==0 {next} {found=1; exit} END{exit(found?0:1)}' ${gff}; then
+        echo "[WARN] AGAT_SPSTATISTICS: ${gff} has no feature lines; writing empty stats." >&2
+        : > ${prefix}.stats.txt
+        : > ${prefix}.stats.yaml
+    else
+        agat_sp_statistics.pl \\
+            --gff ${gff} \\
+            ${gs} \\
+            --output ${prefix}.stats.txt \\
+            --yaml \\
+            ${args}
 
-    mv ${prefix}.stats.txt.yaml ${prefix}.stats.yaml
+        if [[ ! -s ${prefix}.stats.txt.yaml ]]; then
+            echo "[ERROR] AGAT_SPSTATISTICS: missing YAML output for ${gff}" >&2
+            exit 1
+        fi
+        mv ${prefix}.stats.txt.yaml ${prefix}.stats.yaml
+    fi
     """
 
     stub:
