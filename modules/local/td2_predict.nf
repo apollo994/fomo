@@ -2,16 +2,21 @@ process TD2_PREDICT {
     tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_medium'
 
-    container "${workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container
-        ? 'https://depot.galaxyproject.org/singularity/td2:1.0.7--pyhdfd78af_0'
-        : 'quay.io/biocontainers/td2:1.0.7--pyhdfd78af_0'}"
+    // TD2 (TransDecoder2) runs via conda (no container build needed). td2 is a
+    // noarch conda package, so it resolves on amd64/arm64/osx-arm64 alike.
+    // PSAURON auto-uses a GPU when the env's torch is CUDA-enabled — the CRG
+    // profile overrides this spec with conda-forge::pytorch-gpu + a GPU SLURM
+    // request; the default CPU torch falls back gracefully everywhere else.
+    conda 'bioconda::td2=1.1.0'
 
     input:
     tuple val(meta), path(fasta)
 
     output:
     tuple val(meta), path("*.TD2.pep"), emit: pep
-    tuple val("${task.process}"), val('td2'), eval('TD2.Predict --version 2>&1 | sed "s/.* //"'), topic: versions, emit: versions_td2
+    // TD2 has no --version flag; read the installed version from package metadata
+    // (verified in the bioconda td2=1.1.0 conda env).
+    tuple val("${task.process}"), val('td2'), eval("python -c 'import importlib.metadata as m; print(m.version(\"TD2\"))'"), topic: versions, emit: versions_td2
 
     when:
     task.ext.when == null || task.ext.when
