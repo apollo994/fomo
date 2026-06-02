@@ -2,7 +2,7 @@ process RELOCATE_LOCI {
     tag "${meta.id}.${meta.feature_type}"
     label 'process_single'
 
-    container 'python:3.11-slim'
+    container 'python:3.11'
 
     input:
     tuple val(meta), path(gff3), path(intergenic_bed)

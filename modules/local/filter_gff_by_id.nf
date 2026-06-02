@@ -2,7 +2,7 @@ process FILTER_GFF_BY_ID {
     tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_single'
 
-    container 'python:3.11-slim'
+    container 'python:3.11'
 
     input:
     tuple val(meta), path(gff3), path(drop_ids)
