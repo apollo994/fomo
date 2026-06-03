@@ -1,0 +1,14 @@
+name: rnafold_test
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.10
+  - viennarna
+  - biopython
+  - pandas
+  - numpy
+  - joblib
+  - tqdm
+  - matplotlib
+  - seaborn
