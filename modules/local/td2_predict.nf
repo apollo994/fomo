@@ -29,11 +29,19 @@ process TD2_PREDICT {
     """
     set -euo pipefail
 
-    # LongOrfs intermediates go in td2_work/; TD2.Predict reads that via -O and
-    # writes <fasta>.TD2.pep to the current working directory (the task root),
-    # so the *.TD2.pep output glob matches directly.
-    TD2.LongOrfs -t ${fasta} ${longorfs_args} -O td2_work > longorfs.log 2>&1
-    TD2.Predict  -t ${fasta} ${predict_args}  -O td2_work > predict.log  2>&1
+    # Guard against an empty input FASTA (e.g. a distant source whose lncRNA do
+    # not project onto the target → 0 transcripts). With no sequences TD2.LongOrfs
+    # writes no psauron_score.csv and TD2.Predict crashes reading it, so emit an
+    # empty .pep and skip — downstream the coding-ID set is then simply empty.
+    if [ "\$(grep -c '^>' ${fasta} || true)" -eq 0 ]; then
+        : > ${fasta}.TD2.pep
+    else
+        # LongOrfs intermediates go in td2_work/; TD2.Predict reads that via -O and
+        # writes <fasta>.TD2.pep to the current working directory (the task root),
+        # so the *.TD2.pep output glob matches directly.
+        TD2.LongOrfs -t ${fasta} ${longorfs_args} -O td2_work > longorfs.log 2>&1
+        TD2.Predict  -t ${fasta} ${predict_args}  -O td2_work > predict.log  2>&1
+    fi
     """
 
     stub:
