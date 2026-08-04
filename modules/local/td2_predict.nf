@@ -39,8 +39,12 @@ process TD2_PREDICT {
         # LongOrfs intermediates go in td2_work/; TD2.Predict reads that via -O and
         # writes <fasta>.TD2.pep to the current working directory (the task root),
         # so the *.TD2.pep output glob matches directly.
-        TD2.LongOrfs -t ${fasta} ${longorfs_args} -O td2_work > longorfs.log 2>&1
-        TD2.Predict  -t ${fasta} ${predict_args}  -O td2_work > predict.log  2>&1
+        # `2>&1 | tee` keeps the per-step log file AND lets the output reach
+        # .command.out, so a TD2 traceback shows up in Nextflow's error report
+        # instead of being swallowed by the redirect. `set -o pipefail` (above)
+        # makes the task still fail when TD2 does, despite tee exiting 0.
+        TD2.LongOrfs -t ${fasta} ${longorfs_args} -O td2_work 2>&1 | tee longorfs.log
+        TD2.Predict  -t ${fasta} ${predict_args}  -O td2_work 2>&1 | tee predict.log
     fi
     """
 
