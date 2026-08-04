@@ -2,12 +2,19 @@ process TD2_PREDICT {
     tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_medium'
 
-    // TD2 (TransDecoder2) runs via conda (no container build needed). td2 is a
-    // noarch conda package, so it resolves on amd64/arm64/osx-arm64 alike.
-    // PSAURON auto-uses a GPU when the env's torch is CUDA-enabled — the CRG
-    // profile overrides this spec with conda-forge::pytorch-gpu + a GPU SLURM
-    // request; the default CPU torch falls back gracefully everywhere else.
+    // TD2 (TransDecoder2). BioContainers publishes images only up to td2 1.0.7
+    // (no 1.0.8 / 1.1.0 build), so the containers below are Wave builds of the
+    // same `bioconda::td2=1.1.0` spec kept in the conda directive for
+    // -profile conda. The hashes are derived from that spec — regenerate both
+    // (https://seqera.io/containers) if the pin ever changes.
+    // PSAURON auto-uses a GPU when torch is CUDA-enabled; these images carry the
+    // CPU torch that the spec resolves to, which falls back gracefully. Moving
+    // TD2 to a GPU node now means pointing `container` at a CUDA-torch image and
+    // adding `--nv` — not swapping the conda spec (see conf/crg.config).
     conda 'bioconda::td2=1.1.0'
+    container "${workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container
+        ? 'oras://community.wave.seqera.io/library/td2:1.1.0--357f46c1cbbeed20'
+        : 'community.wave.seqera.io/library/td2:1.1.0--76046a413a4219c1'}"
 
     input:
     tuple val(meta), path(fasta)
@@ -28,6 +35,14 @@ process TD2_PREDICT {
     def predict_args  = task.ext.args2 ?: '--complete-orfs-only'
     """
     set -euo pipefail
+
+    # Keep the host's ~/.local/lib/pythonX.Y/site-packages off sys.path. It takes
+    # priority over the interpreter's own site-packages whenever the two Python
+    # minor versions match, and a stale user-site pandas there shadowed the
+    # container/env copy and broke TD2.Predict's import. The container alone does
+    # not settle this: singularity/apptainer bind-mounts \$HOME by default
+    # (CRG has `mount home = yes`), so user-site is visible inside it too.
+    export PYTHONNOUSERSITE=1
 
     # Guard against an empty input FASTA (e.g. a distant source whose lncRNA do
     # not project onto the target → 0 transcripts). With no sequences TD2.LongOrfs
