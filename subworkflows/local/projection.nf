@@ -4,8 +4,8 @@ include { MINIMAP2_ALIGN                           } from '../../modules/nf-core
 include { SAMTOOLS_STATS                           } from '../../modules/nf-core/samtools/stats/main.nf'
 include { SAMTOOLS_TO_MQC                          } from '../../modules/local/samtools_to_mqc'
 include { BAM_TO_GFF                               } from '../../modules/local/bam_to_gff'
-include { AGAT_SPSTATISTICS as AGAT_PROJECTED      } from '../../modules/local/agat_spstatistics'
-include { AGAT_TO_MQC       as AGAT_PROJECTED_TO_MQC } from '../../modules/local/agat_to_mqc'
+include { GFF_STATS         as GFF_STATS_PROJECTED } from '../../modules/local/gff_stats'
+include { GFF_STATS_TO_MQC  as GFF_STATS_PROJECTED_TO_MQC } from '../../modules/local/gff_stats_to_mqc'
 include { GFFCOMPARE        as GFFCOMPARE_COMBINE  } from '../../modules/nf-core/gffcompare/main'
 include { GFFREAD           as COMBINED_GTF_TO_GFF } from '../../modules/nf-core/gffread/main'
 include { GFFREAD           as EXTRACT_PROJECTED_LNC } from '../../modules/nf-core/gffread/main'
@@ -117,7 +117,7 @@ workflow PROJECTION {
 
     // Convert each combined GTF → GFF3 so it matches the rest of the pipeline,
     // and reshape meta to the projection convention (id = 'combined') so the
-    // consensus models flow through the same AGAT / benchmarking naming closures
+    // consensus models flow through the same GFF stats / benchmarking naming closures
     // as per-source projections (yielding "from_combined" rows).
     COMBINED_GTF_TO_GFF(
         GFFCOMPARE_COMBINE.out.combined_gtf.map { meta, gtf -> tuple(meta + [id: 'combined'], gtf) },
@@ -130,24 +130,16 @@ workflow PROJECTION {
     ch_projected = ch_projected_persource.mix(COMBINED_GTF_TO_GFF.out.gffread_gff)
 
     // ── Statistics on projected models ───────────────────────────────────────
-    // Pair each projected GFF with the (gunzipped) target genome FASTA so
-    // AGAT can compute genome-coverage metrics via --gs. Join by target_id.
-    ch_projected_agat_in = ch_projected
-        .map { meta, gff -> tuple(meta.target_id, meta + [kind: 'projected'], gff) }
-        .combine(
-            GUNZIP_TARGET.out.gunzip.map { meta, fa -> tuple(meta.id, fa) },
-            by: 0
-        )
-        .map { _id, meta, gff, fa -> tuple(meta, gff, fa) }
-
-    AGAT_PROJECTED(ch_projected_agat_in)
-    AGAT_PROJECTED_TO_MQC(AGAT_PROJECTED.out.stats_yaml)
+    GFF_STATS_PROJECTED(
+        ch_projected.map { meta, gff -> tuple(meta + [kind: 'projected'], gff) }
+    )
+    GFF_STATS_PROJECTED_TO_MQC(GFF_STATS_PROJECTED.out.json)
 
     // Keep SAMTOOLS_STATS.out.stats in the mix so MultiQC's native samtools
     // module still runs (it renders the "Percent mapped" bar chart). Our
     // curated 7-column TSV is rendered as a custom section nested under
     // Samtools (see assets/multiqc/sections.yml: parent_id: samtools).
-    ch_mqc_files = AGAT_PROJECTED_TO_MQC.out.tsv
+    ch_mqc_files = GFF_STATS_PROJECTED_TO_MQC.out.tsv
         .mix(SAMTOOLS_STATS.out.stats)
         .mix(SAMTOOLS_TO_MQC.out.tsv)
         .mix(TD2_NONCODING_PROJ.out.mqc)
@@ -157,6 +149,5 @@ workflow PROJECTION {
     index        = MINIMAP2_ALIGN.out.index          // [ meta, *.bam.bai      ]
     gff3         = ch_projected                      // [ meta, *.gff3         ] × 20 (16 per-source + 4 combined)
     combined_gff = COMBINED_GTF_TO_GFF.out.gffread_gff // [ meta, *.gff3        ] × 4 (consensus per gene type)
-    target_fasta = GUNZIP_TARGET.out.gunzip          // [ meta, fasta          ] × 1
-    mqc_files    = ch_mqc_files                      // [ meta, *_mqc.tsv      ] × 16
+    mqc_files    = ch_mqc_files                      // [ meta, *_mqc.tsv      ] (one table per projected model + samtools + TD2)
 }

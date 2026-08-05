@@ -5,13 +5,12 @@ include { RENAME_FASTA_HEADERS               } from '../../modules/local/rename_
 include { TD2_NONCODING                      } from './td2_noncoding'
 include { FILTER_GFF_BY_ID as FILTER_LNC_GFF } from '../../modules/local/filter_gff_by_id'
 include { MAYBE_GUNZIP as GUNZIP_FASTA       } from '../../modules/local/maybe_gunzip'
-include { MAYBE_GUNZIP as GUNZIP_RAW_SOURCE_GFF } from '../../modules/local/maybe_gunzip'
 include { GFFREAD as EXTRACT_SEQUENCES       } from '../../modules/nf-core/gffread/main'
 include { GFFREAD as EXTRACT_DECOY_SEQUENCES } from '../../modules/nf-core/gffread/main'
 include { SAMTOOLS_FAIDX                     } from '../../modules/nf-core/samtools/faidx/main'
 include { BEDTOOLS_COMPLEMENT                } from '../../modules/nf-core/bedtools/complement/main'
-include { AGAT_SPSTATISTICS                  } from '../../modules/local/agat_spstatistics'
-include { AGAT_TO_MQC                        } from '../../modules/local/agat_to_mqc'
+include { GFF_STATS                          } from '../../modules/local/gff_stats'
+include { GFF_STATS_TO_MQC                   } from '../../modules/local/gff_stats_to_mqc'
 include { SEQKIT_STATS                       } from '../../modules/nf-core/seqkit/stats/main'
 include { SEQKIT_TO_MQC                      } from '../../modules/local/seqkit_to_mqc'
 
@@ -141,7 +140,7 @@ workflow PREPROCESSING {
     // SeqKit stats are all derived from this so they reflect the filtering.
     ch_renamed_final = TD2_NONCODING.out.kept_fasta.mix(ch_renamed.rest)
 
-    // Subset the lncRNA filtered_gff3 by the coding IDs so the input AGAT
+    // Subset the lncRNA filtered_gff3 by the coding IDs so the input GFF
     // "filtered" stats reflect the drop. mRNA GFF3 is untouched. The decoy
     // branch (RELOCATE_LOCI) still consumes the PRE-filter GFF3 upstream, so
     // decoys remain an unfiltered null baseline.
@@ -165,35 +164,21 @@ workflow PREPROCESSING {
     ch_filtered_gff3 = FILTER_LNC_GFF.out.gff3.mix(ch_filt_gff.mrna)
 
     // ── Statistics & MultiQC adapters ─────────────────────────────────────────
-    // AGAT does not handle .gff3.gz transparently — gunzip raw source GFFs first.
-    GUNZIP_RAW_SOURCE_GFF(
-        ch_sources.map { meta, _fa, gff3 -> tuple(meta + [kind: 'raw'], gff3) }
-    )
-
-    // Union of raw/filtered/decoy GFFs, all on the source genome. The
+    // Union of raw/filtered/decoy GFFs, all on the source genome. The raw source
+    // GFF3 goes in still-gzipped — gff-feature-stats reads .gz directly. The
     // "filtered" set uses the TD2-filtered lncRNA GFF3 (+ untouched mRNA) so the
     // input stats reflect the coding-potential drop.
-    ch_agat_gff = GUNZIP_RAW_SOURCE_GFF.out.gunzip
+    ch_stats_gff = ch_sources.map { meta, _fa, gff3 -> tuple(meta + [kind: 'raw'], gff3) }
         .mix(ch_filtered_gff3.map { m, g -> tuple(m + [kind: 'filtered'], g) })
         .mix(RELOCATE_LOCI  .out.gff3.map { m, g -> tuple(m + [kind: 'decoy'],    g) })
 
-    // Pair each GFF with its source genome FASTA (needed by AGAT --gs for
-    // genome-coverage metrics) by joining on meta.id.
-    ch_agat_in = ch_agat_gff
-        .map { meta, gff -> tuple(meta.id, meta, gff) }
-        .combine(
-            GUNZIP_FASTA.out.gunzip.map { meta, fa -> tuple(meta.id, fa) },
-            by: 0
-        )
-        .map { _id, meta, gff, fa -> tuple(meta, gff, fa) }
-
-    AGAT_SPSTATISTICS(ch_agat_in)
-    AGAT_TO_MQC(AGAT_SPSTATISTICS.out.stats_yaml)
+    GFF_STATS(ch_stats_gff)
+    GFF_STATS_TO_MQC(GFF_STATS.out.json)
 
     SEQKIT_STATS(ch_renamed_final)
     SEQKIT_TO_MQC(SEQKIT_STATS.out.stats)
 
-    ch_mqc_files = AGAT_TO_MQC.out.tsv
+    ch_mqc_files = GFF_STATS_TO_MQC.out.tsv
         .mix(SEQKIT_TO_MQC.out.mqc)
         .mix(TD2_NONCODING.out.mqc)
 

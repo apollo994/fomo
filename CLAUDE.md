@@ -37,9 +37,9 @@ The top-level `workflows/fomo.nf` wires four subworkflows under `subworkflows/lo
 
 | Subworkflow | Does | Emits |
 |-------------|------|-------|
-| `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; AGAT + SeqKit stats | `spliced_fasta`, `decoy_spliced_fasta`, `filtered_gff3`, `decoy_gff3`, `intergenic_bed`, `mqc_files` |
-| `PROJECTION` | minimap2 align (source spliced FASTA → target), BAM→GFF; samtools stats + AGAT on projected models | `gff3`, `bam`, `index`, `target_fasta`, `mqc_files` |
-| `BENCHMARKING` | filter target ref, gffcompare projected vs. reference; AGAT on target GFFs | `stats`, `mqc_files` |
+| `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; GFF + SeqKit stats | `spliced_fasta`, `decoy_spliced_fasta`, `filtered_gff3`, `decoy_gff3`, `intergenic_bed`, `mqc_files` |
+| `PROJECTION` | minimap2 align (source spliced FASTA → target), BAM→GFF; samtools stats + GFF stats on projected models | `gff3`, `bam`, `index`, `combined_gff`, `mqc_files` |
+| `BENCHMARKING` | filter target ref, gffcompare projected vs. reference; GFF stats on target GFFs | `stats`, `target_refs`, `mqc_files` |
 | `REPORTING` | the single MULTIQC invocation | `report`, `data` |
 
 **Single-target assumption:** `PROJECTION` calls `.first()` on the index channel, so it indexes/aligns against exactly one target. The samplesheet schema permits more, but only the first target is used. Generalise here if multi-target support is needed.
@@ -58,13 +58,43 @@ Each step maps to a legacy script in `legacy_scripts/preprocessing/` which serve
 | Extract intergenic intervals | `02_get_intergenic_intervals.sh` | AGAT + bedtools | Build intergenic BED from target annotation |
 | Build decoy sequences | `03_relocate_loci.py` | Python | Relocate source loci into intergenic intervals of target to create decoy FASTA |
 | Extract decoy spliced FASTA | `04_get_decoy_sequence_commands.sh` | AGAT | Extract exon sequences from decoy GFF3 |
-| Preprocessing statistics | `05_get_gff_statistics_commands.sh` | AGAT | Collect GFF stats at each stage |
+| Preprocessing statistics | `05_get_gff_statistics_commands.sh` | AGAT (now `gff-feature-stats`) | Collect GFF stats at each stage |
 
 The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and converts BAM → GFF3 with exon structure.
 
 # Key Tools
 - **gffread** - GFF3 manipulation. Prefer this over **AGAT** when possible. 
-- **AGAT** — GFF3 manipulation (filtering, longest isoform selection, statistics).
+- **gff-feature-stats** — GFF3 feature statistics (gene categories, per-transcript-type
+  counts/lengths, introns). Replaced `agat_sp_statistics.pl` for every stats step: same
+  numbers (verified metric-by-metric against AGAT, introns included), plus intron stats
+  AGAT-style parsing never gave us, at a flat ~20 MB RSS instead of 8–12 GB. Reads
+  `.gff3.gz` directly, so no gunzip step is needed upstream.
+  **Vendored as `bin/gff-feature-stats`** — a release build of v0.2.0 from
+  `github.com/apollo994/gff-feature-stats` @ `67ffea7`. The **commit is the provenance**:
+  `67ffea7` changed behaviour without bumping the crate version, so `-V` (and the
+  versions topic) reports `0.2.0` for it and the earlier `6b31e3a` build alike. It is
+  dynamically linked and needs glibc ≥ 2.34, which the pinned `ubuntu:22.04` task image
+  satisfies; re-test before pointing `GFF_STATS` at an older base image. To rebuild (bump
+  the commit in `modules/local/gff_stats.nf` when you do):
+  ```sh
+  cd ~/repos/gff-feature-stats && cargo build --release   # or, for a static binary:
+  RUSTFLAGS='-C target-feature=+crt-static' cargo build --release
+  cp target/release/gff-feature-stats <fomo>/bin/ && chmod 755 <fomo>/bin/gff-feature-stats
+  singularity exec docker://ubuntu:22.04 ./bin/gff-feature-stats -V   # smoke test
+  ```
+  Three constraints to know:
+  - **Input must be grouped by seqid** (contiguous records per seqid; order *within* a
+    seqid is free). Interleaved seqids exit 1, but only above the tool's 200k-line batch
+    threshold — smaller files form one batch and are always accepted, so a small test run
+    can pass where a full-size one fails. `bin/relocate_loci.py` sorts its decoys by
+    seqid for exactly this reason; every other GFF here is already grouped (Ensembl
+    input, gffread output, and `BAM_TO_GFF` output via `samtools sort`).
+  - It cannot compute genome coverage (no genome-size input).
+  - It resolves a transcript's gene via `Parent`/`gene`/`Gene` only — so gffread-derived
+    GFF3s (`combined`, `top3`), which carry the gene in `geneID=` and emit no gene
+    features, report 0 genes.
+- **AGAT** — GFF3 manipulation (filtering, longest isoform selection). No longer used by the
+  pipeline; kept as the reference implementation in `legacy_scripts/`.
 - **minimap2** — splice-aware long-read alignment (source spliced FASTA → target)
 - **bedtools** — genomic interval arithmetic
 - **samtools** — BAM handling
@@ -73,9 +103,10 @@ The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and 
 # Reporting conventions
 
 Every subworkflow that emits statistics:
-- Runs its stat producers (AGAT, SeqKit, samtools stats, gffcompare, ...) and any
-  required adapter modules (modules named `*_TO_MQC` that parse a tool's output into
-  a one-row `*_mqc.tsv`).
+- Runs its stat producers (`gff-feature-stats`, SeqKit, samtools stats, gffcompare, ...)
+  and any required adapter modules (modules named `*_TO_MQC` that parse a tool's output
+  into an `*_mqc.tsv` — usually one row, but `GFF_STATS_TO_MQC` emits one row per
+  transcript type and a second file for gene categories).
 - Emits a `mqc_files` channel of shape `tuple(meta, path)` — same shape as the rest
   of the pipeline so the meta is available for tracing.
 - Subworkflows with no stats emit `Channel.empty()` as `mqc_files`.
@@ -83,7 +114,9 @@ Every subworkflow that emits statistics:
 The top-level workflow mixes `mqc_files` across subworkflows and passes the union to
 `REPORTING`. `REPORTING` strips meta, collects paths, and is the only place that calls
 `MULTIQC` (pinned to **v1.35**; bump in `modules/nf-core/multiqc/{main.nf,environment.yml}`
-and `modules/local/{agat,samtools}_to_mqc.nf`, which reuse the MultiQC container).
+and in `modules/local/{samtools_to_mqc,select_top_sources}.nf`, which reuse the MultiQC
+container. `GFF_STATS_TO_MQC` does not — it needs only stdlib `json`, so it runs on
+`python:3.11`).
 
 MultiQC config lives in two files under `assets/multiqc/` (wired via
 `params.multiqc_main_config` / `params.multiqc_sections_config`, passed as a 2-item
@@ -95,8 +128,9 @@ list to MULTIQC's single config slot):
 ### Adding a new custom-content section — rules learned the hard way
 
 1. **Route by `sp` pattern only, never both `sp` and an embedded `# id:` header.**
-   Each adapter emits a file with a **unique suffix** (`*_agat_input_mqc.tsv`,
-   `*_agat_projection_mqc.tsv`, `*_seqkit_mqc.tsv`, `*_samtools_align_mqc.tsv`) matched
+   Each adapter emits a file with a **unique suffix** (`*_gffstats_input_mqc.tsv`,
+   `*_gffstats_genes_mqc.tsv`, `*_gffstats_projection_mqc.tsv`, `*_seqkit_mqc.tsv`,
+   `*_samtools_align_mqc.tsv`) matched
    1:1 by an `sp.<section>.fn` pattern. The `*_TO_MQC` adapters deliberately do **not**
    write a `# id:` header — a file discovered by both `sp` *and* a header renders the
    section **twice**.

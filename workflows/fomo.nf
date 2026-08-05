@@ -29,7 +29,7 @@ workflow FOMO {
         PREPROCESSING.out.decoy_spliced_fasta
     )
 
-    BENCHMARKING(ch_input.target, PROJECTION.out.gff3, PROJECTION.out.target_fasta)
+    BENCHMARKING(ch_input.target, PROJECTION.out.gff3)
 
     // Per-source REAL projections only (exclude the all-source 'combined'
     // consensus and decoys) — the pool from which the top-3 consensus is built.
@@ -39,8 +39,7 @@ workflow FOMO {
     CONSENSUS_TOP(
         ch_projected_real,
         BENCHMARKING.out.stats,
-        BENCHMARKING.out.target_refs,
-        PROJECTION.out.target_fasta
+        BENCHMARKING.out.target_refs
     )
 
     REPORTING(

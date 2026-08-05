@@ -1,21 +1,20 @@
 include { SELECT_TOP_SOURCES                       } from '../../modules/local/select_top_sources'
 include { GFFCOMPARE as GFFCOMPARE_COMBINE_TOP     } from '../../modules/nf-core/gffcompare/main'
 include { GFFREAD    as COMBINED_TOP_GTF_TO_GFF    } from '../../modules/nf-core/gffread/main'
-include { AGAT_SPSTATISTICS as AGAT_TOP            } from '../../modules/local/agat_spstatistics'
-include { AGAT_TO_MQC       as AGAT_TOP_TO_MQC     } from '../../modules/local/agat_to_mqc'
+include { GFF_STATS         as GFF_STATS_TOP       } from '../../modules/local/gff_stats'
+include { GFF_STATS_TO_MQC  as GFF_STATS_TOP_TO_MQC } from '../../modules/local/gff_stats_to_mqc'
 include { GFFCOMPARE as GFFCOMPARE_TOP             } from '../../modules/nf-core/gffcompare/main'
 
 // Build a "top-N consensus" annotation: rank sources by lncRNA transcript-level
 // F1 (from per-source gffcompare stats), then gffcompare-combine the lncRNA AND
 // mRNA projections of those same top sources. The consensus is plugged into the
-// same downstream as every other model (AGAT, gffcompare-vs-reference, MultiQC)
+// same downstream as every other model (GFF stats, gffcompare-vs-reference, MultiQC)
 // under the pseudo-source id 'top3'.
 workflow CONSENSUS_TOP {
     take:
     ch_projected_real   // [ meta(id=source, target_id, feature_type, decoy:false), gff3 ] × 2N  (per-source REAL only)
     ch_all_stats        // [ meta, *.gffcompare.stats ] — per-source stats for ranking (selector filters to real lncRNA)
     ch_target_refs      // [ meta(feature_type), gff3 ] × 2  (filtered target references, from BENCHMARKING)
-    ch_target_fasta     // [ meta(role:'target'), fasta ] × 1  (gunzipped)
 
     main:
 
@@ -58,17 +57,11 @@ workflow CONSENSUS_TOP {
     )
     ch_top_gff3 = COMBINED_TOP_GTF_TO_GFF.out.gffread_gff   // [ meta(id:top3,...), gff3 ] × 2
 
-    // ── AGAT stats on the consensus (pair with target genome FASTA via --gs) ──
-    ch_top_agat_in = ch_top_gff3
-        .map { meta, gff -> tuple(meta.target_id, meta + [kind: 'projected'], gff) }
-        .combine(
-            ch_target_fasta.map { meta, fa -> tuple(meta.id, fa) },
-            by: 0
-        )
-        .map { _id, meta, gff, fa -> tuple(meta, gff, fa) }
-
-    AGAT_TOP(ch_top_agat_in)
-    AGAT_TOP_TO_MQC(AGAT_TOP.out.stats_yaml)
+    // ── GFF statistics on the consensus ───────────────────────────────────────
+    GFF_STATS_TOP(
+        ch_top_gff3.map { meta, gff -> tuple(meta + [kind: 'projected'], gff) }
+    )
+    GFF_STATS_TOP_TO_MQC(GFF_STATS_TOP.out.json)
 
     // ── gffcompare the consensus against the matching target reference ────────
     ch_top_paired = ch_top_gff3
@@ -90,11 +83,11 @@ workflow CONSENSUS_TOP {
         ch_top_split.reference
     )
 
-    ch_mqc_files = AGAT_TOP_TO_MQC.out.tsv
+    ch_mqc_files = GFF_STATS_TOP_TO_MQC.out.tsv
         .mix(GFFCOMPARE_TOP.out.stats)
 
     emit:
     gff3      = ch_top_gff3              // [ meta(id:top3), gff3 ] × 2
     stats     = GFFCOMPARE_TOP.out.stats // [ meta, *.stats ] × 2 (feeds the accuracy scatter in REPORTING)
-    mqc_files = ch_mqc_files             // [ meta, path    ] × 4 (2 gffcompare stats + 2 AGAT)
+    mqc_files = ch_mqc_files             // [ meta, path    ] × 4 (2 gffcompare stats + 2 GFF stats tables)
 }

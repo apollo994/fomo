@@ -329,6 +329,16 @@ def main() -> None:
         remove_subinterval(intergenic[tgt_chrom], idx, used)
         relocated.append(relocate_model(m, new_seqid=tgt_chrom, new_t_start=new_start, new_source="relocated"))
 
+    # Group the output by target chromosome. Each model picks its chromosome
+    # independently above, so writing in model order interleaves seqids — and
+    # gff-feature-stats (GFF_STATS) requires every seqid's records to be
+    # contiguous, rejecting interleaved input above its 200k-line batch
+    # threshold. That only bites for large decoy sets (decoy_cap 0 or ≳20k),
+    # but grouping here keeps the decoy GFF3 valid at any cap. The sort is
+    # stable and keyed on seqid alone, so each model's gene/transcript/exon
+    # lines stay together and in order; only the order of models changes.
+    relocated.sort(key=lambda rm: rm.transcript.seqid)
+
     with open(args.output_gff, "w", encoding="utf-8") as out:
         out.write("##gff-version 3\n")
         out.write("##source=relocate_loci\n")

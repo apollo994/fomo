@@ -1,34 +1,53 @@
 # ---------------------------------------------------------------------------
 # Custom-content sections
 # ---------------------------------------------------------------------------
-# agat_input       — AGAT stats on input GFFs (source + target, raw/filtered/decoy)
-# agat_projection  — AGAT stats on projected GFFs (minimap2-then-BAM_TO_GFF output)
-# seqkit_stats     — SeqKit FASTA length/composition stats
-# td2_coding       — TD2 coding-potential drops for real lncRNA (input + projected)
+# gffstats_input      — GFF stats on input GFFs (source + target, raw/filtered/decoy)
+# gffstats_genes      — gene-category breakdown of those same input GFFs
+# gffstats_projection — GFF stats on projected GFFs (minimap2-then-BAM_TO_GFF output)
+# seqkit_stats        — SeqKit FASTA length/composition stats
+# td2_coding          — TD2 coding-potential drops for real lncRNA (input + projected)
 # ---------------------------------------------------------------------------
 custom_data:
-  agat_input:
+  gffstats_input:
     file_format: "tsv"
-    section_name: "AGAT statistics — input annotations"
+    section_name: "GFF statistics — input annotations"
     description: >
-      Per-annotation counts, length statistics, and genome coverage from
-      agat_sp_statistics --yaml. One row per (species × kind), where
-      `kind` is one of raw / lncRNA / decoy_lncRNA / mRNA / decoy_mRNA.
+      Per-transcript-type counts and length statistics from gff-feature-stats.
+      One row per (species × kind × transcript type), where `kind` is one of
+      raw / lncRNA / decoy_lncRNA / mRNA / decoy_mRNA. Transcript lengths are
+      genomic spans; spliced lengths are summed exon lengths. Introns are not
+      encoded in GFF3 and are derived from the gaps between a transcript's
+      exons (`next.start − prev.end − 1`), so a single-exon-only transcript
+      type shows NA for every intron and spliced-length column.
     plot_type: "table"
     pconfig:
-      id: "agat_input_table"
-      namespace: "AGAT input"
-  agat_projection:
+      id: "gffstats_input_table"
+      namespace: "GFF stats input"
+  gffstats_genes:
     file_format: "tsv"
-    section_name: "AGAT statistics — projected models"
+    section_name: "GFF statistics — gene categories (input annotations)"
     description: >
-      AGAT statistics on the minimap2-projected transcript models, computed
-      against the target genome. One row per (target × source × feature_type
-      × decoy/not).
+      Gene-level view of the same input annotations, split by the category
+      gff-feature-stats assigns each gene: `coding` (has CDS, or biotype
+      protein_coding), `pseudogene`, or `non_coding`. Counts aggregate over the
+      whole file, so they span every transcript type at once.
     plot_type: "table"
     pconfig:
-      id: "agat_projection_table"
-      namespace: "AGAT projection"
+      id: "gffstats_genes_table"
+      namespace: "GFF stats genes"
+  gffstats_projection:
+    file_format: "tsv"
+    section_name: "GFF statistics — projected models"
+    description: >
+      gff-feature-stats on the minimap2-projected transcript models, computed
+      against the target genome. One row per (target × source × feature_type ×
+      decoy/not). Projected models carry no CDS, so CDS columns are NA. The
+      `from_combined` and `from_top3` rows come from gffread, whose GFF3 output
+      has no gene features, so their n_genes reads 0.
+    plot_type: "table"
+    pconfig:
+      id: "gffstats_projection_table"
+      namespace: "GFF stats projection"
   seqkit_stats:
     file_format: "tsv"
     section_name: "SeqKit FASTA statistics"
@@ -61,15 +80,17 @@ custom_data:
       namespace: "TD2"
 
 # Each section uses a unique filename suffix so MultiQC's sp pattern is
-# the single source of routing. AGAT TSVs deliberately do NOT carry a
-# `# id:` header — embedding one would cause MultiQC to discover the
+# the single source of routing. The GFF stats TSVs deliberately do NOT carry
+# a `# id:` header — embedding one would cause MultiQC to discover the
 # section twice (once via sp, once via the embedded id) and render every
 # section twice in the report.
 sp:
-  agat_input:
-    fn: "*_agat_input_mqc.tsv"
-  agat_projection:
-    fn: "*_agat_projection_mqc.tsv"
+  gffstats_input:
+    fn: "*_gffstats_input_mqc.tsv"
+  gffstats_genes:
+    fn: "*_gffstats_genes_mqc.tsv"
+  gffstats_projection:
+    fn: "*_gffstats_projection_mqc.tsv"
   seqkit_stats:
     fn: "*_seqkit_mqc.tsv"
   samtools_align:
