@@ -1,6 +1,10 @@
 process TD2_PREDICT {
     tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
-    label 'process_medium'
+    // Right-sized from traces: both instances peak at 0.60 GB / 1.24 cores / 15 s against
+    // the old process_medium 24 GB / 4 cpu / 1 h (plans/13). PSAURON/TD2 memory scales with
+    // transcript count and Lycaenidae lncRNA sets are small, so if a larger clade starts
+    // retrying here give TD2_PREDICT its own `withName` block rather than reverting to medium.
+    label 'process_low'
 
     // TD2 (TransDecoder2). BioContainers publishes images only up to td2 1.0.7
     // (no 1.0.8 / 1.1.0 build), so the containers below are Wave builds of the
