@@ -14,7 +14,8 @@ custom_data:
     description: >
       Per-transcript-type counts and length statistics from gff-feature-stats.
       One row per (species × kind × transcript type), where `kind` is one of
-      raw / lncRNA / decoy_lncRNA / mRNA / decoy_mRNA. Transcript lengths are
+      raw / lncRNA / decoy_lncRNA / mRNA / decoy_mRNA — the mRNA and decoy rows
+      appear only with `--include_mrna` / `--include_decoy`. Transcript lengths are
       genomic spans; spliced lengths are summed exon lengths. Introns are not
       encoded in GFF3 and are derived from the gaps between a transcript's
       exons (`next.start − prev.end − 1`), so a single-exon-only transcript
@@ -41,7 +42,8 @@ custom_data:
     description: >
       gff-feature-stats on the minimap2-projected transcript models, computed
       against the target genome. One row per (target × source × feature_type ×
-      decoy/not). Projected models carry no CDS, so CDS columns are NA. The
+      decoy/not) — mRNA and decoy rows appear only with `--include_mrna` /
+      `--include_decoy`. Projected models carry no CDS, so CDS columns are NA. The
       `from_combined` and `from_top3` rows come from gffread, whose GFF3 output
       has no gene features, so their n_genes reads 0.
     plot_type: "table"
@@ -61,7 +63,8 @@ custom_data:
     section_name: "Samtools — Alignment statistics (curated)"
     description: >
       Curated set of alignment metrics parsed from `samtools stats` SN lines.
-      One row per projected (target, source, feature_type, decoy/not) tuple.
+      One row per projected (target, source, feature_type, decoy/not) tuple —
+      mRNA and decoy rows appear only with `--include_mrna` / `--include_decoy`.
     plot_type: "table"
     pconfig:
       id: "samtools_align_table"
@@ -73,7 +76,8 @@ custom_data:
       Real lncRNA dropped because TD2 (TransDecoder2) found a complete ORF with
       psauron_score >= the configured cutoff. One row per (sample × stage):
       `input` = source lncRNA before projection, `projected` = per-source
-      projected lncRNA before consensus. mRNA and decoy tracks are not filtered.
+      projected lncRNA before consensus. mRNA and decoy tracks are never filtered
+      (and are absent unless `--include_mrna` / `--include_decoy` are set).
     plot_type: "table"
     pconfig:
       id: "td2_coding_table"

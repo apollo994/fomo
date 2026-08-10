@@ -7,7 +7,12 @@ include { GFF_STATS_TO_MQC  as GFF_STATS_TARGET_TO_MQC } from '../../modules/loc
 workflow BENCHMARKING {
     take:
     ch_target          // [ meta(role:'target'), fasta[.gz], gff3[.gz] ] × 1
-    ch_projected_gff3  // [ meta(target_id, id, feature_type, decoy), gff3 ] × 16
+    ch_projected_gff3  // [ meta(target_id, id, feature_type, decoy), gff3 ] × F·N·D
+    feature_types      // plain List<String> — MUST be the same list PREPROCESSING got,
+                       // hence derived once in workflows/fomo.nf. The projection ⋈
+                       // reference pairing below is an INNER join on feature_type, so a
+                       // list that disagrees with the source side silently drops
+                       // projections rather than failing.
 
     main:
 
@@ -15,11 +20,10 @@ workflow BENCHMARKING {
         ch_target.map { meta, _fa, gff3 -> tuple(meta, gff3) }
     )
 
-    // Filter target annotation by feature_type — produces one GFF3 per class.
+    // Filter target annotation by enabled feature_type — one GFF3 per class.
     ch_target_filter_in = GUNZIP_TARGET_GFF.out.gunzip
-        .combine(Channel.of('lnc_RNA', 'mRNA'))
-        .map { meta, gff3, ftype ->
-            tuple(meta + [feature_type: ftype, decoy: false], gff3, ftype)
+        .flatMap { meta, gff3 ->
+            feature_types.collect { ft -> tuple(meta + [feature_type: ft, decoy: false], gff3, ft) }
         }
 
     FILTER_TARGET(ch_target_filter_in)
@@ -57,8 +61,9 @@ workflow BENCHMARKING {
     ch_mqc_files = GFFCOMPARE.out.stats
         .mix(GFF_STATS_TARGET_TO_MQC.out.tsv)
 
+    // N = sources, F = enabled feature types, D = 2 with --include_decoy else 1.
     emit:
-    stats         = GFFCOMPARE.out.stats        // [ meta, *.stats ] × 20
-    target_refs   = FILTER_TARGET.out.gff3      // [ meta(feature_type), gff3 ] × 2 (lnc_RNA, mRNA)
-    mqc_files     = ch_mqc_files                // [ meta, path    ] (20 stats + 3 GFF_STATS pairs: transcript + gene table each)
+    stats         = GFFCOMPARE.out.stats        // [ meta, *.stats ] × F·N·D + F·D
+    target_refs   = FILTER_TARGET.out.gff3      // [ meta(feature_type), gff3 ] × F
+    mqc_files     = ch_mqc_files                // [ meta, path    ] (the stats above + (F+1) GFF_STATS pairs: transcript + gene table each)
 }

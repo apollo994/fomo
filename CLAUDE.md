@@ -31,22 +31,58 @@ Conceptual stages and their **implementation status**:
 5. **Validation** — splice-junction validation of projected models. ❌ Not yet implemented (next step, see `BRAINSTORM.md`).
 6. **Reporting** — MultiQC report. ✅ Implemented.
 
+### Feature tracks (what gets transferred)
+
+Only **lncRNA** is transferred by default — it is the deliverable. Two development
+instruments are opt-in:
+
+| Flag | Adds | Why |
+|------|------|-----|
+| `--include_mrna` | the source `mRNA` track through every stage | **positive control** — mRNA projects well from close relatives, so its gffcompare Sn/Pr bound what the lncRNA track can reach |
+| `--include_decoy` | a relocated decoy track per *enabled* feature type | **negative control / FDR baseline** — source loci moved into the source's own intergenic space, so anything that still projects is a false positive |
+
+With N sources, F enabled feature types (1, or 2 with `--include_mrna`) and D = 2 with
+`--include_decoy` else 1: `F·N` `FILTER_TRANSCRIPT`, `F·N·D` minimap2 alignments, `F·D`
+`GFFCOMPARE_COMBINE` groups, `F·N·D + F·D` benchmark `GFFCOMPARE`s, `F` target references.
+Both flags on reproduces the pre-flag behaviour exactly; `-profile test` sets both.
+
+The enabled list is derived **once**, in `workflows/fomo.nf`
+(`ch_feature_types = Channel.value(['lnc_RNA'] + (params.include_mrna ? ['mRNA'] : []))`),
+and passed as a `take:` input to both `PREPROCESSING` (source filtering) and `BENCHMARKING`
+(target-reference filtering). **Never re-derive it inside a subworkflow** — benchmarking
+pairs projections to references with an inner `combine(by: 0)` on `feature_type`, so a list
+that disagrees with the source side silently *drops* projections instead of failing.
+
+**Decoy placement is annotation-wide, not track-wide.** `GFF_TO_GENE_BED` reads the *raw*
+samplesheet GFF3 (not the per-feature-type `FILTER_TRANSCRIPT` output) and keeps every
+gene-level feature (`gene`, `pseudogene`, `ncRNA_gene`), so `BEDTOOLS_COMPLEMENT` yields the
+complement of the **entire** annotation — coding genes included — regardless of
+`--include_mrna`. The chain runs once per source (N tasks, not `F·N`) and its single BED is
+broadcast to every feature type. So: gate it on `include_decoy` only, and never repoint
+`GFF_TO_GENE_BED` at a filtered GFF3, which would redefine intergenic as "outside lncRNA
+genes" and let lncRNA decoys land inside real mRNA loci.
+
 ### Subworkflow map
 
 The top-level `workflows/fomo.nf` wires four subworkflows under `subworkflows/local/`:
 
 | Subworkflow | Does | Emits |
 |-------------|------|-------|
-| `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; GFF + SeqKit stats | `spliced_fasta`, `decoy_spliced_fasta`, `filtered_gff3`, `decoy_gff3`, `intergenic_bed`, `mqc_files` |
+| `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; GFF + SeqKit stats | `spliced_fasta`, `decoy_spliced_fasta`*, `filtered_gff3`, `decoy_gff3`*, `intergenic_bed`*, `mqc_files` |
 | `PROJECTION` | minimap2 align (source spliced FASTA → target), BAM→GFF; samtools stats + GFF stats on projected models | `gff3`, `bam`, `index`, `combined_gff`, `mqc_files` |
 | `BENCHMARKING` | filter target ref, gffcompare projected vs. reference; GFF stats on target GFFs | `stats`, `target_refs`, `mqc_files` |
 | `REPORTING` | the single MULTIQC invocation | `report`, `data` |
 
+\* `Channel.empty()` without `--include_decoy` — the whole intergenic/relocation branch
+(`SAMTOOLS_FAIDX` → `GFF_TO_GENE_BED` → `BEDTOOLS_COMPLEMENT` → `RELOCATE_LOCI` →
+`EXTRACT_DECOY_SEQUENCES`) is skipped by an `if (params.include_decoy)` guard in
+`preprocessing.nf`.
+
 **Single-target assumption:** `PROJECTION` calls `.first()` on the index channel, so it indexes/aligns against exactly one target. The samplesheet schema permits more, but only the first target is used. Generalise here if multi-target support is needed.
 
-**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `target_id` (PROJECTION), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring.
+**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `target_id` (PROJECTION), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring. `feature_type` ranges over the *enabled* subset (see **Feature tracks**), and `decoy: true` / `kind: 'decoy'` occur only with `--include_decoy` — every `meta.decoy` dereference in `conf/modules.config` is Groovy-null-safe and the real track always carries `decoy: false`, so the `ext.prefix`/`ext.sample_name` closures need no change when a track is off. Their `1_raw / 2_lncRNA / 3_decoy_lncRNA / 4_mRNA / 5_decoy_mRNA` ordering ladders are deliberately sparse-safe: a disabled class simply produces no row, and the `'unknown'` fallback cannot trigger because the values are always a subset.
 
-**Always-on filters:** `FILTER_TRANSCRIPT` keeps only multi-exon (spliced) transcripts; `RELOCATE_LOCI` caps decoys at `params.decoy_cap` (default 1000; 0 disables) using `params.relocate_seed` for reproducibility.
+**Filters:** `FILTER_TRANSCRIPT` (always on) keeps only multi-exon (spliced) transcripts. `RELOCATE_LOCI` runs **only with `--include_decoy`**, and caps decoys at `params.decoy_cap` (default 1000; 0 disables) using `params.relocate_seed` for reproducibility.
 
 ### Preprocessing detail
 

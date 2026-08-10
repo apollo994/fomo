@@ -16,7 +16,13 @@ include { SEQKIT_TO_MQC                      } from '../../modules/local/seqkit_
 
 workflow PREPROCESSING {
     take:
-    ch_sources   // [ meta, fasta, gff3 ]
+    ch_sources        // [ meta, fasta, gff3 ]
+    feature_types     // plain List<String> of enabled feature types (lnc_RNA [, mRNA]).
+                      // Derived ONCE in workflows/fomo.nf and shared with BENCHMARKING —
+                      // never re-derive it here (see the comment at that call site).
+                      // A List, not a channel, on purpose: it is expanded in a flatMap
+                      // closure below. See the fomo.nf comment for why .combine() on a
+                      // Channel.value(List) is wrong here.
 
     main:
 
@@ -26,11 +32,10 @@ workflow PREPROCESSING {
         ch_sources.map { meta, fasta, gff3 -> tuple(meta, fasta) }
     )
 
-    // Filter each source GFF3 per feature_type (lnc_RNA, mRNA)
+    // Filter each source GFF3 per enabled feature_type (lnc_RNA [, mRNA])
     ch_filter_input = ch_sources
-        .combine(Channel.of('lnc_RNA', 'mRNA'))
-        .map { meta, fasta, gff3, ftype ->
-            tuple(meta + [feature_type: ftype, decoy: false], gff3, ftype)
+        .flatMap { meta, _fasta, gff3 ->
+            feature_types.collect { ft -> tuple(meta + [feature_type: ft, decoy: false], gff3, ft) }
         }
 
     FILTER_TRANSCRIPT(ch_filter_input)
@@ -50,76 +55,102 @@ workflow PREPROCESSING {
 
     EXTRACT_SEQUENCES(ch_extract.gff, ch_extract.fasta)
 
-    // ── Per-source intergenic intervals ──────────────────────────────────────
-    // Index each decompressed source FASTA to get chromosome sizes
-    SAMTOOLS_FAIDX(
-        GUNZIP_FASTA.out.gunzip.map { meta, fa -> tuple(meta, fa, []) },
-        true
-    )
-
-    // Extract gene-level features from each source GFF3 → BED, sorted in the
-    // chromosome order of the FASTA-derived sizes file (required so bedtools
-    // complement downstream accepts the input).
-    ch_sources
-        .map { meta, fasta, gff3 -> tuple(meta.id, meta, gff3) }
-        .combine(
-            SAMTOOLS_FAIDX.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
-            by: 0
+    // ── Decoy track (opt-in: --include_decoy) ────────────────────────────────
+    // Decoys are the false-positive baseline: source loci relocated into that
+    // source's own intergenic space, so anything that still projects onto the
+    // target is a false positive. The intergenic machinery (faidx → gene BED →
+    // complement) exists only to feed RELOCATE_LOCI, so the whole branch is
+    // gated together. One decoy track is built per enabled feature_type.
+    //
+    // INVARIANT — decoy DESTINATIONS ignore the feature-type list. GFF_TO_GENE_BED
+    // is fed from ch_sources (the RAW samplesheet GFF3) and keeps every gene-level
+    // feature (gene | pseudogene | ncRNA_gene), so intergenic space is the
+    // complement of the ENTIRE annotation, coding genes included, whether or not
+    // mRNA is being transferred. The chain is per SOURCE (N tasks, not F·N) and the
+    // one BED per species is broadcast to every feature_type below. So do NOT gate
+    // any of it on params.include_mrna, and do NOT "simplify" GFF_TO_GENE_BED's
+    // input to the per-feature-type FILTER_TRANSCRIPT output — that would redefine
+    // intergenic as "outside lncRNA genes" and let lncRNA decoys land inside real
+    // mRNA loci.
+    if (params.include_decoy) {
+        // Index each decompressed source FASTA to get chromosome sizes
+        SAMTOOLS_FAIDX(
+            GUNZIP_FASTA.out.gunzip.map { meta, fa -> tuple(meta, fa, []) },
+            true
         )
-        .map { id, meta, gff3, sizes -> tuple(meta, gff3, sizes) }
-        .set { ch_gff_to_bed }
 
-    GFF_TO_GENE_BED(ch_gff_to_bed)
+        // Extract gene-level features from each source GFF3 → BED, sorted in the
+        // chromosome order of the FASTA-derived sizes file (required so bedtools
+        // complement downstream accepts the input).
+        ch_sources
+            .map { meta, fasta, gff3 -> tuple(meta.id, meta, gff3) }
+            .combine(
+                SAMTOOLS_FAIDX.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
+                by: 0
+            )
+            .map { id, meta, gff3, sizes -> tuple(meta, gff3, sizes) }
+            .set { ch_gff_to_bed }
 
-    // Pair each source gene BED with its chromosome sizes, then complement
-    GFF_TO_GENE_BED.out.bed
-        .map { meta, bed -> tuple(meta.id, meta, bed) }
-        .combine(
-            SAMTOOLS_FAIDX.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
-            by: 0
-        )
-        .multiMap { id, meta, bed, sizes ->
-            bed:   tuple(meta, bed)
-            sizes: sizes
-        }
-        .set { ch_complement }
+        GFF_TO_GENE_BED(ch_gff_to_bed)
 
-    BEDTOOLS_COMPLEMENT(ch_complement.bed, ch_complement.sizes)
+        // Pair each source gene BED with its chromosome sizes, then complement
+        GFF_TO_GENE_BED.out.bed
+            .map { meta, bed -> tuple(meta.id, meta, bed) }
+            .combine(
+                SAMTOOLS_FAIDX.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
+                by: 0
+            )
+            .multiMap { id, meta, bed, sizes ->
+                bed:   tuple(meta, bed)
+                sizes: sizes
+            }
+            .set { ch_complement }
 
-    // ── Decoy path ───────────────────────────────────────────────────────────
-    // Pair each filtered source GFF3 with its source-species intergenic BED
-    FILTER_TRANSCRIPT.out.gff3
-        .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-        .combine(
-            BEDTOOLS_COMPLEMENT.out.bed.map { meta, bed -> tuple(meta.id, bed) },
-            by: 0
-        )
-        .map { id, meta, gff3, bed -> tuple(meta + [decoy: true], gff3, bed) }
-        .set { ch_relocate }
+        BEDTOOLS_COMPLEMENT(ch_complement.bed, ch_complement.sizes)
 
-    RELOCATE_LOCI(ch_relocate)
+        // Pair each filtered source GFF3 with its source-species intergenic BED
+        FILTER_TRANSCRIPT.out.gff3
+            .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
+            .combine(
+                BEDTOOLS_COMPLEMENT.out.bed.map { meta, bed -> tuple(meta.id, bed) },
+                by: 0
+            )
+            .map { id, meta, gff3, bed -> tuple(meta + [decoy: true], gff3, bed) }
+            .set { ch_relocate }
 
-    // Extract spliced decoy sequences from each source FASTA
-    RELOCATE_LOCI.out.gff3
-        .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-        .combine(
-            GUNZIP_FASTA.out.gunzip.map { meta, fa -> tuple(meta.id, fa) },
-            by: 0
-        )
-        .multiMap { id, meta, gff3, fa ->
-            gff:   tuple(meta, gff3)
-            fasta: fa
-        }
-        .set { ch_decoy_extract }
+        RELOCATE_LOCI(ch_relocate)
 
-    EXTRACT_DECOY_SEQUENCES(ch_decoy_extract.gff, ch_decoy_extract.fasta)
+        // Extract spliced decoy sequences from each source FASTA
+        RELOCATE_LOCI.out.gff3
+            .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
+            .combine(
+                GUNZIP_FASTA.out.gunzip.map { meta, fa -> tuple(meta.id, fa) },
+                by: 0
+            )
+            .multiMap { id, meta, gff3, fa ->
+                gff:   tuple(meta, gff3)
+                fasta: fa
+            }
+            .set { ch_decoy_extract }
+
+        EXTRACT_DECOY_SEQUENCES(ch_decoy_extract.gff, ch_decoy_extract.fasta)
+
+        ch_decoy_gff3      = RELOCATE_LOCI.out.gff3
+        ch_decoy_fasta_raw = EXTRACT_DECOY_SEQUENCES.out.gffread_fasta
+        ch_intergenic_bed  = BEDTOOLS_COMPLEMENT.out.bed
+    }
+    else {
+        ch_decoy_gff3      = Channel.empty()
+        ch_decoy_fasta_raw = Channel.empty()
+        ch_intergenic_bed  = Channel.empty()
+    }
 
     // ── Rename FASTA headers ─────────────────────────────────────────────────
     // Mix source and decoy FASTAs; meta carries feature_type and decoy flag so
     // the module derives the correct type label without separate invocations.
     RENAME_FASTA_HEADERS(
         EXTRACT_SEQUENCES.out.gffread_fasta
-            .mix(EXTRACT_DECOY_SEQUENCES.out.gffread_fasta)
+            .mix(ch_decoy_fasta_raw)
     )
 
     // ── TD2 coding-potential filter (real lncRNA only) ────────────────────────
@@ -170,7 +201,7 @@ workflow PREPROCESSING {
     // input stats reflect the coding-potential drop.
     ch_stats_gff = ch_sources.map { meta, _fa, gff3 -> tuple(meta + [kind: 'raw'], gff3) }
         .mix(ch_filtered_gff3.map { m, g -> tuple(m + [kind: 'filtered'], g) })
-        .mix(RELOCATE_LOCI  .out.gff3.map { m, g -> tuple(m + [kind: 'decoy'],    g) })
+        .mix(ch_decoy_gff3          .map { m, g -> tuple(m + [kind: 'decoy'],    g) })
 
     GFF_STATS(ch_stats_gff)
     GFF_STATS_TO_MQC(GFF_STATS.out.json)
@@ -182,11 +213,13 @@ workflow PREPROCESSING {
         .mix(SEQKIT_TO_MQC.out.mqc)
         .mix(TD2_NONCODING.out.mqc)
 
+    // Cardinalities below use N = sources, F = enabled feature types (1, or 2 with
+    // --include_mrna). The decoy emits are all EMPTY without --include_decoy.
     emit:
-    spliced_fasta       = ch_renamed_final.filter { meta, fa -> !meta.decoy }  // [ meta, fasta ] × 2N (lncRNA coding-filtered)
-    filtered_gff3       = ch_filtered_gff3                                     // [ meta, gff3  ] × 2N (lncRNA coding-filtered)
-    intergenic_bed      = BEDTOOLS_COMPLEMENT.out.bed                          // [ meta, bed   ] × N
-    decoy_gff3          = RELOCATE_LOCI.out.gff3                               // [ meta, gff3  ] × 2N
-    decoy_spliced_fasta = ch_renamed_final.filter { meta, fa -> meta.decoy }   // [ meta, fasta ] × 2N
+    spliced_fasta       = ch_renamed_final.filter { meta, fa -> !meta.decoy }  // [ meta, fasta ] × F·N (lncRNA coding-filtered)
+    filtered_gff3       = ch_filtered_gff3                                     // [ meta, gff3  ] × F·N (lncRNA coding-filtered)
+    intergenic_bed      = ch_intergenic_bed                                    // [ meta, bed   ] × N   (0 without --include_decoy)
+    decoy_gff3          = ch_decoy_gff3                                        // [ meta, gff3  ] × F·N (0 without --include_decoy)
+    decoy_spliced_fasta = ch_renamed_final.filter { meta, fa -> meta.decoy }   // [ meta, fasta ] × F·N (0 without --include_decoy)
     mqc_files           = ch_mqc_files                                         // [ meta, path  ]
 }

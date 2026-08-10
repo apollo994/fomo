@@ -50,14 +50,14 @@
             "title": "Pipeline options",
             "type": "object",
             "fa_icon": "fas fa-cogs",
-            "description": "Parameters controlling decoy generation and the MultiQC report.",
+            "description": "Parameters controlling which feature tracks are transferred, decoy generation and the MultiQC report.",
             "properties": {
                 "relocate_seed": {
                     "type": "integer",
                     "default": 42,
                     "minimum": 0,
                     "description": "Random seed for deterministic decoy relocation.",
-                    "help_text": "Forwarded to relocate_loci.py --seed so decoy placement is reproducible across runs.",
+                    "help_text": "Forwarded to relocate_loci.py --seed so decoy placement is reproducible across runs. Only takes effect with --include_decoy.",
                     "fa_icon": "fas fa-dice"
                 },
                 "decoy_cap": {
@@ -65,8 +65,22 @@
                     "default": 1000,
                     "minimum": 0,
                     "description": "Maximum number of decoy models to generate per source feature type.",
-                    "help_text": "Random sample of N models taken before relocation. Set to 0 to disable the cap (use all eligible models).",
+                    "help_text": "Random sample of N models taken before relocation. Set to 0 to disable the cap (use all eligible models). Only takes effect with --include_decoy.",
                     "fa_icon": "fas fa-filter"
+                },
+                "include_mrna": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Also transfer the source mRNA track (positive control).",
+                    "help_text": "Off by default: FOMO's deliverable is lncRNA. The mRNA track is a positive control — mRNA projects well from closely related sources, so its gffcompare Sn/Pr bound what the lncRNA track can reach. Turning it on roughly doubles the number of filtering, alignment and benchmarking tasks and adds mRNA rows to every report table.",
+                    "fa_icon": "fas fa-dna"
+                },
+                "include_decoy": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Also build and project the relocated decoy track (false-positive baseline).",
+                    "help_text": "Off by default. Decoys are source loci randomly relocated into that source's own intergenic intervals (see --relocate_seed / --decoy_cap), so any decoy model that projects onto the target is a false positive — the null baseline for the accuracy scatter. Intergenic space is the complement of the ENTIRE source annotation (coding genes included), independently of --include_mrna. One decoy track is built per enabled feature type, so with --include_mrna this doubles again.",
+                    "fa_icon": "fas fa-mask"
                 },
                 "include_single_exon": {
                     "type": "boolean",
