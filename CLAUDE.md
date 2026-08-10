@@ -20,6 +20,41 @@ When developing pipelines:
 - **target**: assembly/species to be annotated
 - **source**: assembly/species with annotation to be transferred to the target
 
+# Samplesheet & roles
+
+Columns: `species,role,fasta,gff3` — validated by `assets/schema_input.json`.
+
+`role` ∈ `source` | `target` | `both`. **`both` is the all-vs-all case**: the species
+donates its annotation *and* receives projections, so one run replaces the N runs with N
+hand-written samplesheets that the pre-multitarget pipeline needed. A species is one row —
+`species` must be unique, and duplicates abort at launch (it keys every join).
+
+`gff3` is **required for `source` and `both`** (enforced by an `allOf`/`if`-`then` in the
+schema) and **optional for a pure `target`**: an un-annotated assembly is projected onto
+and gets per-source models plus the all-source `combined` consensus, but no gffcompare, no
+target GFF stats, and no top-N consensus (the ranking is derived from gffcompare F1). This
+falls out structurally — `BENCHMARKING` filters to targets with a GFF and its projection ⋈
+reference join is an inner join, so nothing downstream needs a guard.
+
+**Self-pairs (X→X, only possible with `both`) are run but excluded from consensus.** The
+projection and its gffcompare are a useful Sn/Pr ceiling control, but a species' own
+annotation projected onto itself is a near-perfect copy, so it is dropped from the
+all-source `combined` model (`projection.nf`) and from the top-N ranking pool
+(`consensus_top.nf`) — otherwise it would always rank #1 on F1 and the consensus would be a
+restatement of the target's existing annotation. Consequence: a target whose only source is
+itself produces no `combined` model.
+
+Self-projection also drives `TD2_PREDICT`'s second guard: its projected lncRNA are exactly
+the transcripts the upstream PREPROCESSING TD2 pass already cleared of complete ORFs, so
+`TD2.LongOrfs --complete-orfs-only` finds **zero** ORFs, PSAURON writes no
+`psauron_score.csv`, and `TD2.Predict` dies in `pandas.read_csv`. `modules/local/td2_predict.nf`
+therefore checks `td2_work/longest_orfs.pep` *after* LongOrfs as well as checking the input
+FASTA before it — nothing to filter is a normal outcome, not a failure.
+
+Results are published per target under `${outdir}/targets/<target>/<process>/`, and there
+is **one MultiQC report per target** (`targets/<target>/multiqc/`) — source-side sections
+are target-agnostic and broadcast into every report.
+
 # Pipeline Architecture
 
 Conceptual stages and their **implementation status**:
@@ -41,10 +76,19 @@ instruments are opt-in:
 | `--include_mrna` | the source `mRNA` track through every stage | **positive control** — mRNA projects well from close relatives, so its gffcompare Sn/Pr bound what the lncRNA track can reach |
 | `--include_decoy` | a relocated decoy track per *enabled* feature type | **negative control / FDR baseline** — source loci moved into the source's own intergenic space, so anything that still projects is a false positive |
 
-With N sources, F enabled feature types (1, or 2 with `--include_mrna`) and D = 2 with
-`--include_decoy` else 1: `F·N` `FILTER_TRANSCRIPT`, `F·N·D` minimap2 alignments, `F·D`
-`GFFCOMPARE_COMBINE` groups, `F·N·D + F·D` benchmark `GFFCOMPARE`s, `F` target references.
-Both flags on reproduces the pre-flag behaviour exactly; `-profile test` sets both.
+With **S** sources (`role` ∈ {source, both}), **T** targets (`role` ∈ {target, both}),
+**T_g** ≤ T of them carrying a `gff3`, F enabled feature types (1, or 2 with
+`--include_mrna`) and D = 2 with `--include_decoy` else 1: `F·S` `FILTER_TRANSCRIPT`,
+`T` `MINIMAP2_INDEX`, `F·S·T·D` minimap2 alignments, `F·T·D` `GFFCOMPARE_COMBINE` groups,
+`(F·S·D + F·D)·T_g` benchmark `GFFCOMPARE`s, `F·T_g` target references, `T` MultiQC reports.
+Both flags on reproduces the pre-flag behaviour exactly. **`-profile test` sets neither** —
+it runs the lncRNA deliverable only (F = 1, D = 1), because both flags together quadruple
+the task count and neither is needed to prove the wiring. Pass `--include_mrna` /
+`--include_decoy` on the command line to exercise those branches.
+
+Note the asymmetry that makes all-vs-all cheap: **preprocessing scales with S, not S·T**
+— it is entirely target-independent (decoys relocate into the *source's own* intergenic
+space), so it must never be fanned out per target.
 
 The enabled list is derived **once**, in `workflows/fomo.nf`
 (`ch_feature_types = Channel.value(['lnc_RNA'] + (params.include_mrna ? ['mRNA'] : []))`),
@@ -64,23 +108,44 @@ genes" and let lncRNA decoys land inside real mRNA loci.
 
 ### Subworkflow map
 
-The top-level `workflows/fomo.nf` wires four subworkflows under `subworkflows/local/`:
+The top-level `workflows/fomo.nf` wires five subworkflows under `subworkflows/local/`.
+It also owns the role split: `role` ∈ {source, both} → `ch_sources`, `role` ∈ {target,
+both} → `ch_targets`. Two `.filter`s, **not** `.branch` — branch routes each item to
+exactly one output, so a `both` row could never reach both channels.
 
 | Subworkflow | Does | Emits |
 |-------------|------|-------|
-| `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; GFF + SeqKit stats | `spliced_fasta`, `decoy_spliced_fasta`*, `filtered_gff3`, `decoy_gff3`*, `intergenic_bed`*, `mqc_files` |
-| `PROJECTION` | minimap2 align (source spliced FASTA → target), BAM→GFF; samtools stats + GFF stats on projected models | `gff3`, `bam`, `index`, `combined_gff`, `mqc_files` |
-| `BENCHMARKING` | filter target ref, gffcompare projected vs. reference; GFF stats on target GFFs | `stats`, `target_refs`, `mqc_files` |
-| `REPORTING` | the single MULTIQC invocation | `report`, `data` |
+| `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; GFF + SeqKit stats. **Per source, target-independent — S tasks, not S·T** | `spliced_fasta`, `decoy_spliced_fasta`*, `filtered_gff3`, `decoy_gff3`*, `intergenic_bed`*, `mqc_files` |
+| `PROJECTION` | index each target, minimap2 align every source track × every target, BAM→GFF; samtools stats + GFF stats on projected models; per-(target, gene type) `combined` consensus | `gff3`, `bam`, `index`, `combined_gff`, `mqc_files` |
+| `BENCHMARKING` | filter target ref, gffcompare projected vs. reference; GFF stats on target GFFs. **Targets without a `gff3` are filtered out here** | `stats`, `target_refs`, `mqc_files` |
+| `CONSENSUS_TOP` | rank sources by lncRNA transcript F1 **per target**, gffcompare-combine the top N, score the result | `gff3`, `stats`, `mqc_files` |
+| `REPORTING` | per-target accuracy scatter + one MULTIQC per target | `report`, `data` |
 
 \* `Channel.empty()` without `--include_decoy` — the whole intergenic/relocation branch
 (`SAMTOOLS_FAIDX` → `GFF_TO_GENE_BED` → `BEDTOOLS_COMPLEMENT` → `RELOCATE_LOCI` →
 `EXTRACT_DECOY_SEQUENCES`) is skipped by an `if (params.include_decoy)` guard in
 `preprocessing.nf`.
 
-**Single-target assumption:** `PROJECTION` calls `.first()` on the index channel, so it indexes/aligns against exactly one target. The samplesheet schema permits more, but only the first target is used. Generalise here if multi-target support is needed.
+**Multi-target wiring — two rules.**
 
-**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `target_id` (PROJECTION), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring. `feature_type` ranges over the *enabled* subset (see **Feature tracks**), and `decoy: true` / `kind: 'decoy'` occur only with `--include_decoy` — every `meta.decoy` dereference in `conf/modules.config` is Groovy-null-safe and the real track always carries `decoy: false`, so the `ext.prefix`/`ext.sample_name` closures need no change when a track is off. Their `1_raw / 2_lncRNA / 3_decoy_lncRNA / 4_mRNA / 5_decoy_mRNA` ordering ladders are deliberately sparse-safe: a disabled class simply produces no row, and the `'unknown'` fallback cannot trigger because the values are always a subset.
+*1. Never nest the subworkflows.* The obvious way to add targets is a `PER_TARGET`
+subworkflow looped over targets. It breaks ~30 `ext.prefix` / `ext.sample_name` closures
+**silently**: every selector in `conf/modules.config` is a fully-qualified process path
+(`'FOMO:PROJECTION:MINIMAP2_ALIGN'`, …) and `withName` matching is a regex *find*, so an
+extra level makes the substring stop matching and modules fall back to their in-module
+defaults — `${meta.id}`, i.e. the **source** id, producing exactly the collisions those
+closures exist to prevent. The target dimension lives in the *channels*, not the call tree.
+
+*2. Every projection ⋈ reference join keys on `[target_id, feature_type]`, never
+`feature_type` alone* (`benchmarking.nf`, `consensus_top.nf`). On feature_type alone each
+projection is also compared against every *other* target's annotation, and since
+`ext.prefix` is built from the **query** meta, all T of those tasks emit the same filename
+into the same published directory — wrong numbers under a plausible-looking name. The same
+applies to `SELECT_TOP_SOURCES`: it is grouped per target because
+`bin/select_top_sources.py` keys its score map by source alone, so pooling targets would
+have them overwrite each other.
+
+**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `target_id` (PROJECTION; also stamped on target-side stats in BENCHMARKING, where it equals `meta.id`), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). `target_id` is load-bearing twice over: it is the per-target publishDir segment in `nextflow.config`, and REPORTING routes MultiQC files by its *presence* (`meta.target_id != null` → that target's report only; absent → broadcast to every report). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring. `feature_type` ranges over the *enabled* subset (see **Feature tracks**), and `decoy: true` / `kind: 'decoy'` occur only with `--include_decoy` — every `meta.decoy` dereference in `conf/modules.config` is Groovy-null-safe and the real track always carries `decoy: false`, so the `ext.prefix`/`ext.sample_name` closures need no change when a track is off. Their `1_raw / 2_lncRNA / 3_decoy_lncRNA / 4_mRNA / 5_decoy_mRNA` ordering ladders are deliberately sparse-safe: a disabled class simply produces no row, and the `'unknown'` fallback cannot trigger because the values are always a subset.
 
 **Filters:** `FILTER_TRANSCRIPT` (always on) keeps only multi-exon (spliced) transcripts. `RELOCATE_LOCI` runs **only with `--include_decoy`**, and caps decoys at `params.decoy_cap` (default 1000; 0 disables) using `params.relocate_seed` for reproducibility.
 
@@ -157,11 +222,26 @@ Every subworkflow that emits statistics:
 - Subworkflows with no stats emit `Channel.empty()` as `mqc_files`.
 
 The top-level workflow mixes `mqc_files` across subworkflows and passes the union to
-`REPORTING`. `REPORTING` strips meta, collects paths, and is the only place that calls
-`MULTIQC` (pinned to **v1.35**; bump in `modules/nf-core/multiqc/{main.nf,environment.yml}`
-and in `modules/local/{samtools_to_mqc,select_top_sources}.nf`, which reuse the MultiQC
+`REPORTING`, which is the only place that calls `MULTIQC` (pinned to **v1.35**; bump in
+`modules/nf-core/multiqc/{main.nf,environment.yml}` and in
+`modules/local/{samtools_to_mqc,select_top_sources}.nf`, which reuse the MultiQC
 container. `GFF_STATS_TO_MQC` does not — it needs only stdlib `json`, so it runs on
 `python:3.11`).
+
+**One report per target.** `REPORTING` splits the union on the *presence* of
+`meta.target_id`: set → the file belongs to that target's report alone; absent → it is
+source-side and target-agnostic (input GFF stats, SeqKit, input TD2) and is broadcast into
+every report. So a new stat producer only needs to carry `target_id` — or not — and it
+routes itself.
+
+Two mechanical traps in that fan-out, both hit for real:
+- **Flatten before you `combine`.** An adapter may emit a *list* of paths per item
+  (`GFF_STATS_TO_MQC` emits a transcript table *and* a gene-category table), and `combine`
+  SPREADS a List-valued item across the output tuple. `[meta, [a, b]].combine(ids)` becomes
+  `[a, b, tid]` and the next closure is called with three arguments. `flatMap` to one file
+  per item first. Same reason you cannot `.collect()` the shared files and combine *that*.
+- **`meta.target_id` is also the publishDir segment** (`nextflow.config`), so a
+  target-scoped process that loses the key publishes to `targets/null/`.
 
 MultiQC config lives in two files under `assets/multiqc/` (wired via
 `params.multiqc_main_config` / `params.multiqc_sections_config`, passed as a 2-item

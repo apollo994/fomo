@@ -48,10 +48,13 @@ process TD2_PREDICT {
     # (CRG has `mount home = yes`), so user-site is visible inside it too.
     export PYTHONNOUSERSITE=1
 
-    # Guard against an empty input FASTA (e.g. a distant source whose lncRNA do
-    # not project onto the target → 0 transcripts). With no sequences TD2.LongOrfs
-    # writes no psauron_score.csv and TD2.Predict crashes reading it, so emit an
-    # empty .pep and skip — downstream the coding-ID set is then simply empty.
+    # TD2.Predict runs PSAURON, then unconditionally reads the psauron_score.csv
+    # PSAURON is expected to have written. Give PSAURON nothing to score and it
+    # writes no CSV, and Predict dies in pandas.read_csv. There are two ways to
+    # reach that state, so there are two guards.
+    #
+    # Guard 1 — empty input FASTA (e.g. a distant source whose lncRNA do not
+    # project onto the target → 0 transcripts).
     if [ "\$(grep -c '^>' ${fasta} || true)" -eq 0 ]; then
         : > ${fasta}.TD2.pep
     else
@@ -63,7 +66,20 @@ process TD2_PREDICT {
         # instead of being swallowed by the redirect. `set -o pipefail` (above)
         # makes the task still fail when TD2 does, despite tee exiting 0.
         TD2.LongOrfs -t ${fasta} ${longorfs_args} -O td2_work 2>&1 | tee longorfs.log
-        TD2.Predict  -t ${fasta} ${predict_args}  -O td2_work 2>&1 | tee predict.log
+
+        # Guard 2 — a NON-empty FASTA from which LongOrfs extracts zero complete
+        # ORFs. Not a corner case: it is the norm for a SELF-projection, whose
+        # lncRNA are exactly the transcripts the upstream PREPROCESSING TD2 pass
+        # already cleared of complete ORFs, so `--complete-orfs-only` finds none.
+        # Same outcome as guard 1 — empty .pep, empty coding-ID set downstream,
+        # nothing filtered — but it has to be checked AFTER LongOrfs.
+        n_orfs=\$(grep -c '^>' td2_work/longest_orfs.pep 2>/dev/null || true)
+        if [ -z "\${n_orfs}" ] || [ "\${n_orfs}" -eq 0 ]; then
+            echo "TD2.LongOrfs found no complete ORFs — skipping TD2.Predict." | tee predict.log
+            : > ${fasta}.TD2.pep
+        else
+            TD2.Predict -t ${fasta} ${predict_args} -O td2_work 2>&1 | tee predict.log
+        fi
     fi
     """
 

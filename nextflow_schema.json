@@ -19,7 +19,7 @@
                     "mimetype": "text/csv",
                     "pattern": "^\\S+\\.csv$",
                     "description": "Path to the samplesheet CSV describing source and target species.",
-                    "help_text": "Each row needs species, role (source|target), fasta and gff3 columns. See assets/schema_input.json for the per-row schema.",
+                    "help_text": "Columns: species, role, fasta, gff3. role is source | target | both — 'both' makes the species a donor AND a target, which is how an all-vs-all experiment runs in a single invocation. gff3 is required for source/both and optional for a pure target (an un-annotated target is projected onto but not benchmarked: no gffcompare, no top-N consensus). Species ids must be unique. See assets/schema_input.json for the per-row schema.",
                     "fa_icon": "fas fa-file-csv"
                 },
                 "outdir": {

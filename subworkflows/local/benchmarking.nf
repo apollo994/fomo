@@ -6,18 +6,26 @@ include { GFF_STATS_TO_MQC  as GFF_STATS_TARGET_TO_MQC } from '../../modules/loc
 
 workflow BENCHMARKING {
     take:
-    ch_target          // [ meta(role:'target'), fasta[.gz], gff3[.gz] ] × 1
-    ch_projected_gff3  // [ meta(target_id, id, feature_type, decoy), gff3 ] × F·N·D
+    ch_target          // [ meta(role:'target'|'both'), fasta[.gz], gff3[.gz]|[] ] × T
+    ch_projected_gff3  // [ meta(target_id, id, feature_type, decoy), gff3 ] × F·S·T·D
     feature_types      // plain List<String> — MUST be the same list PREPROCESSING got,
                        // hence derived once in workflows/fomo.nf. The projection ⋈
-                       // reference pairing below is an INNER join on feature_type, so a
-                       // list that disagrees with the source side silently drops
-                       // projections rather than failing.
+                       // reference pairing below is an INNER join on
+                       // [target_id, feature_type], so a list that disagrees with the
+                       // source side silently drops projections rather than failing.
 
     main:
 
+    // Benchmarking needs a reference annotation, so only targets that brought a
+    // gff3 take part. A pure 'target' row may omit it (the assembly is annotated
+    // but not scored): nf-schema hands a missing path through as [], which is
+    // falsy. Its projections are dropped by the inner join below, so no further
+    // guard is needed — and no gffcompare, target GFF stats, or top-N consensus
+    // are produced for it.
+    ch_target_gff = ch_target.filter { _meta, _fa, gff3 -> gff3 }
+
     GUNZIP_TARGET_GFF(
-        ch_target.map { meta, _fa, gff3 -> tuple(meta, gff3) }
+        ch_target_gff.map { meta, _fa, gff3 -> tuple(meta, gff3) }
     )
 
     // Filter target annotation by enabled feature_type — one GFF3 per class.
@@ -28,15 +36,23 @@ workflow BENCHMARKING {
 
     FILTER_TARGET(ch_target_filter_in)
 
-    // Pair each projection with the target-class reference of matching feature_type.
+    // Pair each projection with the reference of ITS OWN target and matching
+    // feature_type. The key MUST include target_id: keyed on feature_type alone
+    // every projection would also be compared against every OTHER target's
+    // annotation, and since ext.prefix (conf/modules.config) is built from the
+    // QUERY meta, all T of those tasks would emit the same filename into the same
+    // published directory — wrong numbers under a plausible-looking name.
+    //
+    // Being an inner join, this is also what drops projections onto targets with
+    // no gff3.
     ch_paired = ch_projected_gff3
-        .map { meta, gff3 -> tuple(meta.feature_type, meta, gff3) }
+        .map { meta, gff3 -> tuple(meta.target_id, meta.feature_type, meta, gff3) }
         .combine(
-            FILTER_TARGET.out.gff3.map { meta, gff3 -> tuple(meta.feature_type, gff3) },
-            by: 0
+            FILTER_TARGET.out.gff3.map { meta, gff3 -> tuple(meta.id, meta.feature_type, gff3) },
+            by: [0, 1]
         )
 
-    ch_split = ch_paired.multiMap { _ftype, q_meta, q_gff, r_gff ->
+    ch_split = ch_paired.multiMap { _tid, _ftype, q_meta, q_gff, r_gff ->
         query:     tuple(q_meta, q_gff)
         empty_ref: tuple([id: q_meta.target_id], [], [])
         reference: tuple([id: "${q_meta.target_id}.${q_meta.feature_type}"], r_gff)
@@ -49,9 +65,12 @@ workflow BENCHMARKING {
     )
 
     // ── Target statistics & MultiQC adapters ─────────────────────────────────
+    // target_id is stamped here (== meta.id, the target species) so REPORTING can
+    // route these rows into that target's report and no other. Everything else
+    // that is target-scoped already carries the key from PROJECTION.
     ch_target_stats_gff = GUNZIP_TARGET_GFF.out.gunzip
-        .map  { m, g -> tuple(m + [kind: 'raw'],      g) }
-        .mix(FILTER_TARGET.out.gff3.map { m, g -> tuple(m + [kind: 'filtered'], g) })
+        .map  { m, g -> tuple(m + [kind: 'raw',      target_id: m.id], g) }
+        .mix(FILTER_TARGET.out.gff3.map { m, g -> tuple(m + [kind: 'filtered', target_id: m.id], g) })
 
     GFF_STATS_TARGET(ch_target_stats_gff)
     GFF_STATS_TARGET_TO_MQC(GFF_STATS_TARGET.out.json)
@@ -61,9 +80,10 @@ workflow BENCHMARKING {
     ch_mqc_files = GFFCOMPARE.out.stats
         .mix(GFF_STATS_TARGET_TO_MQC.out.tsv)
 
-    // N = sources, F = enabled feature types, D = 2 with --include_decoy else 1.
+    // S = sources, F = enabled feature types, D = 2 with --include_decoy else 1,
+    // T_g = targets that supplied a gff3 (everything here scales with T_g, not T).
     emit:
-    stats         = GFFCOMPARE.out.stats        // [ meta, *.stats ] × F·N·D + F·D
-    target_refs   = FILTER_TARGET.out.gff3      // [ meta(feature_type), gff3 ] × F
-    mqc_files     = ch_mqc_files                // [ meta, path    ] (the stats above + (F+1) GFF_STATS pairs: transcript + gene table each)
+    stats         = GFFCOMPARE.out.stats        // [ meta, *.stats ] × (F·S·D + F·D)·T_g
+    target_refs   = FILTER_TARGET.out.gff3      // [ meta(id=target, feature_type), gff3 ] × F·T_g
+    mqc_files     = ch_mqc_files                // [ meta, path    ] (the stats above + (F+1) GFF_STATS pairs per target: transcript + gene table each)
 }

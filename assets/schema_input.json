@@ -15,8 +15,8 @@
             },
             "role": {
                 "type": "string",
-                "enum": ["source", "target"],
-                "errorMessage": "Role must be either 'source' or 'target'",
+                "enum": ["source", "target", "both"],
+                "errorMessage": "Role must be 'source' (donor only), 'target' (annotated only), or 'both' (donor and target — the all-vs-all case)",
                 "meta": ["role"]
             },
             "fasta": {
@@ -34,6 +34,18 @@
                 "errorMessage": "GFF3 file must exist and end in .gff or .gff3 (optionally .gz)"
             }
         },
-        "required": ["species", "role", "fasta", "gff3"]
+        "required": ["species", "role", "fasta"],
+        "allOf": [
+            {
+                "if": {
+                    "properties": { "role": { "enum": ["source", "both"] } },
+                    "required": ["role"]
+                },
+                "then": {
+                    "required": ["gff3"],
+                    "errorMessage": "A row with role 'source' or 'both' donates its annotation and MUST have a gff3. Only a pure 'target' may leave it empty — it is then annotated but not benchmarked (no gffcompare, no top-N consensus)."
+                }
+            }
+        ]
     }
 }

@@ -14,37 +14,47 @@ include { FILTER_GFF_BY_ID  as FILTER_PROJ_LNC_GFF } from '../../modules/local/f
 
 workflow PROJECTION {
     take:
-    ch_target            // [ meta(role:'target'), fasta[.gz], gff3[.gz] ] × 1
-    ch_spliced_fasta     // [ meta(decoy:false, feature_type), fasta ] × 2N
-    ch_decoy_spliced     // [ meta(decoy:true,  feature_type), fasta ] × 2N
+    ch_target            // [ meta(role:'target'|'both'), fasta[.gz], gff3[.gz]|[] ] × T
+    ch_spliced_fasta     // [ meta(decoy:false, feature_type), fasta ] × F·S
+    ch_decoy_spliced     // [ meta(decoy:true,  feature_type), fasta ] × F·S
 
     main:
 
-    // Decompress the target FASTA once
+    // Decompress each target FASTA once (T tasks)
     GUNZIP_TARGET(
         ch_target.map { meta, fa, _gff3 -> tuple(meta, fa) }
     )
 
-    // Build .mmi index once (ext.args = '-x splice' set in conf/modules.config)
+    // Build one .mmi index per target (ext.args = '-x splice' set in conf/modules.config)
     MINIMAP2_INDEX(GUNZIP_TARGET.out.gunzip)
 
-    // Broadcast index as value channel so it's reused across every alignment task
-    ch_reference = MINIMAP2_INDEX.out.index
-        .map { meta, mmi -> tuple([id: meta.id], mmi) }
-        .first()
+    // Per-target reference bundle, keyed by target id: [ target_id, mmi, fasta ].
+    // MINIMAP2_INDEX and GUNZIP_TARGET both preserve the input meta, so join() on
+    // the full meta pairs each index with its own genome.
+    ch_ref = MINIMAP2_INDEX.out.index
+        .join(GUNZIP_TARGET.out.gunzip)
+        .map { meta, mmi, fa -> tuple(meta.id, mmi, fa) }
 
-    // Reads channel: every source spliced FASTA (mRNA / lnc_RNA / decoy).
-    // Attach target_id to meta so output filenames encode both target and source.
-    ch_reads = ch_spliced_fasta
+    // The all-vs-all fan-out: every source track (mRNA / lnc_RNA / decoy) × every
+    // target. combine() without `by` is a full cartesian product and buffers the
+    // right-hand side, so each of the T references is reused across all F·S·D
+    // tracks. Self-pairs (source == target) are KEPT — they are the Sn/Pr ceiling
+    // control — but excluded from the consensus further down.
+    //
+    // multiMap, not a value channel: with T > 1 the reference must be paired with
+    // its own reads task-by-task. A broadcast/.first() reference would silently
+    // align every source onto whichever target's index materialised first.
+    ch_align = ch_spliced_fasta
         .mix(ch_decoy_spliced)
-        .combine(ch_reference)
-        .map { meta, reads, ref_meta, _mmi ->
-            tuple(meta + [target_id: ref_meta.id], reads)
+        .combine(ch_ref)
+        .multiMap { meta, reads, tid, mmi, _fa ->
+            reads:     tuple(meta + [target_id: tid], reads)
+            reference: tuple([id: tid], mmi)
         }
 
     MINIMAP2_ALIGN(
-        ch_reads,
-        ch_reference,
+        ch_align.reads,
+        ch_align.reference,
         true,    // bam_format
         'bai',   // bam_index_extension
         false,   // cigar_paf_format
@@ -80,10 +90,21 @@ workflow PROJECTION {
         }
         .set { ch_proj }
 
-    // Single target genome FASTA, broadcast to every gffread task.
-    ch_target_fa = GUNZIP_TARGET.out.gunzip.map { _m, fa -> fa }.first()
+    // Each projection's transcript FASTA must be extracted from ITS OWN target
+    // genome — hence the join on target_id rather than a broadcast FASTA. Getting
+    // this wrong is silent: gffread would happily read the coordinates of target B
+    // out of target A's sequence and hand TD2 nonsense to score.
+    ch_target_fa = GUNZIP_TARGET.out.gunzip.map { meta, fa -> tuple(meta.id, fa) }
 
-    EXTRACT_PROJECTED_LNC(ch_proj.lnc, ch_target_fa)
+    ch_lnc_extract = ch_proj.lnc
+        .map { meta, gff -> tuple(meta.target_id, meta, gff) }
+        .combine(ch_target_fa, by: 0)
+        .multiMap { _tid, meta, gff, fa ->
+            gff:   tuple(meta, gff)
+            fasta: fa
+        }
+
+    EXTRACT_PROJECTED_LNC(ch_lnc_extract.gff, ch_lnc_extract.fasta)
 
     TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.gffread_fasta)
 
@@ -95,12 +116,20 @@ workflow PROJECTION {
     // Filtered real lncRNA ⊕ untouched (real mRNA + all decoys).
     ch_projected_persource = FILTER_PROJ_LNC_GFF.out.gff3.mix(ch_proj.rest)
 
-    // ── Combine projected models per gene type ────────────────────────────────
-    // Group every projected GFF3 by gene type — feature_type plus the decoy
-    // flag → {lnc_RNA, mRNA, lnc_RNA_decoy, mRNA_decoy} — and run gffcompare in
-    // combine mode (no reference annotation) to build one consensus
-    // <prefix>.combined.gtf per gene type across all source species.
+    // ── Combine projected models per (target, gene type) ──────────────────────
+    // Group every projected GFF3 by target and gene type — feature_type plus the
+    // decoy flag → {lnc_RNA, mRNA, lnc_RNA_decoy, mRNA_decoy} — and run gffcompare
+    // in combine mode (no reference annotation) to build one consensus
+    // <target>.<gtype>.combined.gtf per gene type across all source species.
+    //
+    // Self-pairs are EXCLUDED here: a species' own annotation projected onto itself
+    // is a near-perfect copy, so leaving it in would make the consensus mostly a
+    // restatement of the target's existing annotation instead of evidence
+    // transferred from relatives. It stays available as a per-source model and as
+    // the ceiling dot in the accuracy scatter. Consequence: a target whose only
+    // source is itself yields no combined model.
     ch_combine_in = ch_projected_persource
+        .filter { meta, _gff -> meta.id != meta.target_id }
         .map { meta, gff ->
             def gtype = meta.feature_type + (meta.decoy ? '_decoy' : '')
             tuple([id: "${meta.target_id}.${gtype}", target_id: meta.target_id,
@@ -144,10 +173,11 @@ workflow PROJECTION {
         .mix(SAMTOOLS_TO_MQC.out.tsv)
         .mix(TD2_NONCODING_PROJ.out.mqc)
 
+    // T = targets, S = sources, F = enabled feature types, D = 2 with --include_decoy else 1.
     emit:
-    bam          = MINIMAP2_ALIGN.out.bam            // [ meta, *.bam          ]
-    index        = MINIMAP2_ALIGN.out.index          // [ meta, *.bam.bai      ]
-    gff3         = ch_projected                      // [ meta, *.gff3         ] × 20 (16 per-source + 4 combined)
-    combined_gff = COMBINED_GTF_TO_GFF.out.gffread_gff // [ meta, *.gff3        ] × 4 (consensus per gene type)
-    mqc_files    = ch_mqc_files                      // [ meta, *_mqc.tsv      ] (one table per projected model + samtools + TD2)
+    bam          = MINIMAP2_ALIGN.out.bam            // [ meta, *.bam     ] × F·S·T·D
+    index        = MINIMAP2_ALIGN.out.index          // [ meta, *.bam.bai ] × F·S·T·D
+    gff3         = ch_projected                      // [ meta, *.gff3    ] × F·S·T·D + F·T·D (per-source + combined)
+    combined_gff = COMBINED_GTF_TO_GFF.out.gffread_gff // [ meta, *.gff3  ] × F·T·D (consensus per target × gene type)
+    mqc_files    = ch_mqc_files                      // [ meta, *_mqc.tsv ] (one table per projected model + samtools + TD2)
 }
