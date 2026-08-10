@@ -89,6 +89,15 @@ The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and 
     can pass where a full-size one fails. `bin/relocate_loci.py` sorts its decoys by
     seqid for exactly this reason; every other GFF here is already grouped (Ensembl
     input, gffread output, and `BAM_TO_GFF` output via `samtools sort`).
+  - **It is an x86-64 binary, and `ubuntu:22.04` is multi-arch.** On an arm64 host
+    (Apple Silicon) Docker pulls the arm64 image, which has no
+    `/lib64/ld-linux-x86-64.so.2`, and every `GFF_STATS*` task dies with
+    `rosetta error: failed to open elf ...` → exit **133**. The `docker` profile in
+    `nextflow.config` therefore pins these processes to `--platform=linux/amd64`
+    (no-op on x86-64 hosts; scoped to that profile so the Singularity/HPC path is
+    untouched). The selector is
+    `'.*:GFF_STATS(_TARGET|_PROJECTED|_TOP)?$'` — keep it in sync if a new
+    `GFF_STATS` alias is added.
   - It cannot compute genome coverage (no genome-size input).
   - It resolves a transcript's gene via `Parent`/`gene`/`Gene` only — so gffread-derived
     GFF3s (`combined`, `top3`), which carry the gene in `geneID=` and emit no gene

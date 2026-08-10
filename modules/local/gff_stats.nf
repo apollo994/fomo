@@ -26,6 +26,12 @@ process GFF_STATS {
     // 2.35 — verified). Do NOT point `container` at an older base image without
     // re-testing, or rebuild statically:
     //   RUSTFLAGS='-C target-feature=+crt-static' cargo build --release
+    //
+    // The binary is also x86-64-only, while ubuntu:22.04 is a multi-arch image —
+    // so on an arm64 host Docker would pull the arm64 variant and every task would
+    // die with `rosetta error: failed to open elf ...` / exit 133. The `docker`
+    // profile in nextflow.config pins this process to --platform=linux/amd64 to
+    // prevent that; keep that selector in sync if this process is ever renamed.
     container 'ubuntu:22.04'
 
     input:
