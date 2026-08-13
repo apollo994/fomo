@@ -24,6 +24,13 @@ FNAME_RE = re.compile(
     r"^(?P<target>.+?)\.from_(?P<source>.+?)\.(?P<ft>lnc_RNA|mRNA)(?P<decoy>\.decoy)?$"
 )
 
+# Pseudo-source ids standing for an aggregate model rather than a real species. They
+# use the same `from_<id>` filename convention as per-source stats, so they must be
+# skipped here or the top-N would be picked from models built out of the top-N.
+# Kept in sync with AGGREGATE_IDS in subworkflows/local/consensus_top.nf, which
+# filters the channel before it ever reaches this script — this is the second layer.
+AGGREGATE_IDS = ("allModels_raw", "allModels_collapsed", "top3_raw", "top3_collapsed")
+
 
 def parse_identity(stats_path: str) -> Optional[Tuple[str, str, bool]]:
     """(source, feature_type, decoy) from a gffcompare stats filename."""
@@ -78,7 +85,7 @@ def main() -> int:
         source, ft, decoy = ident
         # Rank pool is real, individual-source lncRNA only — exclude decoys and
         # the consensus pseudo-sources (the all-source 'combined' and any 'top3').
-        if ft != "lnc_RNA" or decoy or source in ("combined", "top3"):
+        if ft != "lnc_RNA" or decoy or source in AGGREGATE_IDS:
             continue
         sn_pr = transcript_sn_pr(path)
         if sn_pr is None:

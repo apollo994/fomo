@@ -10,8 +10,9 @@ Sensitivity on 0..1 axes — but encodes:
 
   * marker SYMBOL  = feature class  (lncRNA → circle, mRNA → square,
                                      decoy → triangle-up)
-  * marker COLOUR  = source         (one colour per source species, plus the
-                                     combined consensus)
+  * marker COLOUR  = source         (one colour per source species, plus one per
+                                     aggregate model: allModels / top3, raw and
+                                     collapsed)
   * point NAME     = full sample id (so the tooltip is informative)
 
 Input: one or more gffcompare `.stats` files named
@@ -45,6 +46,12 @@ PALETTE = [
 FNAME_RE = re.compile(
     r"^(?P<target>.+?)\.from_(?P<source>.+?)\.(?P<ft>lnc_RNA|mRNA)(?P<decoy>\.decoy)?$"
 )
+
+# Aggregate pseudo-sources, in the order they should take palette colours. Listing
+# them first keeps the four headline models on stable colours across runs with
+# different species. Kept in sync with AGGREGATE_IDS in bin/select_top_sources.py
+# and subworkflows/local/consensus_top.nf.
+AGGREGATE_IDS = ("allModels_raw", "allModels_collapsed", "top3_raw", "top3_collapsed")
 
 
 def parse_identity(stats_path: str) -> Optional[Tuple[str, str, bool]]:
@@ -117,11 +124,11 @@ def main() -> int:
         print("ERROR: no usable gffcompare stats files", file=sys.stderr)
         return 1
 
-    # Stable colour assignment: combined first (if present), then sources
-    # alphabetically — each gets a distinct palette colour.
-    sources = sorted({r[0] for r in records})
-    if "combined" in sources:
-        sources = ["combined"] + [s for s in sources if s != "combined"]
+    # Stable colour assignment: the aggregate pseudo-sources first, in a fixed
+    # order, then the real species alphabetically — so the four headline models keep
+    # the same colours no matter which species a run happens to include.
+    present = {r[0] for r in records}
+    sources = [s for s in AGGREGATE_IDS if s in present] + sorted(present - set(AGGREGATE_IDS))
     colour_by_source = {s: PALETTE[i % len(PALETTE)] for i, s in enumerate(sources)}
 
     # One data dict per level (aligned with data_labels) → multi-dataset plot
@@ -149,7 +156,8 @@ def main() -> int:
             "Sensitivity vs Precision per feature level (use the dropdown to "
             "switch level). Marker symbol = feature class "
             "(lncRNA ●, mRNA ■, decoy ▲); colour = source species "
-            "(plus the combined consensus). Hover a point for its sample name."
+            "or aggregate model (allModels / top3, each raw and collapsed). "
+            "Hover a point for its sample name."
         ),
         "plot_type": "scatter",
         "pconfig": {

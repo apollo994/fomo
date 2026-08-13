@@ -75,14 +75,11 @@ workflow FOMO {
     // feature_type], so projections onto an un-annotated target are dropped there.
     BENCHMARKING(ch_targets, PROJECTION.out.gff3, feature_types)
 
-    // Per-source REAL projections only (exclude the all-source 'combined'
-    // consensus and decoys) — the pool from which the top-3 consensus is built.
-    // Self-pairs are still in here; CONSENSUS_TOP drops them (see below).
-    ch_projected_real = PROJECTION.out.gff3
-        .filter { meta, _gff -> !meta.decoy && meta.id != 'combined' }
-
+    // The top-N consensus is a SUBSET of the all-sources annotation, not a
+    // re-combination of per-source files, so CONSENSUS_TOP takes allModels directly.
+    // Self-pairs are in there; CONSENSUS_TOP drops them from the ranking pool only.
     CONSENSUS_TOP(
-        ch_projected_real,
+        PROJECTION.out.allmodels_raw,
         BENCHMARKING.out.stats,
         BENCHMARKING.out.target_refs
     )

@@ -1,18 +1,19 @@
 include { SELECT_TOP_SOURCES                       } from '../../modules/local/select_top_sources'
+include { GFF_BY_SOURCE as SUBSET_GFF_BY_SOURCE    } from '../../modules/local/gff_by_source'
 include { GFFCOMPARE as GFFCOMPARE_COMBINE_TOP     } from '../../modules/nf-core/gffcompare/main'
 include { GFFREAD    as COMBINED_TOP_GTF_TO_GFF    } from '../../modules/nf-core/gffread/main'
 include { GFF_STATS         as GFF_STATS_TOP       } from '../../modules/local/gff_stats'
 include { GFF_STATS_TO_MQC  as GFF_STATS_TOP_TO_MQC } from '../../modules/local/gff_stats_to_mqc'
 include { GFFCOMPARE as GFFCOMPARE_TOP             } from '../../modules/nf-core/gffcompare/main'
 
-// Build a "top-N consensus" annotation: rank sources by lncRNA transcript-level
-// F1 (from per-source gffcompare stats), then gffcompare-combine the lncRNA AND
-// mRNA projections of those same top sources. The consensus is plugged into the
-// same downstream as every other model (GFF stats, gffcompare-vs-reference, MultiQC)
-// under the pseudo-source id 'top3'.
+// Build a "top-N consensus" annotation: rank sources by lncRNA transcript-level F1
+// (from per-source gffcompare stats), pull those sources' models straight out of the
+// all-sources annotation, and collapse them with gffcompare. Both the raw subset and
+// the collapsed consensus are scored, under the pseudo-source ids 'top3_raw' and
+// 'top3_collapsed'.
 workflow CONSENSUS_TOP {
     take:
-    ch_projected_real   // [ meta(id=source, target_id, feature_type, decoy:false), gff3 ] × F·S·T  (per-source REAL only)
+    ch_allmodels_raw    // [ meta(id='allModels', target_id, feature_type, decoy, gtype), gff3 ] × F·D·T
     ch_all_stats        // [ meta, *.gffcompare.stats ] — per-source stats for ranking (filtered below)
     ch_target_refs      // [ meta(id=target, feature_type), gff3 ] × F·T_g  (filtered target references, from BENCHMARKING)
 
@@ -24,15 +25,23 @@ workflow CONSENSUS_TOP {
     // and bin/select_top_sources.py keys its score map by source alone, so pooling
     // several targets' stats into one task would have them overwrite each other.
     //
-    // Self is dropped from the ranking pool here. A species projected onto itself
-    // scores near 100% F1 and would always take the #1 slot, turning the consensus
-    // into a restatement of the target's own annotation. Filtering in the channel
-    // (rather than in the script) keeps the script target-agnostic — it already
-    // excludes decoys and the 'combined'/'top3' pseudo-sources by filename.
+    // Two things are excluded from the pool:
+    //
+    // * SELF. A species projected onto itself scores near 100% F1 and would always
+    //   take the #1 slot, turning the consensus into a restatement of the target's
+    //   own annotation. This is the ONLY place self is excluded — it is deliberately
+    //   kept in allModels (projection.nf).
+    // * The AGGREGATE pseudo-sources. allModels_raw / allModels_collapsed /
+    //   top3_raw / top3_collapsed travel through the same `from_<id>` naming closures
+    //   as per-source projections, so their stats land in this same channel; leaving
+    //   them in would pick the top-N out of models that are themselves built from the
+    //   top-N. bin/select_top_sources.py repeats the list as a second layer — keep
+    //   the two in sync.
     ch_rank_in = ch_all_stats
         .filter { meta, _stats ->
             !meta.decoy && meta.feature_type == 'lnc_RNA' &&
-            !(meta.id in ['combined', 'top3']) && meta.id != meta.target_id
+            !(meta.id in ['allModels_raw', 'allModels_collapsed', 'top3_raw', 'top3_collapsed']) &&
+            meta.id != meta.target_id
         }
         .map { meta, stats -> tuple(meta.target_id, stats) }
         .groupTuple()
@@ -40,52 +49,56 @@ workflow CONSENSUS_TOP {
 
     SELECT_TOP_SOURCES(ch_rank_in)
 
-    // CSV → [ target_id, source ]. `elem: 1` splits the file while preserving the
-    // meta, which is what carries the target this ranking belongs to.
-    ch_selected = SELECT_TOP_SOURCES.out.csv
-        .splitCsv(header: true, elem: 1)
-        .map { meta, row -> tuple(meta.target_id, row.source, true) }
+    // ── Extract the selected sources' models from allModels ───────────────────
+    // A subset of the same file the per-source models were split from, so top3.raw
+    // is exactly "allModels restricted to the top N sources" — no re-derivation, no
+    // possibility of drift between the two. Decoys have no ranking and are excluded.
+    //
+    // combine(by: 0) on target_id is an inner join, which is also what drops targets
+    // with no gff3: they produce no ranking stats, hence no CSV, hence nothing here.
+    // Joining on the target — not broadcasting the CSV — is what stops target A's
+    // top-N being applied to target B's models.
+    ch_subset_in = ch_allmodels_raw
+        .filter { meta, _gff -> !meta.decoy }
+        .map { meta, gff -> tuple(meta.target_id, meta, gff) }
+        .combine(
+            SELECT_TOP_SOURCES.out.csv.map { meta, csv -> tuple(meta.target_id, csv) },
+            by: 0
+        )
+        .map { _tid, meta, gff, csv -> tuple(meta + [id: 'top3_raw'], gff, csv) }
 
-    // Keep only each target's own selected sources; group by (target, gene type);
-    // combine. Joining on [target_id, source] — not source alone — is what stops
-    // target A's top-3 pulling in projections made onto target B.
-    ch_combine_in = ch_projected_real
-        .filter { meta, _gff -> meta.id != meta.target_id }   // no self, as above
-        .map { meta, gff -> tuple(meta.target_id, meta.id, meta, gff) }
-        .combine(ch_selected, by: [0, 1])                    // inner join on (target, source)
-        .map { _tid, _src, meta, gff, _sel ->
-            def gtype = meta.feature_type                 // lnc_RNA | mRNA (no decoys here)
-            tuple([id: 'top3', target_id: meta.target_id,
-                   feature_type: gtype, decoy: false, gtype: gtype], gff)
-        }
-        .groupTuple()                                     // meta carries target_id → per-target groups
-        .map { meta, gffs -> tuple(meta, gffs.sort { it.name }) }   // deterministic order
+    SUBSET_GFF_BY_SOURCE(ch_subset_in)
 
+    ch_top_raw = SUBSET_GFF_BY_SOURCE.out.gff3.transpose()
+
+    // ── Collapse the subset into the consensus ────────────────────────────────
     GFFCOMPARE_COMBINE_TOP(
-        ch_combine_in,
+        ch_top_raw,
         [[:], [], []],   // no reference sequence  (-s)
         [[:], []]        // no reference annotation (-r) → pure combine mode
     )
 
-    // ── Convert consensus GTF → GFF3 (matches the rest of the pipeline) ───────
     COMBINED_TOP_GTF_TO_GFF(
-        GFFCOMPARE_COMBINE_TOP.out.combined_gtf,
+        GFFCOMPARE_COMBINE_TOP.out.combined_gtf.map { meta, gtf -> tuple(meta + [id: 'top3_collapsed'], gtf) },
         []   // no genome FASTA needed for a pure GTF→GFF3 conversion
     )
-    ch_top_gff3 = COMBINED_TOP_GTF_TO_GFF.out.gffread_gff   // [ meta(id:top3,...), gff3 ] × 2
 
-    // ── GFF statistics on the consensus ───────────────────────────────────────
+    // Both models are scored: the raw subset answers "how good is the union of the
+    // best N sources?", the collapsed one "…and what does merging it cost?".
+    ch_top_scored = ch_top_raw.mix(COMBINED_TOP_GTF_TO_GFF.out.gffread_gff)
+
+    // ── GFF statistics on both consensus models ───────────────────────────────
     GFF_STATS_TOP(
-        ch_top_gff3.map { meta, gff -> tuple(meta + [kind: 'projected'], gff) }
+        ch_top_scored.map { meta, gff -> tuple(meta + [kind: 'projected'], gff) }
     )
     GFF_STATS_TOP_TO_MQC(GFF_STATS_TOP.out.json)
 
-    // ── gffcompare the consensus against the matching target reference ────────
+    // ── gffcompare each against the matching target reference ─────────────────
     // Keyed on [target_id, feature_type] for the same reason as the equivalent
     // join in benchmarking.nf — on feature_type alone each consensus would also be
     // scored against every other target's annotation, under a filename built from
     // the query meta and therefore identical across all T results.
-    ch_top_paired = ch_top_gff3
+    ch_top_paired = ch_top_scored
         .map { meta, gff -> tuple(meta.target_id, meta.feature_type, meta, gff) }
         .combine(
             ch_target_refs.map { meta, gff -> tuple(meta.id, meta.feature_type, gff) },
@@ -109,9 +122,9 @@ workflow CONSENSUS_TOP {
 
     // F = enabled feature types, T_g = targets that supplied a gff3. A target with
     // no annotation contributes no ranking stats, so it produces nothing here —
-    // no guard needed, the empty group simply never forms.
+    // no guard needed, the empty join simply never matches.
     emit:
-    gff3      = ch_top_gff3              // [ meta(id:top3, target_id), gff3 ] × F·T_g
-    stats     = GFFCOMPARE_TOP.out.stats // [ meta, *.stats ] × F·T_g (feeds the accuracy scatter in REPORTING)
-    mqc_files = ch_mqc_files             // [ meta, path    ] × 2·F·T_g (gffcompare stats + GFF stats tables)
+    gff3      = ch_top_scored            // [ meta(id:top3_raw|top3_collapsed), gff3 ] × 2·F·T_g
+    stats     = GFFCOMPARE_TOP.out.stats // [ meta, *.stats ] × 2·F·T_g (feeds the accuracy scatter in REPORTING)
+    mqc_files = ch_mqc_files             // [ meta, path    ] × 4·F·T_g (gffcompare stats + GFF stats tables)
 }
