@@ -1,0 +1,132 @@
+# ---------------------------------------------------------------------------
+# Custom-content sections of the run-level report
+# ---------------------------------------------------------------------------
+# Only the TABLES are declared here. The plots (*_mqc.json written by
+# bin/run_summary_tables.py) are self-describing MultiQC custom content — they
+# carry their own id / section_name / plot_type / pconfig — so they get NO
+# custom_data block and NO sp pattern. A file discovered by BOTH an sp pattern and
+# an embedded id renders its section TWICE (the same trap documented in
+# assets/multiqc/sections.yml).
+#
+# Every filename suffix below is globally unique across the pipeline, so these can
+# never be routed into a per-target report's sections and vice versa.
+# ---------------------------------------------------------------------------
+custom_data:
+  run_overview:
+    file_format: "tsv"
+    section_name: "Run overview"
+    description: >
+      What this run was: species per role, how many of them donate annotation
+      (sources), how many receive it (targets), how many of those could be
+      benchmarked (a target needs its own GFF3), the projection pair count, and the
+      parameters the rest of the report must be read against.
+    plot_type: "table"
+    pconfig:
+      id: "run_overview_table"
+      namespace: "Run"
+      sort_rows: false
+      col1_header: "Metric"
+  run_species:
+    file_format: "tsv"
+    section_name: "Species — roles and annotation input"
+    description: >
+      One row per species. `role` is what the samplesheet asked for; `is_source` /
+      `is_target` are what it therefore does; `benchmarked` additionally needs a
+      GFF3 on the target side. The annotation columns are that species' own input
+      annotation, so a pure target with no GFF3 shows NA — not zero.
+      `times_rank1` / `times_in_top_n` count how often the species was picked as a
+      donor, self-pairs excluded.
+    plot_type: "table"
+    pconfig:
+      id: "run_species_table"
+      namespace: "Species"
+      col1_header: "Species"
+  run_source_funnel:
+    file_format: "tsv"
+    section_name: "Source lncRNA — extraction and filtering funnel"
+    description: >
+      What happened to each source's lncRNA between the samplesheet GFF3 and the
+      transcripts actually offered for projection. Two filters apply, in order:
+      single-exon transcripts are dropped (FOMO transfers spliced models only), then
+      TD2/PSAURON drops anything with a complete, confident ORF. `kept` is what was
+      donated. Lengths are for the kept set; transcript length is the genomic span,
+      spliced length the summed exon length.
+    plot_type: "table"
+    pconfig:
+      id: "run_source_funnel_table"
+      namespace: "Source funnel"
+      col1_header: "Species"
+  run_target_types:
+    file_format: "tsv"
+    section_name: "Targets — annotation before and after projection"
+    description: >
+      One row per (target × transcript type). `before` is the target's own
+      annotation; `added_*` are the candidate models FOMO projected onto it, from the
+      two collapsed aggregates — `allModels` (every source) and `top3` (the
+      best-scoring sources only, so a subset). `after` is the sum. A target with no
+      GFF3 has no `before` and shows NA there: it can be annotated but not compared.
+      `reads_mapped_percent` is the merged alignment's mapping rate for that class,
+      so a target that simply aligned badly is visible in the same row.
+    plot_type: "table"
+    pconfig:
+      id: "run_target_types_table"
+      namespace: "Targets"
+      col1_header: "Target / type"
+  run_aggregate_accuracy:
+    file_format: "tsv"
+    section_name: "Aggregate models — accuracy and consensus gain"
+    description: >
+      gffcompare transcript-level accuracy per target for the aggregate models, with
+      `best_single_source` (the best real, non-self donor) as the baseline every
+      `delta_f1` is measured against. `raw` is the pooled projection, `collapsed` is
+      that pooled set after the gffcompare collapse. With `--include_decoy` the decoy
+      columns give the false-positive baseline: decoys are source loci relocated into
+      the source's own intergenic space, so `est_fdr_pct` is decoy models as a
+      percentage of real models — it can exceed 100% when the decoy track is as
+      large as the real one.
+    plot_type: "table"
+    pconfig:
+      id: "run_aggregate_accuracy_table"
+      namespace: "Aggregates"
+      col1_header: "Target / model"
+  run_donor_ranking:
+    file_format: "tsv"
+    section_name: "Donors — how good is each source, run-wide"
+    description: >
+      Per source species, its lncRNA transcript-level F1 across every target it was
+      projected onto (self-pairs excluded — a species scores near-perfectly against
+      itself). `n_rank1` / `n_in_top_n` count top-N selections, which is what
+      actually drives the `top3` consensus.
+    plot_type: "table"
+    pconfig:
+      id: "run_donor_ranking_table"
+      namespace: "Donors"
+      col1_header: "Species"
+  run_top_sources:
+    file_format: "tsv"
+    section_name: "Top-N donors picked per target"
+    description: >
+      The actual top-N selection per target, in rank order, as written by
+      SELECT_TOP_SOURCES and used to build that target's `top3` models. Only
+      benchmarked targets have one — the ranking is derived from gffcompare F1.
+    plot_type: "table"
+    pconfig:
+      id: "run_top_sources_table"
+      namespace: "Top sources"
+      col1_header: "Target"
+
+sp:
+  run_overview:
+    fn: "*run_overview_mqc.tsv"
+  run_species:
+    fn: "*run_species_mqc.tsv"
+  run_source_funnel:
+    fn: "*run_source_funnel_mqc.tsv"
+  run_target_types:
+    fn: "*run_target_types_mqc.tsv"
+  run_aggregate_accuracy:
+    fn: "*run_aggregate_accuracy_mqc.tsv"
+  run_donor_ranking:
+    fn: "*run_donor_ranking_mqc.tsv"
+  run_top_sources:
+    fn: "*run_top_sources_mqc.tsv"

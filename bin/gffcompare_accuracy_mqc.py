@@ -21,14 +21,22 @@ Output: a single <prefix>_mqc.json MultiQC custom-content file.
 """
 import argparse
 import json
-import os
-import re
 import sys
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List
 
-# Feature levels, in the order gffcompare reports them and the native plot
-# lists them in its dropdown.
-LEVELS = ["Base", "Exon", "Intron", "Intron_chain", "Transcript", "Locus"]
+# Nextflow only puts bin/ on PATH, not on Python's import path — but it stages the
+# whole directory, so a __file__-relative insert finds the sibling module. The
+# identity grammar, AGGREGATE_IDS, the level list and the stats parser live there
+# because this script and select_top_sources.py must agree on all of them.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fomo_stats import (  # noqa: E402
+    AGGREGATE_IDS,
+    LEVELS,
+    feature_class,
+    parse_accuracy,
+    parse_identity,
+)
 
 # Marker symbol per feature class (Plotly symbol names).
 SYMBOL_BY_CLASS = {
@@ -43,57 +51,6 @@ PALETTE = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 
-FNAME_RE = re.compile(
-    r"^(?P<target>.+?)\.from_(?P<source>.+?)\.(?P<ft>lnc_RNA|mRNA)(?P<decoy>\.decoy)?$"
-)
-
-# Aggregate pseudo-sources, in the order they should take palette colours. Listing
-# them first keeps the four headline models on stable colours across runs with
-# different species. Kept in sync with AGGREGATE_IDS in bin/select_top_sources.py
-# and subworkflows/local/consensus_top.nf.
-AGGREGATE_IDS = ("allModels_raw", "allModels_collapsed", "top3_raw", "top3_collapsed")
-
-
-def parse_identity(stats_path: str) -> Optional[Tuple[str, str, bool]]:
-    """Derive (source, feature_type, decoy) from a gffcompare stats filename."""
-    base = os.path.basename(stats_path)
-    base = re.sub(r"\.gffcompare\.stats$", "", base)
-    base = re.sub(r"\.stats$", "", base)            # tolerate either suffix
-    base = re.sub(r"\.gffcompare$", "", base)
-    m = FNAME_RE.match(base)
-    if not m:
-        return None
-    return m.group("source"), m.group("ft"), bool(m.group("decoy"))
-
-
-def feature_class(ft: str, decoy: bool) -> str:
-    if decoy:
-        return "decoy"
-    return "lncRNA" if ft == "lnc_RNA" else "mRNA"
-
-
-def parse_accuracy(stats_path: str) -> Dict[str, Tuple[float, float]]:
-    """Return {level: (sensitivity, precision)} read from a stats file.
-    Mirrors MultiQC's native parser: drop '|', normalise 'Intron chain',
-    then split — token[0]=level, token[2]=sensitivity, token[3]=precision."""
-    out: Dict[str, Tuple[float, float]] = {}
-    with open(stats_path, encoding="utf-8") as fh:
-        for line in fh:
-            if "level:" not in line:
-                continue
-            toks = line.replace("|", "").replace("Intron chain", "Intron_chain").split()
-            if len(toks) < 4:
-                continue
-            level = toks[0]
-            try:
-                sens = float(toks[2])
-                prec = float(toks[3])
-            except ValueError:
-                continue
-            out[level] = (sens, prec)
-    return out
-
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("stats", nargs="+", help="gffcompare .stats files")
@@ -106,28 +63,27 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    # Collect (source, ft, decoy, accuracy) per file
+    # Collect (identity, accuracy) per file
     records = []
     for path in args.stats:
         ident = parse_identity(path)
         if ident is None:
             print(f"WARNING: cannot parse identity from '{path}', skipping", file=sys.stderr)
             continue
-        source, ft, decoy = ident
         acc = parse_accuracy(path)
         if not acc:
             print(f"WARNING: no accuracy lines in '{path}', skipping", file=sys.stderr)
             continue
-        records.append((source, ft, decoy, acc))
+        records.append((ident, acc))
 
     if not records:
         print("ERROR: no usable gffcompare stats files", file=sys.stderr)
         return 1
 
-    # Stable colour assignment: the aggregate pseudo-sources first, in a fixed
-    # order, then the real species alphabetically — so the four headline models keep
-    # the same colours no matter which species a run happens to include.
-    present = {r[0] for r in records}
+    # Stable colour assignment: the aggregate pseudo-sources first, in the fixed
+    # AGGREGATE_IDS order, then the real species alphabetically — so the four headline
+    # models keep the same colours no matter which species a run happens to include.
+    present = {ident.source for ident, _acc in records}
     sources = [s for s in AGGREGATE_IDS if s in present] + sorted(present - set(AGGREGATE_IDS))
     colour_by_source = {s: PALETTE[i % len(PALETTE)] for i, s in enumerate(sources)}
 
@@ -135,16 +91,18 @@ def main() -> int:
     data: List[Dict[str, dict]] = []
     for level in LEVELS:
         level_points: Dict[str, dict] = {}
-        for source, ft, decoy, acc in records:
+        for ident, acc in records:
             if level not in acc:
                 continue
             sens, prec = acc[level]
-            name = f"{source}.{ft}" + (".decoy" if decoy else "")
+            name = f"{ident.source}.{ident.feature_type}" + (".decoy" if ident.decoy else "")
             level_points[name] = {
                 "x": round(sens / 100.0, 4),
                 "y": round(prec / 100.0, 4),
-                "color": colour_by_source[source],
-                "marker_symbol": SYMBOL_BY_CLASS[feature_class(ft, decoy)],
+                "color": colour_by_source[ident.source],
+                "marker_symbol": SYMBOL_BY_CLASS[
+                    feature_class(ident.feature_type, ident.decoy)
+                ],
                 "name": name,
             }
         data.append(level_points)

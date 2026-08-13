@@ -124,7 +124,12 @@ workflow CONSENSUS_TOP {
     // no annotation contributes no ranking stats, so it produces nothing here —
     // no guard needed, the empty join simply never matches.
     emit:
-    gff3      = ch_top_scored            // [ meta(id:top3_raw|top3_collapsed), gff3 ] × 2·F·T_g
-    stats     = GFFCOMPARE_TOP.out.stats // [ meta, *.stats ] × 2·F·T_g (feeds the accuracy scatter in REPORTING)
-    mqc_files = ch_mqc_files             // [ meta, path    ] × 4·F·T_g (gffcompare stats + GFF stats tables)
+    gff3        = ch_top_scored            // [ meta(id:top3_raw|top3_collapsed), gff3 ] × 2·F·T_g
+    stats       = GFFCOMPARE_TOP.out.stats // [ meta, *.stats ] × 2·F·T_g (feeds the accuracy scatter in REPORTING)
+    mqc_files   = ch_mqc_files             // [ meta, path    ] × 4·F·T_g (gffcompare stats + GFF stats tables)
+    // The selection itself, for RUN_SUMMARY. Not a MultiQC file (one bare `source`
+    // column), and the F1 ranking behind it is only printed to stderr, so this CSV
+    // is the only record of which donors a target actually chose. EMPTY when no
+    // target is annotated — consumers must .ifEmpty([]) before collecting.
+    top_sources = SELECT_TOP_SOURCES.out.csv // [ meta(id=target), <target>.top_sources.csv ] × T_g
 }

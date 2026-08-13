@@ -123,6 +123,25 @@
                     "description": "MultiQC content config (custom_data blocks and sp search patterns).",
                     "fa_icon": "fas fa-cog",
                     "hidden": true
+                },
+                "multiqc_run_summary_main_config": {
+                    "type": "string",
+                    "format": "file-path",
+                    "exists": true,
+                    "default": "${projectDir}/assets/multiqc/run_summary_main.yml",
+                    "description": "Layout config for the run-level summary report (title, section ordering).",
+                    "help_text": "The run-level report is published once per run under ${outdir}/summary/, alongside the per-target reports under ${outdir}/targets/<target>/multiqc/. It carries only cross-target aggregates built by RUN_SUMMARY_TABLES, never the raw per-target stat files.",
+                    "fa_icon": "fas fa-cog",
+                    "hidden": true
+                },
+                "multiqc_run_summary_sections_config": {
+                    "type": "string",
+                    "format": "file-path",
+                    "exists": true,
+                    "default": "${projectDir}/assets/multiqc/run_summary_sections.yml",
+                    "description": "Content config for the run-level summary report (custom_data blocks and sp search patterns).",
+                    "fa_icon": "fas fa-cog",
+                    "hidden": true
                 }
             }
         }

@@ -76,8 +76,16 @@ targets/<target>/select_top_sources/  <target>.top_sources.csv
 targets/<target>/multiqc/     multiqc_report.html + multiqc_report_data/
 ```
 
+plus **one run-level tree**, a sibling of `targets/`, written by `RUN_SUMMARY`:
+
+```
+summary/multiqc/  fomo_run_summary.html + fomo_run_summary_data/
+summary/tables/   run_*_mqc.tsv, run_*_mqc.json   (the aggregates as data)
+                  run_summary.json                (every number, one file)
+```
+
 `<gtype>` is `<feature_type>[.decoy]`. There is **one MultiQC report per target** — source-side
-sections are target-agnostic and broadcast into every report.
+sections are target-agnostic and broadcast into every report — **and one for the run**.
 
 # Pipeline Architecture
 
@@ -88,7 +96,7 @@ Conceptual stages and their **implementation status**:
 3. **Projection** — one splice-aware minimap2 alignment of the merged all-sources sequences onto each target, split back per source afterwards. ✅ Implemented.
 4. **Benchmarking** — gffcompare of projected models vs. target reference annotation. ✅ Implemented.
 5. **Validation** — splice-junction validation of projected models. ❌ Not yet implemented (next step, see `BRAINSTORM.md`).
-6. **Reporting** — MultiQC report. ✅ Implemented.
+6. **Reporting** — one MultiQC report per target, plus one run-level summary report. ✅ Implemented.
 
 ### Feature tracks (what gets transferred)
 
@@ -107,7 +115,8 @@ With **S** sources (`role` ∈ {source, both}), **T** targets (`role` ∈ {targe
 `BAM_TO_GFF` / `FILTER_ALLMODELS` / `SPLIT_GFF_BY_SOURCE` (each split emitting S files),
 `T` projected-lncRNA TD2 passes, `F·D·T` `GFFCOMPARE_COMBINE`,
 `(F·S·D + 2·F·D)·T_g` benchmark `GFFCOMPARE`s, `2·F·T_g` `GFFCOMPARE_TOP`s, `F·T_g` target
-references, `T` MultiQC reports.
+references, `T` MultiQC reports, and — independent of every one of those letters — **one**
+`RUN_SUMMARY_TABLES` + **one** `MULTIQC_RUN_SUMMARY` per run.
 
 The alignment count is `F·D·T` and **not** `F·S·D·T`: since plans/15 every source's spliced
 transcripts are merged into one FASTA per gene type and aligned in a single minimap2 run per
@@ -153,6 +162,7 @@ exactly one output, so a `both` row could never reach both channels.
 | `BENCHMARKING` | filter target ref, gffcompare projected vs. reference; GFF stats on target GFFs. **Targets without a `gff3` are filtered out here** | `stats`, `target_refs`, `mqc_files` |
 | `CONSENSUS_TOP` | rank sources by lncRNA transcript F1 **per target**, **subset `allModels` to those sources** (`top3_raw`), gffcompare-collapse it (`top3_collapsed`), score **both** | `gff3`, `stats`, `mqc_files` |
 | `REPORTING` | per-target accuracy scatter + one MULTIQC per target | `report`, `data` |
+| `RUN_SUMMARY` | digest the pipeline-wide `mqc_files` union + `top_sources` CSVs + a samplesheet-derived roles CSV into run-level tables/plots, then **one MULTIQC for the whole run**. One task per run, no target dimension | `report`, `tables` |
 
 \* `Channel.empty()` without `--include_decoy` — the whole intergenic/relocation branch
 (`SAMTOOLS_FAIDX` → `GFF_TO_GENE_BED` → `BEDTOOLS_COMPLEMENT` → `RELOCATE_LOCI` →
@@ -178,7 +188,7 @@ applies to `SELECT_TOP_SOURCES`: it is grouped per target because
 `bin/select_top_sources.py` keys its score map by source alone, so pooling targets would
 have them overwrite each other.
 
-**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `gtype` = `feature_type[_decoy]` + `target_id` (PROJECTION; `target_id` is also stamped on target-side stats in BENCHMARKING, where it equals `meta.id`), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). **`id` carries a pseudo-source between the merge and the split**: it is the literal `'allModels'` from `MINIMAP2_ALIGN` through `FILTER_ALLMODELS`, becomes the real species again when `SPLIT_GFF_BY_SOURCE`'s output is re-keyed, and is one of `allModels_raw | allModels_collapsed | top3_raw | top3_collapsed` on the four aggregate models. Those four ids are excluded from the ranking pool in **three** places that must agree: the channel filter in `consensus_top.nf`, `bin/select_top_sources.py`, and the colour ordering in `bin/gffcompare_accuracy_mqc.py`. `target_id` is load-bearing twice over: it is the per-target publishDir segment in `conf/modules.config`, and REPORTING routes MultiQC files by its *presence* (`meta.target_id != null` → that target's report only; absent → broadcast to every report). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring. `feature_type` ranges over the *enabled* subset (see **Feature tracks**), and `decoy: true` / `kind: 'decoy'` occur only with `--include_decoy` — every `meta.decoy` dereference in `conf/modules.config` is Groovy-null-safe and the real track always carries `decoy: false`, so the `ext.prefix`/`ext.sample_name` closures need no change when a track is off. Their `1_raw / 2_lncRNA / 3_decoy_lncRNA / 4_mRNA / 5_decoy_mRNA` ordering ladders are deliberately sparse-safe: a disabled class simply produces no row, and the `'unknown'` fallback cannot trigger because the values are always a subset.
+**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `gtype` = `feature_type[_decoy]` + `target_id` (PROJECTION; `target_id` is also stamped on target-side stats in BENCHMARKING, where it equals `meta.id`), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). **`id` carries a pseudo-source between the merge and the split**: it is the literal `'allModels'` from `MINIMAP2_ALIGN` through `FILTER_ALLMODELS`, becomes the real species again when `SPLIT_GFF_BY_SOURCE`'s output is re-keyed, and is one of `allModels_raw | allModels_collapsed | top3_raw | top3_collapsed` on the four aggregate models. Those four ids are excluded from the ranking pool in **two** places that must agree: the channel filter in `consensus_top.nf`, and `AGGREGATE_IDS` in **`bin/fomo_stats.py`** — the shared module that also owns the `<target>.from_<source>.<ft>[.decoy]` stats-filename grammar and the Sn/Pr parser, imported by `select_top_sources.py`, `gffcompare_accuracy_mqc.py` and `run_summary_tables.py`. Nextflow puts `bin/` on PATH but not on Python's import path, so each of those does `sys.path.insert(0, Path(__file__).resolve().parent)` first — the directory is staged/mounted whole, so the sibling import works on every executor (verified under Singularity on the cluster). `target_id` is load-bearing twice over: it is the per-target publishDir segment in `conf/modules.config`, and REPORTING routes MultiQC files by its *presence* (`meta.target_id != null` → that target's report only; absent → broadcast to every report). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring. `feature_type` ranges over the *enabled* subset (see **Feature tracks**), and `decoy: true` / `kind: 'decoy'` occur only with `--include_decoy` — every `meta.decoy` dereference in `conf/modules.config` is Groovy-null-safe and the real track always carries `decoy: false`, so the `ext.prefix`/`ext.sample_name` closures need no change when a track is off. Their `1_raw / 2_lncRNA / 3_decoy_lncRNA / 4_mRNA / 5_decoy_mRNA` ordering ladders are deliberately sparse-safe: a disabled class simply produces no row, and the `'unknown'` fallback cannot trigger because the values are always a subset.
 
 **Filters:** `FILTER_TRANSCRIPT` (always on) keeps only multi-exon (spliced) transcripts. `RELOCATE_LOCI` runs **only with `--include_decoy`**, and caps decoys at `params.decoy_cap` (default 1000; 0 disables) using `params.relocate_seed` for reproducibility.
 
@@ -282,12 +292,36 @@ Every subworkflow that emits statistics:
   of the pipeline so the meta is available for tracing.
 - Subworkflows with no stats emit `Channel.empty()` as `mqc_files`.
 
-The top-level workflow mixes `mqc_files` across subworkflows and passes the union to
-`REPORTING`, which is the only place that calls `MULTIQC` (pinned to **v1.35**; bump in
-`modules/nf-core/multiqc/{main.nf,environment.yml}` and in
+The top-level workflow mixes `mqc_files` across subworkflows into `ch_all_mqc` and passes
+that one union to **two** consumers — `REPORTING` (one report per target) and
+`RUN_SUMMARY` (one report for the run). A channel read twice is forked by Nextflow, so
+neither sees a shortened stream. Those are the only two places that call `MULTIQC`
+(pinned to **v1.35**; bump in `modules/nf-core/multiqc/{main.nf,environment.yml}` and in
 `modules/local/{samtools_to_mqc,select_top_sources}.nf`, which reuse the MultiQC
-container. `GFF_STATS_TO_MQC` does not — it needs only stdlib `json`, so it runs on
-`python:3.11`).
+container. `GFF_STATS_TO_MQC` and `RUN_SUMMARY_TABLES` do not — they need only stdlib
+`json`/`csv`, so they run on `python:3.11`).
+
+**The run-level report (`RUN_SUMMARY`)** is deliberately **aggregate-only**: one
+`RUN_SUMMARY_TABLES` task digests the union into ~12 run-level tables/plots, and only
+those reach its MULTIQC. Do not "simplify" it by handing the raw union to a second
+MULTIQC — at S=T=20 that is ~1000 files / ~900 rows (a *bigger* report than the
+per-target ones), and every per-target accuracy scatter carries the same hardcoded
+section id `gffcompare_accuracy_custom`, so the T of them would overwrite each other.
+Two further things it depends on:
+- `RUN_SUMMARY` is a **top-level** subworkflow with an **aliased** MULTIQC
+  (`MULTIQC_RUN_SUMMARY`). Both matter: `withName` matching is a regex *find*, so
+  `FOMO:REPORTING:MULTIQC` (now `$`-anchored, defensively) would otherwise claim a
+  same-subworkflow alias, and the `.*:MULTIQC$` publishDir rule is `$`-anchored so the
+  alias escapes it — its meta has no `target_id` and would publish to
+  `targets/null/multiqc`. Its own publishDir paths are **static strings** for the same
+  reason.
+- Its plots are **self-describing `*_mqc.json`** (id/section_name/plot_type/pconfig
+  embedded, no `sp` pattern, no `custom_data` block); only the TSV tables are declared in
+  `assets/multiqc/run_summary_sections.yml`. MultiQC 1.35 accepts a **multi-dataset
+  bargraph** (`pconfig.data_labels`) but **not** a multi-dataset heatmap — a list of
+  matrices fails validation and the whole report comes out as "No analysis results
+  found", so the source × target accuracy matrix is three single-matrix sections
+  (F1/Sn/Pr), not one with a switcher.
 
 **One report per target.** `REPORTING` splits the union on the *presence* of
 `meta.target_id`: set → the file belongs to that target's report alone; absent → it is
@@ -318,6 +352,11 @@ list to MULTIQC's single config slot):
 - `main.yml` — top-level layout: `report_title`, `report_comment`, `extra_fn_clean_exts`,
   `report_section_order`, `skip_generalstats: true`, `remove_sections`.
 - `sections.yml` — `custom_data` blocks + `sp` patterns for every custom section.
+
+The run-level report has its **own** pair, same split, wired via
+`params.multiqc_run_summary_main_config` / `params.multiqc_run_summary_sections_config`:
+`run_summary_main.yml` + `run_summary_sections.yml`. The two pairs never mix (separate
+tasks, disjoint `run_*_mqc.*` filename suffixes).
 
 ### Adding a new custom-content section — rules learned the hard way
 

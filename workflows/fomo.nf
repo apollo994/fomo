@@ -3,6 +3,7 @@ include { PROJECTION         } from '../subworkflows/local/projection'
 include { BENCHMARKING       } from '../subworkflows/local/benchmarking'
 include { CONSENSUS_TOP      } from '../subworkflows/local/consensus_top'
 include { REPORTING          } from '../subworkflows/local/reporting'
+include { RUN_SUMMARY        } from '../subworkflows/local/run_summary'
 include { samplesheetToList  } from 'plugin/nf-schema'
 include { validateParameters } from 'plugin/nf-schema'
 include { paramsSummaryLog   } from 'plugin/nf-schema'
@@ -84,15 +85,36 @@ workflow FOMO {
         BENCHMARKING.out.target_refs
     )
 
+    // The pipeline-wide union of MultiQC inputs, hoisted because it feeds BOTH
+    // reporting paths. A channel read by two consumers is forked by Nextflow, so
+    // this is a naming change only — neither consumer sees a shortened stream.
+    ch_all_mqc = PREPROCESSING.out.mqc_files
+        .mix(PROJECTION.out.mqc_files)
+        .mix(BENCHMARKING.out.mqc_files)
+        .mix(CONSENSUS_TOP.out.mqc_files)
+
+    ch_target_ids = ch_targets.map { meta, _fasta, _gff3 -> meta.id }
+
     // One MultiQC report per target. Source-side stats are target-agnostic and get
     // broadcast into every report, so REPORTING needs the target id list to fan
     // them out with.
     REPORTING(
-        PREPROCESSING.out.mqc_files
-            .mix(PROJECTION.out.mqc_files)
-            .mix(BENCHMARKING.out.mqc_files)
-            .mix(CONSENSUS_TOP.out.mqc_files),
+        ch_all_mqc,
         BENCHMARKING.out.stats.mix(CONSENSUS_TOP.out.stats),
-        ch_targets.map { meta, _fasta, _gff3 -> meta.id }
+        ch_target_ids
     )
+
+    // ...and ONE report for the run as a whole, which is the only place the
+    // cross-target picture exists: species per role, how much annotation survived
+    // filtering, what each target gained, which donors are worth using.
+    //
+    // Species roles are the one fact no stat file carries, so they are passed as a
+    // small CSV built from the samplesheet rows read above. `seed` is written first,
+    // `sort` makes the body deterministic (and therefore the task cacheable).
+    ch_roles = Channel.fromList(rows)
+        .map { meta, _fasta, gff3 -> "${meta.id},${meta.role},${gff3 ? 'yes' : 'no'}" }
+        .collectFile(name: 'species_roles.csv', newLine: true, sort: true,
+                     seed: 'species,role,has_gff3')
+
+    RUN_SUMMARY(ch_all_mqc, CONSENSUS_TOP.out.top_sources, ch_roles)
 }
