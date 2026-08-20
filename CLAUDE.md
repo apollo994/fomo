@@ -111,8 +111,9 @@ instruments are opt-in:
 With **S** sources (`role` ∈ {source, both}), **T** targets (`role` ∈ {target, both}),
 **T_g** ≤ T of them carrying a `gff3`, F enabled feature types (1, or 2 with
 `--include_mrna`) and D = 2 with `--include_decoy` else 1: `F·S` `FILTER_TRANSCRIPT`,
-`F·D` `MERGE_SOURCE_FASTA`, `T` `MINIMAP2_INDEX`, **`F·D·T`** minimap2 alignments /
-`BAM_TO_GFF` / `FILTER_ALLMODELS` / `SPLIT_GFF_BY_SOURCE` (each split emitting S files),
+`F·D` `MERGE_SOURCE_FASTA`, `S` `GUNZIP_FASTA`, `T` `GUNZIP_TARGET`,
+`T` `MINIMAP2_INDEX`, **`F·D·T`** minimap2 alignments / `BAM_TO_GFF` /
+`FILTER_ALLMODELS` / `SPLIT_GFF_BY_SOURCE` (each split emitting S files),
 `T` projected-lncRNA TD2 passes, `F·D·T` `GFFCOMPARE_COMBINE`,
 `(F·S·D + 2·F·D)·T_g` benchmark `GFFCOMPARE`s, `2·F·T_g` `GFFCOMPARE_TOP`s, `F·T_g` target
 references, `T` MultiQC reports, and — independent of every one of those letters — **one**
@@ -122,6 +123,19 @@ The alignment count is `F·D·T` and **not** `F·S·D·T`: since plans/15 every 
 transcripts are merged into one FASTA per gene type and aligned in a single minimap2 run per
 target, then split back apart on the `source=` attribute. The `2·` on the benchmark counts is
 the raw/collapsed pair for each aggregate.
+
+**There is no gunzip on the GFF3 side at all, and that is deliberate** (plans/17). Every
+GFF3 consumer reads `.gz`: `FILTER_TRANSCRIPT`/`FILTER_TARGET` and `GFF_TO_GENE_BED`
+decompress inline, and `gff-feature-stats` reads `.gff3.gz` natively — so the samplesheet
+GFF3 goes straight into `BENCHMARKING` as well as `PREPROCESSING`. The two surviving
+`MAYBE_GUNZIP` aliases are **FASTA-only and exist solely for gffread**, whose `-g` genome
+reader has no gzip or bgzf path. `MINIMAP2_INDEX` is fed the gzipped assembly directly
+(minimap2 gzopen's its input), so `GUNZIP_TARGET` is off the critical path and feeds only
+`EXTRACT_PROJECTED_LNC`. **Do not swap either one for a `samtools faidx` shortcut**: faidx
+accepts bgzip but hard-errors on plain gzip, and while the committed test FASTAs are bgzip
+(`bin/subsample_test_data.sh`), the real Ensembl/NCBI assemblies are plain gzip — so such a
+change passes `-profile test` and fails on the cluster.
+
 Both flags on reproduces the pre-flag behaviour exactly. **`-profile test` sets neither** —
 it runs the lncRNA deliverable only (F = 1, D = 1), because both flags together quadruple
 the task count and neither is needed to prove the wiring. Pass `--include_mrna` /
@@ -240,7 +254,8 @@ The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and 
   counts/lengths, introns). Replaced `agat_sp_statistics.pl` for every stats step: same
   numbers (verified metric-by-metric against AGAT, introns included), plus intron stats
   AGAT-style parsing never gave us, at a flat ~20 MB RSS instead of 8–12 GB. Reads
-  `.gff3.gz` directly, so no gunzip step is needed upstream.
+  `.gff3.gz` directly, so no gunzip step is needed upstream — on the source side
+  (`PREPROCESSING`) or the target side (`BENCHMARKING`).
   **Vendored as `bin/gff-feature-stats`** — a release build of v0.2.0 from
   `github.com/apollo994/gff-feature-stats` @ `67ffea7`. The **commit is the provenance**:
   `67ffea7` changed behaviour without bumping the crate version, so `-V` (and the

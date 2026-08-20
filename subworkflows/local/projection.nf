@@ -22,20 +22,17 @@ workflow PROJECTION {
 
     main:
 
-    // Decompress each target FASTA once (T tasks)
-    GUNZIP_TARGET(
-        ch_target.map { meta, fa, _gff3 -> tuple(meta, fa) }
-    )
+    // Build one .mmi index per target (ext.args = '-x splice' set in conf/modules.config).
+    // Fed the samplesheet FASTA directly, still gzipped: minimap2 gzopen's its input,
+    // so indexing does NOT wait on GUNZIP_TARGET (which is only needed much later, for
+    // gffread — see below). Note the nf-core module names its output
+    // ${fasta.baseName}.mmi and never reads task.ext.prefix, so the .mmi is named after
+    // the assembly file rather than the species; nothing keys off that name.
+    MINIMAP2_INDEX(ch_target.map { meta, fa, _gff3 -> tuple(meta, fa) })
 
-    // Build one .mmi index per target (ext.args = '-x splice' set in conf/modules.config)
-    MINIMAP2_INDEX(GUNZIP_TARGET.out.gunzip)
-
-    // Per-target reference bundle, keyed by target id: [ target_id, mmi, fasta ].
-    // MINIMAP2_INDEX and GUNZIP_TARGET both preserve the input meta, so join() on
-    // the full meta pairs each index with its own genome.
-    ch_ref = MINIMAP2_INDEX.out.index
-        .join(GUNZIP_TARGET.out.gunzip)
-        .map { meta, mmi, fa -> tuple(meta.id, mmi, fa) }
+    // Per-target reference bundle, keyed by target id: [ target_id, mmi ].
+    // MINIMAP2_ALIGN takes only the index, so no genome travels with it.
+    ch_ref = MINIMAP2_INDEX.out.index.map { meta, mmi -> tuple(meta.id, mmi) }
 
     // ── Merge every source's spliced transcripts, per feature class ───────────
     // One FASTA per gene type — {lnc_RNA, mRNA, lnc_RNA_decoy, mRNA_decoy}, of which
@@ -73,7 +70,7 @@ workflow PROJECTION {
     // align every source onto whichever target's index materialised first.
     ch_align = MERGE_SOURCE_FASTA.out.fasta
         .combine(ch_ref)
-        .multiMap { meta, reads, tid, mmi, _fa ->
+        .multiMap { meta, reads, tid, mmi ->
             reads:     tuple(meta + [id: 'allModels', target_id: tid], reads)
             reference: tuple([id: tid], mmi)
         }
@@ -123,6 +120,18 @@ workflow PROJECTION {
     // join on target_id rather than a broadcast FASTA. Getting this wrong is silent:
     // gffread would happily read the coordinates of target B out of target A's
     // sequence and hand TD2 nonsense to score.
+    //
+    // This is the ONLY reason GUNZIP_TARGET still exists: gffread opens its `-g`
+    // genome through a random-access FASTA reader with no gzip or bgzf path, so it
+    // genuinely needs plain text. Do NOT "optimise" it away, and do not reach for a
+    // samtools-faidx-style shortcut either — faidx accepts bgzip but hard-errors on
+    // plain gzip, and while the committed test FASTAs are bgzip
+    // (bin/subsample_test_data.sh), the real Ensembl/NCBI assemblies are plain gzip.
+    // Such a shortcut passes -profile test and fails on the cluster.
+    GUNZIP_TARGET(
+        ch_target.map { meta, fa, _gff3 -> tuple(meta, fa) }
+    )
+
     ch_target_fa = GUNZIP_TARGET.out.gunzip.map { meta, fa -> tuple(meta.id, fa) }
 
     ch_lnc_extract = ch_proj.lnc

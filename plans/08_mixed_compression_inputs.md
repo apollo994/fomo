@@ -1,5 +1,13 @@
 # Plan: Accept both compressed (.gz) and uncompressed FASTA / GFF3 inputs
 
+> **Partly superseded by `plans/17_scheduling_efficiency.md`.** `MAYBE_GUNZIP` itself
+> stands, but two premises of the "Current state" section below have since gone stale:
+> **minimap2 reads gzip natively** (so `MINIMAP2_INDEX` is now fed the gzipped assembly
+> directly), and **AGAT is gone** — `gff-feature-stats` replaced it and reads `.gff3.gz`.
+> Consequently `GUNZIP_TARGET_GFF` was deleted, joining `GUNZIP_RAW_SOURCE_GFF` which this
+> plan's own table lists but which no longer exists. The two surviving aliases,
+> `GUNZIP_FASTA` and `GUNZIP_TARGET`, are FASTA-only and exist solely for gffread's `-g`.
+
 ## Context
 
 The samplesheet schema (`assets/schema_input.json`) already *advertises* that

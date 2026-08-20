@@ -27,7 +27,15 @@ workflow PREPROCESSING {
     main:
 
     // ── Source path ──────────────────────────────────────────────────────────
-    // Decompress each source FASTA once (gffread needs uncompressed genome)
+    // Decompress each source FASTA once. This survives for one reason only:
+    // gffread (EXTRACT_SEQUENCES / EXTRACT_DECOY_SEQUENCES) opens its `-g` genome
+    // through a random-access FASTA reader with no gzip or bgzf path. SAMTOOLS_FAIDX
+    // is NOT an excuse to drop it either — faidx accepts bgzip but hard-errors on
+    // plain gzip, and the real Ensembl/NCBI assemblies are plain gzip even though the
+    // committed test FASTAs are bgzip (bin/subsample_test_data.sh), so a faidx
+    // shortcut would pass -profile test and fail on the cluster.
+    // Contrast the GFF3 side, which needs no gunzip at all: FILTER_TRANSCRIPT
+    // decompresses inline and gff-feature-stats reads .gff3.gz natively.
     GUNZIP_FASTA(
         ch_sources.map { meta, fasta, gff3 -> tuple(meta, fasta) }
     )

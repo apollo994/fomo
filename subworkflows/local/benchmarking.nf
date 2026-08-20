@@ -1,4 +1,3 @@
-include { MAYBE_GUNZIP as GUNZIP_TARGET_GFF        } from '../../modules/local/maybe_gunzip'
 include { FILTER_TRANSCRIPT as FILTER_TARGET       } from '../../modules/local/filter_transcript'
 include { GFFCOMPARE                               } from '../../modules/nf-core/gffcompare/main'
 include { GFF_STATS         as GFF_STATS_TARGET    } from '../../modules/local/gff_stats'
@@ -22,14 +21,22 @@ workflow BENCHMARKING {
     // falsy. Its projections are dropped by the inner join below, so no further
     // guard is needed — and no gffcompare, target GFF stats, or top-N consensus
     // are produced for it.
-    ch_target_gff = ch_target.filter { _meta, _fa, gff3 -> gff3 }
 
-    GUNZIP_TARGET_GFF(
-        ch_target_gff.map { meta, _fa, gff3 -> tuple(meta, gff3) }
-    )
+    // The samplesheet gff3 is handed straight to both consumers, still gzipped —
+    // there is deliberately NO gunzip task here. FILTER_TARGET decompresses inline
+    // (modules/local/filter_transcript.nf:20-24) and gff-feature-stats reads
+    // .gff3.gz natively (modules/local/gff_stats.nf:5-8), exactly as
+    // PREPROCESSING already relies on for the raw source GFF3. Both derive their
+    // output names from ext.prefix, so nothing published depends on the file's
+    // name. The ~1 s of decompression now happens once per consumer instead of
+    // once per target, which buys back T_g SLURM jobs whose median lifetime was
+    // 73 s for 1.1 s of work (see plans/17_scheduling_efficiency.md).
+    ch_target_gff = ch_target
+        .filter { _meta, _fa, gff3 -> gff3 }
+        .map    { meta,  _fa, gff3 -> tuple(meta, gff3) }
 
     // Filter target annotation by enabled feature_type — one GFF3 per class.
-    ch_target_filter_in = GUNZIP_TARGET_GFF.out.gunzip
+    ch_target_filter_in = ch_target_gff
         .flatMap { meta, gff3 ->
             feature_types.collect { ft -> tuple(meta + [feature_type: ft, decoy: false], gff3, ft) }
         }
@@ -68,7 +75,7 @@ workflow BENCHMARKING {
     // target_id is stamped here (== meta.id, the target species) so REPORTING can
     // route these rows into that target's report and no other. Everything else
     // that is target-scoped already carries the key from PROJECTION.
-    ch_target_stats_gff = GUNZIP_TARGET_GFF.out.gunzip
+    ch_target_stats_gff = ch_target_gff
         .map  { m, g -> tuple(m + [kind: 'raw',      target_id: m.id], g) }
         .mix(FILTER_TARGET.out.gff3.map { m, g -> tuple(m + [kind: 'filtered', target_id: m.id], g) })
 
