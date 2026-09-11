@@ -115,14 +115,23 @@ With **S** sources (`role` ∈ {source, both}), **T** targets (`role` ∈ {targe
 `T` `MINIMAP2_INDEX`, **`F·D·T`** minimap2 alignments / `BAM_TO_GFF` /
 `FILTER_ALLMODELS` / `SPLIT_GFF_BY_SOURCE` (each split emitting S files),
 `T` projected-lncRNA TD2 passes, `F·D·T` `GFFCOMPARE_COMBINE`,
-`(F·S·D + 2·F·D)·T_g` benchmark `GFFCOMPARE`s, `2·F·T_g` `GFFCOMPARE_TOP`s, `F·T_g` target
-references, `T` MultiQC reports, and — independent of every one of those letters — **one**
-`RUN_SUMMARY_TABLES` + **one** `MULTIQC_RUN_SUMMARY` per run.
+`(F·S·D + 2·F·D)·T_g` benchmark `GFFCOMPARE` **comparisons**, `2·F·T_g` `GFFCOMPARE_TOP`s,
+`F·T_g` target references, `T` MultiQC reports, and — independent of every one of those
+letters — **one** `RUN_SUMMARY_TABLES` + **one** `MULTIQC_RUN_SUMMARY` per run.
 
 The alignment count is `F·D·T` and **not** `F·S·D·T`: since plans/15 every source's spliced
 transcripts are merged into one FASTA per gene type and aligned in a single minimap2 run per
 target, then split back apart on the `source=` attribute. The `2·` on the benchmark counts is
 the raw/collapsed pair for each aggregate.
+
+**Since plans/18, `GFF_STATS_PROJECTED_BATCH` and `GFFCOMPARE_BATCH` run `F·D·T` and
+`F·D·T_g` *tasks* respectively — not `S·T` and `S·T_g`.** The `S·T`/`(F·S·D+2·F·D)·T_g`
+figures above (and the `F_S` per-source file counts elsewhere in this doc) still describe
+how many per-source *outputs* exist — every source still gets its own stats row and its own
+gffcompare `.stats`/`.tracking`/etc. — but one task now produces all of a target's outputs
+for that stage in a single SLURM job, looping over every source internally with
+`xargs -P ${task.cpus}`. This is the fix for the Nextflow-head OOMs the old S·T/S·T_g task
+counts caused on an all-vs-all run of any real size; see `plans/18_per_target_batching.md`.
 
 **There is no gunzip on the GFF3 side at all, and that is deliberate** (plans/17). Every
 GFF3 consumer reads `.gz`: `FILTER_TRANSCRIPT`/`FILTER_TARGET` and `GFF_TO_GENE_BED`
@@ -172,8 +181,8 @@ exactly one output, so a `both` row could never reach both channels.
 | Subworkflow | Does | Emits |
 |-------------|------|-------|
 | `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; GFF + SeqKit stats. **Per source, target-independent — S tasks, not S·T** | `spliced_fasta`, `decoy_spliced_fasta`*, `filtered_gff3`, `decoy_gff3`*, `intergenic_bed`*, `mqc_files` |
-| `PROJECTION` | **merge every source's spliced FASTA per gene type** (`F·D`, target-independent), index each target, **one minimap2 per (target, gene type)**, BAM→GFF, one projected-lncRNA TD2 pass per target, then **split back per source on `source=`**; samtools stats + GFF stats; gffcompare-collapse `allModels` into `allModels_collapsed` | `gff3` (per-source ⊎ both aggregates), `allmodels_raw`, `allmodels_collapsed`, `bam`, `index`, `mqc_files` |
-| `BENCHMARKING` | filter target ref, gffcompare projected vs. reference; GFF stats on target GFFs. **Targets without a `gff3` are filtered out here** | `stats`, `target_refs`, `mqc_files` |
+| `PROJECTION` | **merge every source's spliced FASTA per gene type** (`F·D`, target-independent), index each target, **one minimap2 per (target, gene type)**, BAM→GFF, one projected-lncRNA TD2 pass per target, then **split back per source on `source=`**; one `GFF_STATS_PROJECTED_BATCH` task per target computes every source's stats + both aggregates' (plans/18); gffcompare-collapse `allModels` into `allModels_collapsed` | `gff3` (per target: **List** of every source's projected GFF3 ⊎ both aggregates — plans/18), `allmodels_raw`, `allmodels_collapsed`, `bam`, `index`, `mqc_files` |
+| `BENCHMARKING` | filter target ref, **one `GFFCOMPARE_BATCH` task per target** loops gffcompare over every projected model vs. the reference (plans/18), then re-keys each result back to its own source/aggregate; GFF stats on target GFFs. **Targets without a `gff3` are filtered out here** | `stats` (per-source, re-keyed — same shape as before batching), `target_refs`, `mqc_files` |
 | `CONSENSUS_TOP` | rank sources by lncRNA transcript F1 **per target**, **subset `allModels` to those sources** (`top3_raw`), gffcompare-collapse it (`top3_collapsed`), score **both** | `gff3`, `stats`, `mqc_files` |
 | `REPORTING` | per-target accuracy scatter + one MULTIQC per target | `report`, `data` |
 | `RUN_SUMMARY` | digest the pipeline-wide `mqc_files` union + `top_sources` CSVs + a samplesheet-derived roles CSV into run-level tables/plots, then **one MULTIQC for the whole run**. One task per run, no target dimension | `report`, `tables` |
@@ -202,7 +211,7 @@ applies to `SELECT_TOP_SOURCES`: it is grouped per target because
 `bin/select_top_sources.py` keys its score map by source alone, so pooling targets would
 have them overwrite each other.
 
-**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `gtype` = `feature_type[_decoy]` + `target_id` (PROJECTION; `target_id` is also stamped on target-side stats in BENCHMARKING, where it equals `meta.id`), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). **`id` carries a pseudo-source between the merge and the split**: it is the literal `'allModels'` from `MINIMAP2_ALIGN` through `FILTER_ALLMODELS`, becomes the real species again when `SPLIT_GFF_BY_SOURCE`'s output is re-keyed, and is one of `allModels_raw | allModels_collapsed | top3_raw | top3_collapsed` on the four aggregate models. Those four ids are excluded from the ranking pool in **two** places that must agree: the channel filter in `consensus_top.nf`, and `AGGREGATE_IDS` in **`bin/fomo_stats.py`** — the shared module that also owns the `<target>.from_<source>.<ft>[.decoy]` stats-filename grammar and the Sn/Pr parser, imported by `select_top_sources.py`, `gffcompare_accuracy_mqc.py` and `run_summary_tables.py`. Nextflow puts `bin/` on PATH but not on Python's import path, so each of those does `sys.path.insert(0, Path(__file__).resolve().parent)` first — the directory is staged/mounted whole, so the sibling import works on every executor (verified under Singularity on the cluster). `target_id` is load-bearing twice over: it is the per-target publishDir segment in `conf/modules.config`, and REPORTING routes MultiQC files by its *presence* (`meta.target_id != null` → that target's report only; absent → broadcast to every report). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring. `feature_type` ranges over the *enabled* subset (see **Feature tracks**), and `decoy: true` / `kind: 'decoy'` occur only with `--include_decoy` — every `meta.decoy` dereference in `conf/modules.config` is Groovy-null-safe and the real track always carries `decoy: false`, so the `ext.prefix`/`ext.sample_name` closures need no change when a track is off. Their `1_raw / 2_lncRNA / 3_decoy_lncRNA / 4_mRNA / 5_decoy_mRNA` ordering ladders are deliberately sparse-safe: a disabled class simply produces no row, and the `'unknown'` fallback cannot trigger because the values are always a subset.
+**`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `gtype` = `feature_type[_decoy]` + `target_id` (PROJECTION; `target_id` is also stamped on target-side stats in BENCHMARKING, where it equals `meta.id`), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). **`id` carries a pseudo-source between the merge and the split**: it is the literal `'allModels'` from `MINIMAP2_ALIGN` through `FILTER_ALLMODELS`, becomes the real species again when `SPLIT_GFF_BY_SOURCE`'s output is re-keyed, and is one of `allModels_raw | allModels_collapsed | top3_raw | top3_collapsed` on the four aggregate models. Those four ids are excluded from the ranking pool in **three** places that must agree: the channel filter in `consensus_top.nf`, the re-key closure in `benchmarking.nf` that recovers per-source identity from `GFFCOMPARE_BATCH`'s one-shared-meta batch output (plans/18 — `stats.name[pre.size()..-(suf.size()+1)]`, mirroring `projection.nf`'s identical split-file re-keying), and `AGGREGATE_IDS` in **`bin/fomo_stats.py`** — the shared module that also owns the `<target>.from_<source>.<ft>[.decoy]` stats-filename grammar and the Sn/Pr parser, imported by `select_top_sources.py`, `gffcompare_accuracy_mqc.py` and `run_summary_tables.py`. Nextflow puts `bin/` on PATH but not on Python's import path, so each of those does `sys.path.insert(0, Path(__file__).resolve().parent)` first — the directory is staged/mounted whole, so the sibling import works on every executor (verified under Singularity on the cluster). `target_id` is load-bearing twice over: it is the per-target publishDir segment in `conf/modules.config`, and REPORTING routes MultiQC files by its *presence* (`meta.target_id != null` → that target's report only; absent → broadcast to every report). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring. `feature_type` ranges over the *enabled* subset (see **Feature tracks**), and `decoy: true` / `kind: 'decoy'` occur only with `--include_decoy` — every `meta.decoy` dereference in `conf/modules.config` is Groovy-null-safe and the real track always carries `decoy: false`, so the `ext.prefix`/`ext.sample_name` closures need no change when a track is off. Their `1_raw / 2_lncRNA / 3_decoy_lncRNA / 4_mRNA / 5_decoy_mRNA` ordering ladders are deliberately sparse-safe: a disabled class simply produces no row, and the `'unknown'` fallback cannot trigger because the values are always a subset.
 
 **Filters:** `FILTER_TRANSCRIPT` (always on) keeps only multi-exon (spliced) transcripts. `RELOCATE_LOCI` runs **only with `--include_decoy`**, and caps decoys at `params.decoy_cap` (default 1000; 0 disables) using `params.relocate_seed` for reproducibility.
 
@@ -283,8 +292,12 @@ The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and 
     `nextflow.config` therefore pins these processes to `--platform=linux/amd64`
     (no-op on x86-64 hosts; scoped to that profile so the Singularity/HPC path is
     untouched). The selector is
-    `'.*:GFF_STATS(_TARGET|_PROJECTED|_TOP)?$'` — keep it in sync if a new
-    `GFF_STATS` alias is added.
+    `'.*:GFF_STATS(_TARGET|_PROJECTED(_BATCH)?|_TOP)?$'` — keep it in sync if a new
+    `GFF_STATS` alias is added. **`GFF_STATS_PROJECTED_BATCH`** (plans/18) is the one
+    exception to the `ubuntu:22.04` base: it also needs python3 (to run
+    `gff_stats_to_mqc.py` in the same task, see Reporting conventions), so it runs on
+    `python:3.11` instead. **Not yet verified** to meet the glibc ≥ 2.34 floor — check
+    with `docker run --rm python:3.11 ldd --version` before relying on it.
   - It cannot compute genome coverage (no genome-size input).
   - It resolves a transcript's gene via `Parent`/`gene`/`Gene` only — so gffread-derived
     GFF3s (`combined`, `top3`), which carry the gene in `geneID=` and emit no gene
@@ -348,9 +361,11 @@ routes itself.
 so `SAMTOOLS_STATS` / `SAMTOOLS_TO_MQC` emit one row per gene type per target
 (`<target>.allModels.<1_lncRNA|…>`) — the per-source alignment rows of the pre-plans/15
 report are gone, and that is accepted, not a bug. Per-source *model* counts are unaffected:
-`GFF_STATS_PROJECTED` still runs on every split GFF3, and per-source accuracy still comes
-from the per-source `GFFCOMPARE`. Recovering per-source alignment metrics would mean
-splitting the BAM, which the design deliberately avoids.
+`GFF_STATS_PROJECTED_BATCH` still computes stats for every split GFF3 — one task per
+target now, looping over every source internally, rather than one task per source
+(plans/18) — and per-source accuracy still comes from the per-source rows
+`GFFCOMPARE_BATCH` re-keys out of its own per-target batch. Recovering per-source
+alignment metrics would mean splitting the BAM, which the design deliberately avoids.
 
 Two mechanical traps in that fan-out, both hit for real:
 - **Flatten before you `combine`.** An adapter may emit a *list* of paths per item

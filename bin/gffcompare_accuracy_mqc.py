@@ -77,8 +77,17 @@ def main() -> int:
         records.append((ident, acc))
 
     if not records:
-        print("ERROR: no usable gffcompare stats files", file=sys.stderr)
-        return 1
+        # Every comparison for this target had no accuracy lines — happens when the
+        # target's reference GFF3 is non-empty pre-filter but filters down to zero
+        # spliced transcripts (FILTER_TARGET keeps multi-exon only), so gffcompare
+        # falls back to combine-mode-style output with no Sensitivity/Precision
+        # section for any source. That is a real "nothing to plot" outcome for this
+        # target, not a pipeline failure — fall through and emit a validly-shaped but
+        # empty scatter (every `data` entry ends up `{}`, same as the per-level empty
+        # case below when `records` is non-empty but no source has a given level).
+        print("WARNING: no usable gffcompare stats files (every comparison had an "
+              "empty or feature-less reference after filtering) — emitting an empty "
+              "accuracy plot", file=sys.stderr)
 
     # Stable colour assignment: the aggregate pseudo-sources first, in the fixed
     # AGGREGATE_IDS order, then the real species alphabetically — so the four headline

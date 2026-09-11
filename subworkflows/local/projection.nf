@@ -5,8 +5,7 @@ include { MINIMAP2_ALIGN                           } from '../../modules/nf-core
 include { SAMTOOLS_STATS                           } from '../../modules/nf-core/samtools/stats/main.nf'
 include { SAMTOOLS_TO_MQC                          } from '../../modules/local/samtools_to_mqc'
 include { BAM_TO_GFF                               } from '../../modules/local/bam_to_gff'
-include { GFF_STATS         as GFF_STATS_PROJECTED } from '../../modules/local/gff_stats'
-include { GFF_STATS_TO_MQC  as GFF_STATS_PROJECTED_TO_MQC } from '../../modules/local/gff_stats_to_mqc'
+include { GFF_STATS_PROJECTED_BATCH                } from '../../modules/local/gff_stats_projected_batch'
 include { GFFCOMPARE        as GFFCOMPARE_COMBINE  } from '../../modules/nf-core/gffcompare/main'
 include { GFFREAD           as COMBINED_GTF_TO_GFF } from '../../modules/nf-core/gffread/main'
 include { GFFREAD           as EXTRACT_PROJECTED_LNC } from '../../modules/nf-core/gffread/main'
@@ -171,21 +170,6 @@ workflow PROJECTION {
         ch_allmodels_raw.map { meta, gff -> tuple(meta, gff, []) }
     )
 
-    // Re-key each split file back to its source species. The filename was built by
-    // the same closure that supplies --name-template (conf/modules.config), so the
-    // prefix and suffix are known exactly — strip them by length rather than pattern
-    // matching, which would be fragile against species names full of '_' and digits.
-    ch_projected_persource = SPLIT_GFF_BY_SOURCE.out.gff3
-        .transpose()
-        .map { meta, gff ->
-            def pre = "${meta.target_id}.from_"
-            def suf = ".${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
-            tuple([id:           gff.name[pre.size()..-(suf.size() + 1)],
-                   feature_type: meta.feature_type,
-                   decoy:        meta.decoy,
-                   target_id:    meta.target_id], gff)
-        }
-
     // ── Collapse the raw model set into a consensus ───────────────────────────
     // gffcompare in combine mode (no reference annotation) over the SINGLE
     // allModels GFF3 — it merges transcripts sharing an intron chain, so one input
@@ -214,25 +198,48 @@ workflow PROJECTION {
         []   // no genome FASTA needed for a pure GTF→GFF3 conversion
     )
 
-    // Union of per-source projections + the two aggregate models. Everything
-    // downstream (GFF stats, benchmarking, the accuracy scatter) treats each
-    // aggregate as one more pseudo-source, so raw and collapsed are scored
-    // side by side against the per-source models.
-    ch_projected = ch_projected_persource
-        .mix(ch_allmodels_raw.map { meta, gff -> tuple(meta + [id: 'allModels_raw'], gff) })
-        .mix(COMBINED_GTF_TO_GFF.out.gffread_gff)
+    // ── One list per (target, feature_type, decoy): every source's split GFF3 +
+    // the two aggregate models ─────────────────────────────────────────────────
+    // Never transposed into individual per-source items — that is the entire point of
+    // plans/18_per_target_batching.md. GFF_STATS_PROJECTED_BATCH and (via the `gff3`
+    // emit) BENCHMARKING's GFFCOMPARE_BATCH each do ONE task per (target, feature_type,
+    // decoy) that loops over the whole list internally, instead of one task per source.
+    //
+    // Joined on a string key rather than Nextflow's positional combine(by:...), because
+    // the three inputs disagree on tuple shape (SPLIT_GFF_BY_SOURCE's is a List, the two
+    // aggregates are bare paths) — simpler to normalise to (key, meta, List<path>) first.
+    // The key expression is repeated inline (not factored into a shared closure) since
+    // the three inputs' metas are structurally identical here but not guaranteed to stay
+    // that way independently — each `.map` states its own key on the meta it actually has.
+    ch_split_list = SPLIT_GFF_BY_SOURCE.out.gff3
+        .map { meta, gffs -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", meta, gffs instanceof List ? gffs : [gffs]) }
+
+    ch_raw_one = ch_allmodels_raw
+        .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gff) }
+
+    ch_collapsed_one = COMBINED_GTF_TO_GFF.out.gffread_gff
+        .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gff) }
+
+    ch_projected_batch = ch_split_list
+        .join(ch_raw_one)
+        .join(ch_collapsed_one)
+        .map { _key, meta, splitGffs, rawGff, collapsedGff ->
+            tuple(meta, splitGffs + [rawGff, collapsedGff])
+        }
 
     // ── Statistics on projected models ───────────────────────────────────────
-    GFF_STATS_PROJECTED(
-        ch_projected.map { meta, gff -> tuple(meta + [kind: 'projected'], gff) }
+    GFF_STATS_PROJECTED_BATCH(
+        ch_projected_batch.map { meta, gffs -> tuple(meta + [kind: 'projected'], gffs) }
     )
-    GFF_STATS_PROJECTED_TO_MQC(GFF_STATS_PROJECTED.out.json)
 
     // Keep SAMTOOLS_STATS.out.stats in the mix so MultiQC's native samtools
     // module still runs (it renders the "Percent mapped" bar chart). Our
     // curated 7-column TSV is rendered as a custom section nested under
     // Samtools (see assets/multiqc/sections.yml: parent_id: samtools).
-    ch_mqc_files = GFF_STATS_PROJECTED_TO_MQC.out.tsv
+    // GFF_STATS_PROJECTED_BATCH.out.tsv is List-valued (one row per source per task) —
+    // ch_all_mqc is already documented and handled as Channel<tuple(meta, path|List<path>)>
+    // (run_summary.nf, reporting.nf both flatMap it centrally), so no flatten needed here.
+    ch_mqc_files = GFF_STATS_PROJECTED_BATCH.out.tsv
         .mix(SAMTOOLS_STATS.out.stats)
         .mix(SAMTOOLS_TO_MQC.out.tsv)
         .mix(TD2_NONCODING_PROJ.out.mqc)
@@ -243,6 +250,6 @@ workflow PROJECTION {
     index               = MINIMAP2_ALIGN.out.index   // [ meta, *.bam.bai ] × F·D·T
     allmodels_raw       = ch_allmodels_raw           // [ meta(id:'allModels'), *.gff3 ] × F·D·T (self included)
     allmodels_collapsed = COMBINED_GTF_TO_GFF.out.gffread_gff  // [ meta(id:'allModels_collapsed'), *.gff3 ] × F·D·T
-    gff3                = ch_projected               // [ meta, *.gff3 ] × F·S·D·T + 2·F·D·T (per-source + both aggregates)
+    gff3                = ch_projected_batch         // [ meta, List<gff3> ] × F·D·T — per target: every source + both aggregates (plans/18)
     mqc_files           = ch_mqc_files               // [ meta, *_mqc.tsv ] (one table per projected model + samtools + TD2)
 }
