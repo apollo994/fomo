@@ -11,12 +11,18 @@ TD2.Predict `.pep` headers look like:
   >transcript:ENSGXNT00000003375.p1 GENE.x~~y  ORF type:complete (+),psauron_score=0.964 len:104 ...
 The protein name is the input FASTA record name with a trailing `.p<N>` ORF
 index appended, so stripping `.p<N>` recovers the exact FASTA seqname. This
-works for both renamed input FASTAs (`tid|type|species`) and bare-`tid`
-projected FASTAs — no delimiter-specific parsing.
+works for both renamed input FASTAs (`tid|gene_class|species`) and projected
+FASTAs (`tid|source`, see bin/bam_to_gff.sh) — no delimiter-specific parsing.
 
 Outputs:
   --kept-fasta   FASTA of records NOT called coding (the retained non-coding set)
-  --coding-ids   newline-separated list of coding seqnames (dropped)
+  --coding-ids   newline-separated list of coding seqnames (dropped) — for
+                 --stage input this is the BARE transcript id (stripped back
+                 to match the source's own, never-renamed gff3); for
+                 --stage projected it is the id VERBATIM, unstripped, because
+                 that stage's target gff3 (allModels) uses the same
+                 source-qualified id and a bare tid would be ambiguous across
+                 the merged sources
   --mqc          one-row MultiQC custom-content TSV (n_in/n_coding/n_kept/pct)
 """
 import argparse
@@ -126,12 +132,29 @@ def main() -> int:
                 out.write(header)
             out.writelines(seq)
 
-    # GFF subsetting downstream keys on the BARE transcript id, so emit the
-    # token before the first '|' (renamed input headers are tid|type|species;
-    # projected headers are already bare tid → split is a no-op there).
-    bare_ids = sorted({c.split("|", 1)[0] for c in coding})
+    # GFF subsetting downstream keys on whatever id namespace THAT stage's
+    # target GFF3 actually uses — the two stages don't agree, and stripping
+    # is only correct for one of them:
+    #   input     — TD2 sees the RENAMED fasta (tid|gene_class|species,
+    #                RENAME_FASTA_HEADERS), but FILTER_LNC_GFF's target is the
+    #                source's OWN gff3, whose ID= was never renamed — still
+    #                bare. Strip back to the token before the first '|' to
+    #                match it (single source per file, so bare tid is
+    #                unambiguous here).
+    #   projected — TD2 sees the projected fasta named after bam_to_gff.sh's
+    #                own ID= (tid|source — see there), and FILTER_ALLMODELS's
+    #                target GFF3 uses that SAME id verbatim. Stripping here
+    #                would collapse it back to a bare tid that is NOT unique
+    #                across the merged sources (two species can and do use
+    #                the same tid) and would let one source's coding call
+    #                drop an unrelated same-named transcript from another
+    #                source. Keep the id exactly as TD2 reported it.
+    if args.stage == "input":
+        drop_ids = sorted({c.split("|", 1)[0] for c in coding})
+    else:
+        drop_ids = sorted(coding)
     with open(args.coding_ids, "w", encoding="utf-8") as out:
-        for c in bare_ids:
+        for c in drop_ids:
             out.write(c + "\n")
 
     # MultiQC custom-content single-row table. Routing is by the *_td2_coding_mqc.tsv

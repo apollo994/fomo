@@ -27,8 +27,12 @@ coordinate-sorted, seqid-grouped outputs (which `gff-feature-stats` requires).
 Duplicate transcript IDs are a hard error. Per-source GFF3s used to be separate
 files, so two species sharing a transcript id never collided; merged into one file a
 duplicate `ID=` would make `gffread -w` and the gffcompare collapse silently
-misbehave. Ensembl ids are species-scoped so this should never fire — but it fails
-loudly rather than corrupting the consensus if it ever does.
+misbehave. Source transcript ids are NOT guaranteed unique across species —
+seen for real, two Drosophila species both used the same generic "lnc_RNA1412"
+id — so `bin/bam_to_gff.sh` makes `ID=` globally unique BY CONSTRUCTION
+(`<tid>|<source>`, not bare `<tid>`) rather than assuming upstream ids never
+collide. This check should therefore never fire now — but it still fails loudly
+rather than corrupting the consensus if that guarantee is ever broken.
 """
 import argparse
 import csv

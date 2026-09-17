@@ -2,9 +2,13 @@
 # Convert a minimap2 spliced-alignment BAM into a GFF3 of projected transcripts.
 #
 # Read names are expected in the form  <tid>|<gene_class>|<source>
-# (produced by RENAME_FASTA_HEADERS). The transcript ID in the GFF is the bare
-# <tid>; <source> and <gene_class> are promoted to 9th-column attributes.
-# NM, AS and de tags from the BAM are also copied onto the transcript row.
+# (produced by RENAME_FASTA_HEADERS). The transcript ID in the GFF is
+# <tid>|<source> — NOT the bare <tid> alone: source transcript ids are not
+# guaranteed unique across species (seen for real: two Drosophila species both
+# used "lnc_RNA1412" as their own id), and every source's models land in one
+# merged GFF3 downstream (plans/15), so bare tid would collide. <source> and
+# <gene_class> are also promoted to 9th-column attributes as before. NM, AS
+# and de tags from the BAM are also copied onto the transcript row.
 #
 # By default, single-exon projected models (alignments with no N/splice gap,
 # i.e. one exon block) are discarded — the source annotations are spliced
@@ -155,8 +159,13 @@ awk -v OFS='\t' -v include_single_exon="$include_single_exon" '
         pct_aligned   = (query_len > 0 ? sprintf("%.1f", 100.0 * aligned_bases / query_len) : ".")
         pct_projected = (query_len > 0 ? sprintf("%.1f", 100.0 * projected_len / query_len) : ".")
 
-        gene_attrs = "ID=gene-" tid ";source=" src ";gene_class=" gclass
-        tx_attrs   = "ID=" tid ";Parent=gene-" tid \
+        # Globally unique across every source merged into allModels — see the
+        # header comment. The duplicate-ID guard in gff_by_source.py is what
+        # would catch a regression here.
+        uid = tid "|" src
+
+        gene_attrs = "ID=gene-" uid ";source=" src ";gene_class=" gclass
+        tx_attrs   = "ID=" uid ";Parent=gene-" uid \
                      ";source=" src ";gene_class=" gclass \
                      ";query_length=" query_len \
                      ";aligned_bases=" aligned_bases \
@@ -170,7 +179,7 @@ awk -v OFS='\t' -v include_single_exon="$include_single_exon" '
 
         for (i = 1; i <= n_blocks; i++) {
             split(block_ends[i], b, ",")
-            ex_attrs = "ID=" tid ".exon" i ";Parent=" tid
+            ex_attrs = "ID=" uid ".exon" i ";Parent=" uid
             print rname, "fomo", "exon", b[1] + 0, b[2] + 0, mapq, strand, ".", ex_attrs
         }
 

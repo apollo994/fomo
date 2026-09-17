@@ -241,9 +241,17 @@ Four things that will bite:
   mismatch, which is the point.
 - **Transcript IDs must be unique across the merged file.** Per-source GFF3s were separate
   files, so a shared id never collided; in one file a duplicate `ID=` makes `gffread -w` and
-  the gffcompare collapse silently misbehave. `gff_by_source.py` asserts uniqueness and
-  exits 1 naming the id and both sources. Ensembl ids are species-scoped so it should never
-  fire.
+  the gffcompare collapse silently misbehave. Source transcript ids are **not** guaranteed
+  unique across species — seen for real, two *Drosophila* species both used the generic id
+  `lnc_RNA1412` — so `bam_to_gff.sh` builds the projected `ID=`/`Parent=`/`gene-` prefix as
+  `<tid>|<source>`, not bare `<tid>`, making it globally unique by construction rather than
+  assuming upstream ids never collide. `gff_by_source.py` still asserts uniqueness and exits
+  1 naming the id and both sources if that guarantee is ever broken — it should never fire
+  now, but fails loudly rather than corrupting the consensus if it does. One knock-on: TD2's
+  coding-potential drop-list (`bin/td2_coding_filter.py`) must NOT strip this qualified id
+  back to a bare tid for the *projected* stage the way it correctly does for the *input*
+  stage (single source per file there, so bare tid is unambiguous) — doing so would let one
+  source's coding call drop an unrelated same-named transcript from a different source.
 - **`transpose()` handles both output shapes.** The `path("*.gff3")` glob yields a List in
   split mode and a bare Path in subset mode; `transpose()` passes a non-List element through
   unchanged (verified), so no `arity` declaration is needed.
