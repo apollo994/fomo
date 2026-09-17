@@ -65,7 +65,7 @@ for **what** they hold rather than for the process that made it (the rules live 
 "Result publishing" section at the bottom of `conf/modules.config`):
 
 ```
-targets/<target>/alignment/   <target>.allModels.<gtype>.raw.bam(.bai)
+targets/<target>/alignment/   <target>.allModels.<gtype>.raw.bam(.csi)
 targets/<target>/annotation/  <target>.allModels.<gtype>.raw.gff3         (every source)
                               <target>.allModels.<gtype>.collapsed.gff3
                               <target>.top3.<ft>.raw.gff3                 (annotated targets)
@@ -227,13 +227,18 @@ inherit it through `Parent`). One script serves both directions: split mode
 (`--name-template` with a `{source}` placeholder, one file per source) and subset mode
 (`--keep <csv> --name`, used for `top3_raw`).
 
-Three things that will bite:
+Four things that will bite:
 
 - **The split filename template and the re-keying arithmetic must agree.** `ext.args` for
-  `SPLIT_GFF_BY_SOURCE` builds `<target>.from_{source}.<gtype>.projected.gff3`, and
-  `projection.nf` recovers the source by stripping that exact prefix/suffix *by length*
-  (not by regex — species names are full of `_` and digits). Change one and the other throws
-  an out-of-range substring; it does not silently mismatch, which is the point.
+  `SPLIT_GFF_BY_SOURCE` builds `<target>.from_{source}.<gtype>.projected.gff3`. Since
+  plans/18 that per-source list is never re-keyed in `projection.nf` itself (it's folded,
+  unexploded, into `GFF_STATS_PROJECTED_BATCH`'s input list) — the re-keying now happens one
+  step further downstream, in `benchmarking.nf`, which strips the analogous
+  `<target>.from_` / `.<gtype>[.decoy].gffcompare.stats` prefix/suffix *by length* off
+  `GFFCOMPARE_BATCH`'s output filenames (not by regex — species names are full of `_` and
+  digits) to recover each source's identity for `CONSENSUS_TOP`'s ranking. Change the split
+  template and that re-key breaks too, with an out-of-range substring — it does not silently
+  mismatch, which is the point.
 - **Transcript IDs must be unique across the merged file.** Per-source GFF3s were separate
   files, so a shared id never collided; in one file a duplicate `ID=` makes `gffread -w` and
   the gffcompare collapse silently misbehave. `gff_by_source.py` asserts uniqueness and
@@ -242,6 +247,15 @@ Three things that will bite:
 - **`transpose()` handles both output shapes.** The `path("*.gff3")` glob yields a List in
   split mode and a bare Path in subset mode; `transpose()` passes a non-List element through
   unchanged (verified), so no `arity` declaration is needed.
+- **A target with nothing projected onto it is real, not broken — and `SPLIT_GFF_BY_SOURCE`'s
+  output is `optional: true` because of it.** If `allModels.raw.gff3` has zero records
+  (nothing from any source survived alignment + TD2 filtering onto this target — seen for
+  real on divergent targets in a large all-vs-all run), `gff_by_source.py` writes zero files
+  and exits 0 by design. `COMBINED_GTF_TO_GFF` then never runs either, since gffcompare's own
+  combine-mode output is already `optional: true` upstream. `projection.nf` handles both with
+  `join(..., remainder: true)` rather than a plain inner join, which would otherwise make the
+  target silently vanish from `GFF_STATS_PROJECTED_BATCH` and benchmarking instead of
+  surfacing an honest "0 models" result.
 
 ### Preprocessing detail
 

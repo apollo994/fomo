@@ -19,8 +19,17 @@ process GFF_BY_SOURCE {
     // in one case and a bare Path in the other. Both consumers `.transpose()`, which
     // passes a non-List element through unchanged (verified), so the single-file case
     // is not silently dropped and no `arity` declaration is needed.
+    //
+    // optional: true — in split mode, a target onto which NOTHING projected from ANY
+    // source (allModels.raw.gff3 has zero records — a real outcome, not a broken run;
+    // seen for real on divergent targets in a large all-vs-all) makes gff_by_source.py
+    // write zero files and exit 0 (its own WARNING says so). Without `optional: true`
+    // Nextflow raises MissingFileException on the empty glob and fails the task even
+    // though the script did exactly what it documents. subworkflows/local/projection.nf
+    // handles the resulting empty/missing emit via `join(..., remainder: true)` rather
+    // than letting that target silently vanish from the run.
     output:
-    tuple val(meta), path("*.gff3"), emit: gff3
+    tuple val(meta), path("*.gff3"), optional: true, emit: gff3
 
     when:
     task.ext.when == null || task.ext.when

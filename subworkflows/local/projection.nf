@@ -78,12 +78,18 @@ workflow PROJECTION {
         ch_align.reads,
         ch_align.reference,
         true,    // bam_format
-        'bai',   // bam_index_extension
+        'csi',   // bam_index_extension — NOT 'bai': BAI's fixed binning scheme caps
+                 // reference-sequence coordinates at 2^29-1 = 536,870,911 bp,
+                 // which real targets exceed (e.g. a tick chromosome at 560,970,318 bp
+                 // died with "cannot be stored in a bai index" — samtools' own suggested
+                 // fix). CSI has no such ceiling and is transparently auto-detected by
+                 // every modern samtools/htslib-based tool, so switch uniformly rather
+                 // than branch per-target on chromosome length.
         false,   // cigar_paf_format
         false    // cigar_bam
     )
 
-    // Join BAM + BAI into a single 3-element tuple [meta, bam, bai]
+    // Join BAM + CSI into a single 3-element tuple [meta, bam, csi]
     ch_bam_bai = MINIMAP2_ALIGN.out.bam
         .join(MINIMAP2_ALIGN.out.index)
 
@@ -211,20 +217,33 @@ workflow PROJECTION {
     // The key expression is repeated inline (not factored into a shared closure) since
     // the three inputs' metas are structurally identical here but not guaranteed to stay
     // that way independently — each `.map` states its own key on the meta it actually has.
+    //
+    // ch_allmodels_raw is the one side guaranteed present for every (target, feature_type,
+    // decoy): FILTER_ALLMODELS writes its output unconditionally (script-level, not a
+    // glob), even when the model set is empty. The other two are NOT guaranteed:
+    //   - SPLIT_GFF_BY_SOURCE emits nothing (optional, see gff_by_source.nf) when
+    //     allModels.raw.gff3 has zero records — nothing from ANY source projected onto
+    //     this target and survived TD2 filtering. Real, seen on divergent targets in a
+    //     large all-vs-all run, not a broken pipeline.
+    //   - COMBINED_GTF_TO_GFF then never runs either, because gffcompare's own
+    //     combine-mode output is `optional: true` upstream (modules/nf-core/gffcompare)
+    //     and an empty allModels.raw.gff3 gives it nothing to collapse.
+    // `join(..., remainder: true)` keeps this target's key anyway (filling the missing
+    // side with null) instead of the plain inner-join silently dropping it — which would
+    // otherwise make the target vanish from GFF_STATS_PROJECTED_BATCH and (via the `gff3`
+    // emit) benchmarking entirely, rather than surfacing an honest "0 models" result.
     ch_split_list = SPLIT_GFF_BY_SOURCE.out.gff3
-        .map { meta, gffs -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", meta, gffs instanceof List ? gffs : [gffs]) }
-
-    ch_raw_one = ch_allmodels_raw
-        .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gff) }
+        .map { meta, gffs -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gffs instanceof List ? gffs : [gffs]) }
 
     ch_collapsed_one = COMBINED_GTF_TO_GFF.out.gffread_gff
         .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gff) }
 
-    ch_projected_batch = ch_split_list
-        .join(ch_raw_one)
-        .join(ch_collapsed_one)
-        .map { _key, meta, splitGffs, rawGff, collapsedGff ->
-            tuple(meta, splitGffs + [rawGff, collapsedGff])
+    ch_projected_batch = ch_allmodels_raw
+        .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", meta, gff) }
+        .join(ch_split_list,    remainder: true)
+        .join(ch_collapsed_one, remainder: true)
+        .map { _key, meta, rawGff, splitGffs, collapsedGff ->
+            tuple(meta, ([rawGff] + (splitGffs ?: []) + [collapsedGff]).findAll { it })
         }
 
     // ── Statistics on projected models ───────────────────────────────────────
@@ -247,7 +266,7 @@ workflow PROJECTION {
     // T = targets, S = sources, F = enabled feature types, D = 2 with --include_decoy else 1.
     emit:
     bam                 = MINIMAP2_ALIGN.out.bam     // [ meta, *.bam     ] × F·D·T (all-sources)
-    index               = MINIMAP2_ALIGN.out.index   // [ meta, *.bam.bai ] × F·D·T
+    index               = MINIMAP2_ALIGN.out.index   // [ meta, *.bam.csi ] × F·D·T
     allmodels_raw       = ch_allmodels_raw           // [ meta(id:'allModels'), *.gff3 ] × F·D·T (self included)
     allmodels_collapsed = COMBINED_GTF_TO_GFF.out.gffread_gff  // [ meta(id:'allModels_collapsed'), *.gff3 ] × F·D·T
     gff3                = ch_projected_batch         // [ meta, List<gff3> ] × F·D·T — per target: every source + both aggregates (plans/18)
