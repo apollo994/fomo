@@ -17,5 +17,5 @@ mm2_params
 commands
 *commands.txt
 *command.txt
-prompts/
-plans/
+./prompts/
+./plans/
