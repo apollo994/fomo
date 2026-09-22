@@ -1,3 +1,0 @@
-##gff-version 3
-# Liftoff v1.6.3
-# /users/rg/acobos/miniforge3/envs/liftoff_env/bin/liftoff -g /users/project/phyloENCODE_009142_no_backup/general_analyses/crossmapping/lycaenidae_benchmark/input/Polyommatus_szabokyi_2079168/GCA_964271655.1/Polyommatus_szabokyi_2079168.lnc_RNA.longest.nonoverlapping.gff3 -f /users/rg/acobos/liftoff_exp/feat_ncRNA.txt -o icarus_from_szabokyi_test -dir icarus_tests /users/project/phyloENCODE_009142_no_backup/general_analyses/crossmapping/lycaenidae_benchmark/input/Polyommatus_icarus_265386/GCA_937595015.1/Polyommatus_icarus_265386.fna /users/project/phyloENCODE_009142_no_backup/general_analyses/crossmapping/lycaenidae_benchmark/input/Polyommatus_szabokyi_2079168/GCA_964271655.1/Polyommatus_szabokyi_2079168.fna
