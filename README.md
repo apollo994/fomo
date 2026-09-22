@@ -34,3 +34,7 @@ for the samplesheet format (`species,role,fasta,gff3`).
 ## Documentation
 
 See `CLAUDE.md` for pipeline architecture, subworkflow details, and conventions.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
