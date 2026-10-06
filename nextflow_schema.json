@@ -82,6 +82,13 @@
                     "help_text": "Off by default. Decoys are source loci randomly relocated into that source's own intergenic intervals (see --relocate_seed / --decoy_cap), so any decoy model that projects onto the target is a false positive — the null baseline for the accuracy scatter. Intergenic space is the complement of the ENTIRE source annotation (coding genes included), independently of --include_mrna. One decoy track is built per enabled feature type, so with --include_mrna this doubles again.",
                     "fa_icon": "fas fa-mask"
                 },
+                "longest_isoform": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Keep one transcript per gene: the longest spliced isoform.",
+                    "help_text": "On by default. Among each gene's spliced (multi-exon) isoforms of a feature type, only the one with the greatest summed exon length is kept (ties: smallest transcript ID). Applied once, to the source annotation, so it shapes the projected sequences, the decoys and the gffcompare reference alike (the reference is the source's own filtered annotation). Turn off to transfer every spliced isoform.",
+                    "fa_icon": "fas fa-ruler-horizontal"
+                },
                 "include_single_exon": {
                     "type": "boolean",
                     "default": false,

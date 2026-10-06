@@ -30,6 +30,8 @@ extra_fn_clean_exts:
   - ".tsv"
 
 report_section_order:
+  transcript_filter:
+    order: 1100
   td2_coding:
     order: 1050
   gffstats_input:

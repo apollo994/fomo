@@ -16,15 +16,13 @@ workflow FOMO {
 
     // Feature types transferred this run. lncRNA is always on; mRNA is opt-in
     // (--include_mrna) because it is a positive control, not a deliverable.
-    // PREPROCESSING (source filtering) and BENCHMARKING (target-reference
-    // filtering) MUST agree: benchmarking pairs each projection with the target
-    // reference of the same feature_type via an inner combine(by: 0), so a
-    // mismatch silently DROPS projections instead of failing. Handing both
-    // subworkflows the same list makes that agreement structural — do not
-    // re-derive it inside either subworkflow.
+    // Consumed by PREPROCESSING only. BENCHMARKING's references are PREPROCESSING's
+    // own filtered annotations (plans/20_longest_isoform.md), already split by this
+    // list, so the projection ⋈ reference inner join cannot disagree with the source
+    // side on feature_type — do not re-derive the list inside any subworkflow.
     //
     // A plain Groovy List, NOT a channel: it is expanded inside a flatMap closure in
-    // each subworkflow. Do not wrap it in Channel.value() and .combine() it — combine
+    // PREPROCESSING. Do not wrap it in Channel.value() and .combine() it — combine
     // SPREADS a List-valued channel into the tuple, so the closure receives the bare
     // String 'lnc_RNA' and String.collect{} then iterates its 7 characters, silently
     // fanning out 7× per source (l/n/c/_/R/N/A tracks). Verified the hard way.
@@ -71,10 +69,12 @@ workflow FOMO {
         PREPROCESSING.out.decoy_spliced_fasta
     )
 
-    // Only targets carrying a gff3 are benchmarked; BENCHMARKING filters internally
-    // and its projection ⋈ reference join is an inner join on [target_id,
-    // feature_type], so projections onto an un-annotated target are dropped there.
-    BENCHMARKING(ch_targets, PROJECTION.out.gff3, feature_types)
+    // Only targets carrying a gff3 are benchmarked — the 'both' rows, since the schema
+    // rejects a gff3 on a pure 'target'. The reference is the species' ONE filtered
+    // annotation from PREPROCESSING (the file its own projection was extracted from);
+    // the projection ⋈ reference join is an inner join on [target_id, feature_type],
+    // so projections onto an un-annotated target are dropped there.
+    BENCHMARKING(ch_targets, PROJECTION.out.gff3, PREPROCESSING.out.filtered_gff3)
 
     // The top-N consensus is a SUBSET of the all-sources annotation, not a
     // re-combination of per-source files, so CONSENSUS_TOP takes allModels directly.

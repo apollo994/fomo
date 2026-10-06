@@ -29,12 +29,16 @@ donates its annotation *and* receives projections, so one run replaces the N run
 hand-written samplesheets that the pre-multitarget pipeline needed. A species is one row —
 `species` must be unique, and duplicates abort at launch (it keys every join).
 
-`gff3` is **required for `source` and `both`** (enforced by an `allOf`/`if`-`then` in the
-schema) and **optional for a pure `target`**: an un-annotated assembly is projected onto
-and gets per-source models plus the all-source `combined` consensus, but no gffcompare, no
-target GFF stats, and no top-N consensus (the ranking is derived from gffcompare F1). This
-falls out structurally — `BENCHMARKING` filters to targets with a GFF and its projection ⋈
-reference join is an inner join, so nothing downstream needs a guard.
+`gff3` is **required for `source` and `both`** and **forbidden for a pure `target`** — two
+`allOf`/`if`-`then` rules in the schema; a `target` row with a `gff3` aborts at launch with
+a message pointing to `both` (plans/20). A `gff3` belongs to a species that donates it,
+because the benchmarking reference *is* the source's own filtered annotation (see **The
+filtered-annotation contract**). So the annotated targets are exactly the `both` rows, and
+a species cannot be benchmarked without also donating. A pure target is projected onto and
+gets per-source models plus the `allModels` aggregates, but no gffcompare, no target GFF
+stats, and no top-N consensus (the ranking is derived from gffcompare F1). This falls out
+structurally — it has no filtered annotation, and the projection ⋈ reference join is an
+inner join, so nothing downstream needs a guard.
 
 **Self-pairs (X→X, only possible with `both`) are run, kept in `allModels`, and excluded
 from the top-N ranking pool only.** The projection and its gffcompare are a useful Sn/Pr
@@ -46,7 +50,9 @@ onto itself is a near-perfect copy, so it would always take the #1 F1 slot and `
 become a restatement of the target's existing annotation. That exclusion lives in exactly one
 filter (`meta.id != meta.target_id`, `consensus_top.nf`) — grep for it before adding another.
 Consequence: `allModels` accuracy on an annotated `both` target is pulled up towards the self
-ceiling and is **not** comparable to the pre-plans/15 `combined` numbers.
+ceiling and is **not** comparable to the pre-plans/15 `combined` numbers. Since plans/20 the
+self-pair is an *exact* ceiling: the reference is the very file the self-projection's FASTA
+was built from, so X→X loses only what alignment and the projected TD2 pass lose.
 
 Self-projection is also what surfaced `TD2_PREDICT`'s second guard: a self-projection's
 lncRNA are exactly the transcripts the upstream PREPROCESSING TD2 pass already cleared of
@@ -74,6 +80,14 @@ targets/<target>/annotation/  <target>.allModels.<gtype>.raw.gff3         (every
 targets/<target>/gffcompare/  *.stats *.tracking *.loci *.tmap *.refmap
 targets/<target>/select_top_sources/  <target>.top_sources.csv
 targets/<target>/multiqc/     multiqc_report.html + multiqc_report_data/
+```
+
+plus **one per-source tree** (plans/20), keyed by the source id, holding each source's one
+filtered annotation — spliced, longest isoform per gene, lncRNA TD2-noncoding; exactly the
+transcripts that were projected, and the gffcompare reference for a `both` species:
+
+```
+sources/<source>/annotation/  <source>.<ft>.filtered.gff3
 ```
 
 plus **one run-level tree**, a sibling of `targets/`, written by `RUN_SUMMARY`:
@@ -116,7 +130,8 @@ With **S** sources (`role` ∈ {source, both}), **T** targets (`role` ∈ {targe
 `FILTER_ALLMODELS` / `SPLIT_GFF_BY_SOURCE` (each split emitting S files),
 `T` projected-lncRNA TD2 passes, `F·D·T` `GFFCOMPARE_COMBINE`,
 `(F·S·D + 2·F·D)·T_g` benchmark `GFFCOMPARE` **comparisons**, `2·F·T_g` `GFFCOMPARE_TOP`s,
-`F·T_g` target references, `T` MultiQC reports, and — independent of every one of those
+`F·S` `FILTER_ANNOTATION` (the filtered annotation, which doubles as the reference — there is
+no separate target-reference filter since plans/20), `T` MultiQC reports, and — independent of every one of those
 letters — **one** `RUN_SUMMARY_TABLES` + **one** `MULTIQC_RUN_SUMMARY` per run.
 
 The alignment count is `F·D·T` and **not** `F·S·D·T`: since plans/15 every source's spliced
@@ -134,9 +149,9 @@ for that stage in a single SLURM job, looping over every source internally with
 counts caused on an all-vs-all run of any real size; see `plans/18_per_target_batching.md`.
 
 **There is no gunzip on the GFF3 side at all, and that is deliberate** (plans/17). Every
-GFF3 consumer reads `.gz`: `FILTER_TRANSCRIPT`/`FILTER_TARGET` and `GFF_TO_GENE_BED`
-decompress inline, and `gff-feature-stats` reads `.gff3.gz` natively — so the samplesheet
-GFF3 goes straight into `BENCHMARKING` as well as `PREPROCESSING`. The two surviving
+GFF3 consumer reads `.gz`: `FILTER_TRANSCRIPT` and `GFF_TO_GENE_BED` decompress inline,
+and `gff-feature-stats` reads `.gff3.gz` natively — so the samplesheet GFF3 goes straight
+into `PREPROCESSING`, and into `BENCHMARKING` for the target's `kind: 'raw'` stats. The two surviving
 `MAYBE_GUNZIP` aliases are **FASTA-only and exist solely for gffread**, whose `-g` genome
 reader has no gzip or bgzf path. `MINIMAP2_INDEX` is fed the gzipped assembly directly
 (minimap2 gzopen's its input), so `GUNZIP_TARGET` is off the critical path and feeds only
@@ -156,11 +171,13 @@ space), so it must never be fanned out per target. `MERGE_SOURCE_FASTA` is targe
 for the same reason (`F·D` tasks, not `F·D·T`); the fan-out over targets happens *after* it.
 
 The enabled list is derived **once**, in `workflows/fomo.nf`
-(`ch_feature_types = Channel.value(['lnc_RNA'] + (params.include_mrna ? ['mRNA'] : []))`),
-and passed as a `take:` input to both `PREPROCESSING` (source filtering) and `BENCHMARKING`
-(target-reference filtering). **Never re-derive it inside a subworkflow** — benchmarking
-pairs projections to references with an inner `combine(by: 0)` on `feature_type`, so a list
-that disagrees with the source side silently *drops* projections instead of failing.
+(`feature_types = ['lnc_RNA'] + (params.include_mrna ? ['mRNA'] : [])`, a plain List), and
+passed as a `take:` input to `PREPROCESSING` only. `BENCHMARKING` gets its references from
+`PREPROCESSING.out.filtered_gff3` — already split by that same list — so its inner
+`combine(by: [0, 1])` on `[target_id, feature_type]` cannot disagree with the source side
+by construction (plans/20). **Never re-derive the list inside a subworkflow**, and never
+give BENCHMARKING its own feature-type filter again: a list that disagrees with the source
+side silently *drops* projections instead of failing.
 
 **Decoy placement is annotation-wide, not track-wide.** `GFF_TO_GENE_BED` reads the *raw*
 samplesheet GFF3 (not the per-feature-type `FILTER_TRANSCRIPT` output) and keeps every
@@ -180,9 +197,9 @@ exactly one output, so a `both` row could never reach both channels.
 
 | Subworkflow | Does | Emits |
 |-------------|------|-------|
-| `PREPROCESSING` | spliced-only filter, spliced-FASTA extraction, intergenic BED, decoy relocation, header rename; GFF + SeqKit stats. **Per source, target-independent — S tasks, not S·T** | `spliced_fasta`, `decoy_spliced_fasta`*, `filtered_gff3`, `decoy_gff3`*, `intergenic_bed`*, `mqc_files` |
+| `PREPROCESSING` | spliced-only + longest-isoform filter, spliced-FASTA extraction, header rename (+ id map), input TD2, the one filtered annotation (`FILTER_ANNOTATION`), intergenic BED, decoy relocation; GFF + SeqKit + transcript-filter stats. **Per source, target-independent — S tasks, not S·T** | `spliced_fasta`, `decoy_spliced_fasta`*, `filtered_gff3` (describes `spliced_fasta` exactly; published, and the benchmarking reference), `decoy_gff3`*, `intergenic_bed`*, `mqc_files` |
 | `PROJECTION` | **merge every source's spliced FASTA per gene type** (`F·D`, target-independent), index each target, **one minimap2 per (target, gene type)**, BAM→GFF, one projected-lncRNA TD2 pass per target, then **split back per source on `source=`**; one `GFF_STATS_PROJECTED_BATCH` task per target computes every source's stats + both aggregates' (plans/18); gffcompare-collapse `allModels` into `allModels_collapsed` | `gff3` (per target: **List** of every source's projected GFF3 ⊎ both aggregates — plans/18), `allmodels_raw`, `allmodels_collapsed`, `bam`, `index`, `mqc_files` |
-| `BENCHMARKING` | filter target ref, **one `GFFCOMPARE_BATCH` task per target** loops gffcompare over every projected model vs. the reference (plans/18), then re-keys each result back to its own source/aggregate; GFF stats on target GFFs. **Targets without a `gff3` are filtered out here** | `stats` (per-source, re-keyed — same shape as before batching), `target_refs`, `mqc_files` |
+| `BENCHMARKING` | take each `both` target's reference from `PREPROCESSING.out.filtered_gff3` (no filtering of its own), **one `GFFCOMPARE_BATCH` task per target** loops gffcompare over every projected model vs. the reference (plans/18), then re-keys each result back to its own source/aggregate; GFF stats on target GFFs. **Targets without a `gff3` are filtered out here** | `stats` (per-source, re-keyed — same shape as before batching), `target_refs`, `mqc_files` |
 | `CONSENSUS_TOP` | rank sources by lncRNA transcript F1 **per target**, **subset `allModels` to those sources** (`top3_raw`), gffcompare-collapse it (`top3_collapsed`), score **both** | `gff3`, `stats`, `mqc_files` |
 | `REPORTING` | per-target accuracy scatter + one MULTIQC per target | `report`, `data` |
 | `RUN_SUMMARY` | digest the pipeline-wide `mqc_files` union + `top_sources` CSVs + a samplesheet-derived roles CSV into run-level tables/plots, then **one MULTIQC for the whole run**. One task per run, no target dimension | `report`, `tables` |
@@ -213,7 +230,38 @@ have them overwrite each other.
 
 **`meta`-map contract:** subworkflows progressively enrich the meta map — `feature_type` + `decoy` (PREPROCESSING), `gtype` = `feature_type[_decoy]` + `target_id` (PROJECTION; `target_id` is also stamped on target-side stats in BENCHMARKING, where it equals `meta.id`), `kind` ∈ {raw, filtered, decoy, projected} (stat producers). **`id` carries a pseudo-source between the merge and the split**: it is the literal `'allModels'` from `MINIMAP2_ALIGN` through `FILTER_ALLMODELS`, becomes the real species again when `SPLIT_GFF_BY_SOURCE`'s output is re-keyed, and is one of `allModels_raw | allModels_collapsed | top3_raw | top3_collapsed` on the four aggregate models. Those four ids are excluded from the ranking pool in **three** places that must agree: the channel filter in `consensus_top.nf`, the re-key closure in `benchmarking.nf` that recovers per-source identity from `GFFCOMPARE_BATCH`'s one-shared-meta batch output (plans/18 — `stats.name[pre.size()..-(suf.size()+1)]`, mirroring `projection.nf`'s identical split-file re-keying), and `AGGREGATE_IDS` in **`bin/fomo_stats.py`** — the shared module that also owns the `<target>.from_<source>.<ft>[.decoy]` stats-filename grammar and the Sn/Pr parser, imported by `select_top_sources.py`, `gffcompare_accuracy_mqc.py` and `run_summary_tables.py`. Nextflow puts `bin/` on PATH but not on Python's import path, so each of those does `sys.path.insert(0, Path(__file__).resolve().parent)` first — the directory is staged/mounted whole, so the sibling import works on every executor (verified under Singularity on the cluster). `target_id` is load-bearing twice over: it is the per-target publishDir segment in `conf/modules.config`, and REPORTING routes MultiQC files by its *presence* (`meta.target_id != null` → that target's report only; absent → broadcast to every report). Downstream modules and `ext.prefix`/`ext.sample_name` closures depend on these keys; preserve them when adding wiring. `feature_type` ranges over the *enabled* subset (see **Feature tracks**), and `decoy: true` / `kind: 'decoy'` occur only with `--include_decoy` — every `meta.decoy` dereference in `conf/modules.config` is Groovy-null-safe and the real track always carries `decoy: false`, so the `ext.prefix`/`ext.sample_name` closures need no change when a track is off. Their `1_raw / 2_lncRNA / 3_decoy_lncRNA / 4_mRNA / 5_decoy_mRNA` ordering ladders are deliberately sparse-safe: a disabled class simply produces no row, and the `'unknown'` fallback cannot trigger because the values are always a subset.
 
-**Filters:** `FILTER_TRANSCRIPT` (always on) keeps only multi-exon (spliced) transcripts. `RELOCATE_LOCI` runs **only with `--include_decoy`**, and caps decoys at `params.decoy_cap` (default 1000; 0 disables) using `params.relocate_seed` for reproducibility.
+**Filters:** `FILTER_TRANSCRIPT` (always on) keeps only **stranded** transcripts — own strand `+`/`-`, every child on that same strand, no parent with an undefined strand; this drops RefSeq's trans-spliced models (plant mitochondrial *nad1*/*nad2*/*rps12*, strand `?`), on which `gffread -w` hard-errors ("Error parsing strand") — then only multi-exon (spliced) transcripts and, with `--longest_isoform` (default on, plans/20), only **one per gene: the longest spliced isoform** by summed exon length (ties → smallest transcript ID; selection runs *after* the multi-exon filter, so a gene whose longest isoform is mono-exonic keeps its longest spliced one). It is the **only** place selection happens — the reference is derived from its output, so the two sides cannot drift. It also writes a funnel row (`*_transcript_filter_mqc.tsv`: n_transcripts / n_stranded / n_spliced / n_selected) that feeds the `transcript_filter` MultiQC section and the run summary's `dropped_unstranded` / `dropped_single_exon` / `dropped_non_longest` columns. Decoys are relocated from these **pre-TD2 candidates**, not from the filtered annotation: a decoy borrows only a model's shape and takes its sequence from intergenic DNA, so TD2's verdict on the original locus is irrelevant to it. `RELOCATE_LOCI` runs **only with `--include_decoy`**, and caps decoys at `params.decoy_cap` (default 1000; 0 disables) using `params.relocate_seed` for reproducibility.
+
+### The filtered-annotation contract
+
+Each source has **one** filtered annotation per feature type,
+`<source>.<ft>.filtered.gff3` (`FILTER_ANNOTATION`, plans/20), and it is used three ways:
+it describes exactly the FASTA sent to projection, it is the gffcompare reference for a
+`both` species (and so for `GFFCOMPARE_TOP` and the target `kind: 'filtered'` stats), and it
+is published under `sources/<source>/annotation/`. It is built **from** the projected FASTA,
+not alongside it:
+
+`FILTER_TRANSCRIPT` (candidates) → gffread `-w` → `RENAME_FASTA_HEADERS` writes the
+renamed FASTA **and** `<prefix>.id_map.tsv` (renamed header → original gffread seqname,
+which is the GFF3 `ID=` verbatim) → TD2 keeps the non-coding records (lncRNA only) → that
+final FASTA is emitted as `spliced_fasta` **and** handed, with the candidates GFF3 and the id
+map, to `FILTER_ANNOTATION` (`filter_gff_by_id.py` keep mode).
+
+Keep mode matches by **exact id** — never the `normalise()` prefix stripping of drop mode,
+which disagreed with `RENAME_FASTA_HEADERS`' colon split for ids like `transcript:foo:bar`
+and could leave a TD2-dropped transcript in the GFF3. It exits 1 if a renamed header maps
+twice, a FASTA record is missing from the map, or a mapped id is not a transcript of the
+GFF3 — so on success the GFF3's transcripts **are** the FASTA's records. The joins feeding
+it use `failOnMismatch: true` for the same reason.
+
+Consequences: the reference is longest-isoform **and TD2-filtered**, deliberately — the
+projected models are TD2-filtered too, so an unfiltered reference counted coding lncRNA
+the pipeline can never report as false negatives. Transcript-level Sn is now ≈ per gene,
+precision can dip when a source's longest isoform matches a *non-longest* target isoform,
+and numbers are not comparable to pre-plans/20 runs. `TD2_NONCODING.out.coding_ids` is
+still emitted but no longer consumed. With `--longest_isoform false` the projected FASTA
+and the filtered GFF3 are byte-identical to the pre-plans/20 pipeline (verified); only the
+reference (now TD2-filtered) differs.
 
 ### The merge/split contract
 
@@ -415,6 +463,7 @@ tasks, disjoint `run_*_mqc.*` filename suffixes).
 1. **Route by `sp` pattern only, never both `sp` and an embedded `# id:` header.**
    Each adapter emits a file with a **unique suffix** (`*_gffstats_input_mqc.tsv`,
    `*_gffstats_genes_mqc.tsv`, `*_gffstats_projection_mqc.tsv`, `*_seqkit_mqc.tsv`,
+   `*_transcript_filter_mqc.tsv`,
    `*_samtools_align_mqc.tsv`) matched
    1:1 by an `sp.<section>.fn` pattern. The `*_TO_MQC` adapters deliberately do **not**
    write a `# id:` header — a file discovered by both `sp` *and* a header renders the

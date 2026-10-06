@@ -1,4 +1,3 @@
-include { FILTER_TRANSCRIPT as FILTER_TARGET       } from '../../modules/local/filter_transcript'
 include { GFFCOMPARE_BATCH                         } from '../../modules/local/gffcompare_batch'
 include { GFF_STATS         as GFF_STATS_TARGET    } from '../../modules/local/gff_stats'
 include { GFF_STATS_TO_MQC  as GFF_STATS_TARGET_TO_MQC } from '../../modules/local/gff_stats_to_mqc'
@@ -9,41 +8,35 @@ workflow BENCHMARKING {
     ch_projected_gff3  // [ meta(target_id, feature_type, decoy), List<gff3> ] × F·D·T — per
                        // target: every source's projected GFF3 + the 2 aggregate models
                        // (PROJECTION.out.gff3, see plans/18_per_target_batching.md)
-    feature_types      // plain List<String> — MUST be the same list PREPROCESSING got,
-                       // hence derived once in workflows/fomo.nf. The projection ⋈
-                       // reference pairing below is an INNER join on
-                       // [target_id, feature_type], so a list that disagrees with the
-                       // source side silently drops projections rather than failing.
+    ch_annotation      // [ meta(id, role, feature_type, decoy:false), filtered.gff3 ] × F·S
+                       // (PREPROCESSING.out.filtered_gff3) — each source's ONE filtered
+                       // annotation, already split by the very feature-type list
+                       // PREPROCESSING used, so the two sides of the inner join below
+                       // cannot disagree on feature_type (plans/20_longest_isoform.md).
 
     main:
 
-    // Benchmarking needs a reference annotation, so only targets that brought a
-    // gff3 take part. A pure 'target' row may omit it (the assembly is annotated
-    // but not scored): nf-schema hands a missing path through as [], which is
-    // falsy. Its projections are dropped by the inner join below, so no further
-    // guard is needed — and no gffcompare, target GFF stats, or top-N consensus
+    // Benchmarking needs a reference annotation, and the reference IS the species'
+    // filtered annotation (spliced, longest isoform, lncRNA TD2-noncoding) — the same
+    // file its own projection was extracted from. Only a source has one, and a gff3
+    // on a pure 'target' row is rejected by assets/schema_input.json, so the annotated
+    // targets are exactly the 'both' rows. The filter states the intent ("this
+    // species is a target") rather than hard-coding 'both'. A pure target has no
+    // reference, and its projections are dropped by the inner join below, so no
+    // further guard is needed — no gffcompare, target GFF stats, or top-N consensus
     // are produced for it.
+    //
+    // The reference is TD2-filtered ON PURPOSE: the query side is too (PROJECTION's
+    // projected-lncRNA TD2 pass), so scoring it against an unfiltered reference would
+    // count coding lncRNA the pipeline can never report as false negatives.
+    ch_target_refs = ch_annotation.filter { meta, _gff -> meta.role in ['target', 'both'] }
 
-    // The samplesheet gff3 is handed straight to both consumers, still gzipped —
-    // there is deliberately NO gunzip task here. FILTER_TARGET decompresses inline
-    // (modules/local/filter_transcript.nf:20-24) and gff-feature-stats reads
-    // .gff3.gz natively (modules/local/gff_stats.nf:5-8), exactly as
-    // PREPROCESSING already relies on for the raw source GFF3. Both derive their
-    // output names from ext.prefix, so nothing published depends on the file's
-    // name. The ~1 s of decompression now happens once per consumer instead of
-    // once per target, which buys back T_g SLURM jobs whose median lifetime was
-    // 73 s for 1.1 s of work (see plans/17_scheduling_efficiency.md).
+    // The raw samplesheet gff3 is still read here, for the kind:'raw' target stats —
+    // still gzipped, no gunzip task: gff-feature-stats reads .gff3.gz natively
+    // (modules/local/gff_stats.nf:5-8), see plans/17_scheduling_efficiency.md.
     ch_target_gff = ch_target
         .filter { _meta, _fa, gff3 -> gff3 }
         .map    { meta,  _fa, gff3 -> tuple(meta, gff3) }
-
-    // Filter target annotation by enabled feature_type — one GFF3 per class.
-    ch_target_filter_in = ch_target_gff
-        .flatMap { meta, gff3 ->
-            feature_types.collect { ft -> tuple(meta + [feature_type: ft, decoy: false], gff3, ft) }
-        }
-
-    FILTER_TARGET(ch_target_filter_in)
 
     // Pair each target's whole batch (every source + the 2 aggregates, one list) with
     // the reference of ITS OWN target and matching feature_type. The key MUST include
@@ -55,12 +48,12 @@ workflow BENCHMARKING {
     // Being an inner join, this is also what drops projections onto targets with
     // no gff3. Unlike the pre-plans/18 per-source combine, this is now a 1:1 join — one
     // batch per (target, feature_type, decoy) against one reference per (target,
-    // feature_type) — not a fan-out, since decoy doesn't appear in FILTER_TARGET's key
+    // feature_type) — not a fan-out, since decoy doesn't appear in the reference's key
     // and both decoy states of a target join the same non-decoy reference, same as before.
     ch_paired = ch_projected_gff3
         .map { meta, gffs -> tuple(meta.target_id, meta.feature_type, meta, gffs) }
         .combine(
-            FILTER_TARGET.out.gff3.map { meta, gff3 -> tuple(meta.id, meta.feature_type, gff3) },
+            ch_target_refs.map { meta, gff3 -> tuple(meta.id, meta.feature_type, gff3) },
             by: [0, 1]
         )
 
@@ -100,7 +93,7 @@ workflow BENCHMARKING {
     // that is target-scoped already carries the key from PROJECTION.
     ch_target_stats_gff = ch_target_gff
         .map  { m, g -> tuple(m + [kind: 'raw',      target_id: m.id], g) }
-        .mix(FILTER_TARGET.out.gff3.map { m, g -> tuple(m + [kind: 'filtered', target_id: m.id], g) })
+        .mix(ch_target_refs.map { m, g -> tuple(m + [kind: 'filtered', target_id: m.id], g) })
 
     GFF_STATS_TARGET(ch_target_stats_gff)
     GFF_STATS_TARGET_TO_MQC(GFF_STATS_TARGET.out.json)
@@ -117,6 +110,6 @@ workflow BENCHMARKING {
     // (or aggregate) per target, same (F·S·D + 2·F·D)·T_g count of individual files.
     emit:
     stats         = ch_stats_persource          // [ meta, *.stats ] × (F·S·D + 2·F·D)·T_g
-    target_refs   = FILTER_TARGET.out.gff3      // [ meta(id=target, feature_type), gff3 ] × F·T_g
+    target_refs   = ch_target_refs              // [ meta(id=target, feature_type), gff3 ] × F·T_g
     mqc_files     = ch_mqc_files                // [ meta, path    ] (the stats above + (F+1) GFF_STATS pairs per target: transcript + gene table each)
 }

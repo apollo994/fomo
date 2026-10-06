@@ -16,7 +16,7 @@ Nothing here parses a GFF or a BAM.
 Outputs, in report order (see assets/multiqc/run_summary_main.yml):
   run_overview_mqc.tsv            run overview: roles, pair counts, params
   run_species_mqc.tsv             per species: role + its own annotation input
-  run_source_funnel_mqc.{tsv,json} per source: raw → spliced → non-coding funnel
+  run_source_funnel_mqc.{tsv,json} per source: raw → stranded → spliced → longest → non-coding funnel
   run_target_types_mqc.tsv        per (target × transcript type): before/added/after
   run_target_before_after_mqc.json  the same, as a stacked bargraph
   run_accuracy_heatmap_{f1,sn,pr}_mqc.json  source × target accuracy matrices
@@ -146,6 +146,9 @@ class Inputs:
         self.gene_rows = read_tsvs(pick("_gffstats_genes_mqc.tsv"))
         self.projection_rows = read_tsvs(pick("_gffstats_projection_mqc.tsv"))
         self.td2_rows = read_tsvs(pick("_td2_coding_mqc.tsv"))
+        # FILTER_TRANSCRIPT's own funnel (n_transcripts / n_spliced / n_selected),
+        # one row per (source, feature_type), Sample = <species>.<feature_type>.
+        self.filter_rows = read_tsvs(pick("_transcript_filter_mqc.tsv"))
         self.align_rows = read_tsvs(pick("_samtools_align_mqc.tsv"))
         self.stats_files = pick(".gffcompare.stats")
 
@@ -156,6 +159,7 @@ class Inputs:
             "run_summary: staged "
             f"{len(self.input_rows)} input, {len(self.gene_rows)} gene, "
             f"{len(self.projection_rows)} projection, {len(self.td2_rows)} TD2, "
+            f"{len(self.filter_rows)} transcript-filter, "
             f"{len(self.align_rows)} alignment rows; "
             f"{len(self.stats_files)} gffcompare stats; "
             f"{len(self.top_sources)} top_sources",
@@ -255,6 +259,18 @@ class Inputs:
         `<target>.allModels` for stage=projected (one TD2 pass per target since the
         single-mapping redesign)."""
         return {(row["Sample"], row["stage"]): row for row in self.td2_rows}
+
+    def filter_index(self) -> Dict[tuple, dict]:
+        """{(species, feature_type): row}. Sample is `<species>.<feature_type>`; the
+        species is recovered by stripping the KNOWN `.<feature>` suffix by length, not
+        by splitting on '.', so a species id containing dots still round-trips."""
+        index: Dict[tuple, dict] = {}
+        for row in self.filter_rows:
+            sample, feature = row["Sample"], row["feature"]
+            suffix = f".{feature}"
+            species = sample[:-len(suffix)] if sample.endswith(suffix) else sample
+            index[(species, feature)] = row
+        return index
 
     def alignment_index(self) -> Dict[tuple, dict]:
         """{(target, token): row} from `<target>.allModels.<token>`."""
@@ -395,11 +411,11 @@ def section_species(inp: Inputs, args, summary: dict) -> None:
 
 
 def section_source_funnel(inp: Inputs, args, summary: dict) -> None:
-    ann, td2 = inp.annotation_index(), inp.td2_index()
+    ann, td2, filt = inp.annotation_index(), inp.td2_index(), inp.filter_index()
     sources = [s for s, r in inp.roles.items() if r["is_source"]]
 
-    header = ["Sample", "raw_lncRNA_transcripts", "dropped_single_exon", "dropped_coding",
-              "kept", "pct_kept", "n_genes_raw", "n_genes_kept",
+    header = ["Sample", "raw_lncRNA_transcripts", "dropped_unstranded", "dropped_single_exon",
+              "dropped_non_longest", "dropped_coding", "kept", "pct_kept", "n_genes_raw", "n_genes_kept",
               "mean_transcript_length_kept", "mean_spliced_length_kept",
               "mean_exon_length_kept", "exons_per_transcript_kept"]
     rows, plot, records = [], {}, {}
@@ -408,15 +424,34 @@ def section_source_funnel(inp: Inputs, args, summary: dict) -> None:
         kept_row = ann.get((species, "source", "2_lncRNA", "lnc_RNA"))
         td2_row = td2.get((species, "input"))
 
+        filt_row = filt.get((species, "lnc_RNA"))
+
         raw = num((raw_row or {}).get("n_transcripts"))
-        spliced = num((td2_row or {}).get("n_in"))
         coding = num((td2_row or {}).get("n_coding"))
         kept = num((td2_row or {}).get("n_kept"))
-        single_exon = None if (raw is None or spliced is None) else raw - spliced
+        # FILTER_TRANSCRIPT's funnel separates its three structural filters — strand
+        # consistency (drops "?"/trans-spliced models), multi-exon, longest isoform
+        # (plans/20). TD2's own n_in is what is LEFT after all three, so `raw - n_in`
+        # alone would lump them together.
+        n_tx = num((filt_row or {}).get("n_transcripts"))
+        stranded = num((filt_row or {}).get("n_stranded"))
+        spliced = num((filt_row or {}).get("n_spliced"))
+        selected = num((filt_row or {}).get("n_selected"))
+        unstranded = None if (n_tx is None or stranded is None) else n_tx - stranded
+        single_exon = None if (stranded is None or spliced is None) else stranded - spliced
+        non_longest = None if (spliced is None or selected is None) else spliced - selected
 
-        # The GFF side must agree with the TD2 side: FILTER_LNC_GFF subsets the
-        # filtered GFF3 by exactly the coding ids TD2 dropped. A mismatch means one
-        # of the two stopped describing the same set — worth saying out loud.
+        # Each step must hand the next exactly what it says it kept. A mismatch means
+        # two artefacts stopped describing the same set — worth saying out loud.
+        td2_in = num((td2_row or {}).get("n_in"))
+        if selected is not None and td2_in is not None and abs(selected - td2_in) > 0.5:
+            print(f"WARNING: {species}: FILTER_TRANSCRIPT selected {selected:.0f} lncRNA "
+                  f"but TD2 received {td2_in:.0f}", file=sys.stderr)
+        if n_tx is not None and raw is not None and abs(n_tx - raw) > 0.5:
+            print(f"WARNING: {species}: FILTER_TRANSCRIPT saw {n_tx:.0f} lncRNA but the "
+                  f"raw GFF stats count {raw:.0f}", file=sys.stderr)
+        # FILTER_ANNOTATION builds the filtered GFF3 from exactly the FASTA TD2 kept,
+        # so this should be impossible now — kept as a regression check.
         gff_kept = num((kept_row or {}).get("n_transcripts"))
         if kept is not None and gff_kept is not None and abs(kept - gff_kept) > 0.5:
             print(f"WARNING: {species}: TD2 kept {kept:.0f} lncRNA but the filtered "
@@ -426,7 +461,9 @@ def section_source_funnel(inp: Inputs, args, summary: dict) -> None:
         n_exons = num((kept_row or {}).get("n_exons"))
         record = {
             "raw_lncRNA_transcripts": raw,
+            "dropped_unstranded": unstranded,
             "dropped_single_exon": single_exon,
+            "dropped_non_longest": non_longest,
             "dropped_coding": coding,
             "kept": kept,
             "pct_kept": pct(kept, raw),
@@ -443,10 +480,12 @@ def section_source_funnel(inp: Inputs, args, summary: dict) -> None:
         rows.append([species] + [record[k] for k in header[1:]])
 
         # Stacked bars only make sense when the whole funnel resolved.
-        if None not in (kept, single_exon, coding):
+        if None not in (kept, unstranded, single_exon, non_longest, coding):
             plot[species] = {
                 "kept": kept,
+                "dropped_unstranded": unstranded,
                 "dropped_single_exon": single_exon,
+                "dropped_non_longest": non_longest,
                 "dropped_coding": coding,
             }
 
@@ -455,10 +494,13 @@ def section_source_funnel(inp: Inputs, args, summary: dict) -> None:
         "id": "run_source_funnel_plot",
         "section_name": "Source lncRNA — what survived filtering",
         "description": (
-            "Per source species: lncRNA transcripts donated (kept) and the two "
-            "reasons the rest were dropped — single-exon (FOMO transfers spliced "
-            "models only) and coding potential (a complete ORF with PSAURON score "
-            "at or above the cutoff). Bars sum to the raw lncRNA count."
+            "Per source species: lncRNA transcripts donated (kept) and the four "
+            "reasons the rest were dropped — no consistent strand (\"?\" or "
+            "trans-spliced across both strands; almost always zero), single-exon (FOMO transfers spliced "
+            "models only), not the longest spliced isoform of its gene (one "
+            "transcript per gene; zero with --longest_isoform false) and coding "
+            "potential (a complete ORF with PSAURON score at or above the cutoff). "
+            "Bars sum to the raw lncRNA count."
         ),
         "plot_type": "bargraph",
         "pconfig": {

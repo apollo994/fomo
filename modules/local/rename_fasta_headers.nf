@@ -9,6 +9,11 @@ process RENAME_FASTA_HEADERS {
 
     output:
     tuple val(meta), path("*.renamed.fasta"), emit: fasta
+    // renamed header token → original gffread seqname (= the GFF3 transcript ID=,
+    // verbatim). The only place that sees both names, so it is recorded here and
+    // FILTER_ANNOTATION builds the filtered GFF3 from it by EXACT id match
+    // (plans/20_longest_isoform.md) — no prefix normalisation on either side.
+    tuple val(meta), path("*.id_map.tsv")   , emit: id_map
     tuple val("${task.process}"), val('awk'), eval('awk --version 2>&1 | head -n1'), topic: versions, emit: versions_awk
 
     when:
@@ -21,20 +26,22 @@ process RENAME_FASTA_HEADERS {
     """
     set -euo pipefail
 
-    awk -v type="${type}" -v species="${meta.id}" '
+    awk -v type="${type}" -v species="${meta.id}" -v map="${prefix}.id_map.tsv" '
         /^>/ {
             split(\$1, a, ":")
             tid = (length(a) > 1) ? a[2] : substr(\$1, 2)
             print ">" tid "|" type "|" species
+            print tid "|" type "|" species "\t" substr(\$1, 2) > map
             next
         }
         { print }
+        END { printf "" >> map }   # empty FASTA → empty (but existing) map
     ' ${fasta} > ${prefix}.renamed.fasta
     """
 
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
     """
-    touch ${prefix}.renamed.fasta
+    touch ${prefix}.renamed.fasta ${prefix}.id_map.tsv
     """
 }

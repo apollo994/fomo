@@ -5,6 +5,7 @@
 # gffstats_genes      — gene-category breakdown of those same input GFFs
 # gffstats_projection — GFF stats on projected GFFs (minimap2-then-BAM_TO_GFF output)
 # seqkit_stats        — SeqKit FASTA length/composition stats
+# transcript_filter   — source transcripts kept by FILTER_TRANSCRIPT (spliced → longest isoform)
 # td2_coding          — TD2 coding-potential drops for real lncRNA (input + projected)
 # ---------------------------------------------------------------------------
 custom_data:
@@ -69,6 +70,22 @@ custom_data:
     pconfig:
       id: "samtools_align_table"
       namespace: "Samtools alignment"
+  transcript_filter:
+    file_format: "tsv"
+    section_name: "Transcript filter — spliced, longest isoform"
+    description: >
+      Source transcripts per feature type at each FILTER_TRANSCRIPT step:
+      `n_transcripts` in the annotation, `n_stranded` on one defined strand (drops
+      strand "?" and trans-spliced models, e.g. plant mitochondrial nad1/nad2),
+      `n_spliced` with at least two exons, and
+      `n_selected` kept — one per gene, the longest spliced isoform (by summed exon
+      length), unless `--longest_isoform false`. One row per (source × feature
+      type); mRNA rows appear only with `--include_mrna`. lncRNA are then
+      TD2-filtered (next section).
+    plot_type: "table"
+    pconfig:
+      id: "transcript_filter_table"
+      namespace: "Transcript filter"
   td2_coding:
     file_format: "tsv"
     section_name: "TD2 coding potential — lncRNA filtered"
@@ -99,5 +116,7 @@ sp:
     fn: "*_seqkit_mqc.tsv"
   samtools_align:
     fn: "*_samtools_align_mqc.tsv"
+  transcript_filter:
+    fn: "*_transcript_filter_mqc.tsv"
   td2_coding:
     fn: "*_td2_coding_mqc.tsv"

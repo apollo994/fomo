@@ -8,16 +8,19 @@ target genome assembly by transferring lncRNA annotations from source species.
 
 Each species in the samplesheet can act as a `source` (donates annotation), a `target`
 (receives projections), or `both` — so a single run can cover an all-vs-all comparison
-across many species.
+across many species. A `gff3` is required for `source` and `both` and must be left empty
+for `target`: to benchmark a species against its own annotation, make it `both`.
 
 Pipeline stages:
 
-1. **Preprocessing** — extract spliced lncRNA (and optionally mRNA) sequences from each
-   source, plus optional decoy sequences for a false-positive baseline.
+1. **Preprocessing** — keep one spliced transcript per gene (the longest isoform;
+   `--longest_isoform false` keeps them all), drop lncRNA with coding potential (TD2), and
+   extract their sequences from each source, plus optional decoy sequences for a
+   false-positive baseline. The result is one filtered annotation per source.
 2. **Projection** — splice-aware alignment (minimap2) of source sequences onto each
    target genome, converted back to GFF3.
-3. **Benchmarking** — compare projected models against each target's existing annotation
-   (gffcompare), when available, to score accuracy per source.
+3. **Benchmarking** — compare projected models against each `both` target's own filtered
+   annotation (gffcompare) to score accuracy per source.
 4. **Consensus** — rank sources by accuracy and build a top-3 consensus annotation per
    target.
 5. **Reporting** — one MultiQC report per target, plus one run-level summary report.
@@ -30,6 +33,15 @@ nextflow run . -profile test
 
 See `nextflow run . --help` for the full parameter list, and `assets/schema_input.json`
 for the samplesheet format (`species,role,fasta,gff3`).
+
+## Outputs
+
+```
+targets/<target>/   alignment/, annotation/, gffcompare/, select_top_sources/, multiqc/
+sources/<source>/   annotation/<source>.<ft>.filtered.gff3 — what was projected from
+                    this source (and, for a `both` species, the benchmark reference)
+summary/            multiqc/ (run-level report), tables/
+```
 
 ## Documentation
 

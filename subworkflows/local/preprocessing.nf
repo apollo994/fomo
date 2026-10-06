@@ -3,7 +3,7 @@ include { GFF_TO_GENE_BED                    } from '../../modules/local/gff_to_
 include { RELOCATE_LOCI                      } from '../../modules/local/relocate_loci'
 include { RENAME_FASTA_HEADERS               } from '../../modules/local/rename_fasta_headers'
 include { TD2_NONCODING                      } from './td2_noncoding'
-include { FILTER_GFF_BY_ID as FILTER_LNC_GFF } from '../../modules/local/filter_gff_by_id'
+include { FILTER_ANNOTATION                  } from '../../modules/local/filter_annotation'
 include { MAYBE_GUNZIP as GUNZIP_FASTA       } from '../../modules/local/maybe_gunzip'
 include { GFFREAD as EXTRACT_SEQUENCES       } from '../../modules/nf-core/gffread/main'
 include { GFFREAD as EXTRACT_DECOY_SEQUENCES } from '../../modules/nf-core/gffread/main'
@@ -40,7 +40,11 @@ workflow PREPROCESSING {
         ch_sources.map { meta, fasta, gff3 -> tuple(meta, fasta) }
     )
 
-    // Filter each source GFF3 per enabled feature_type (lnc_RNA [, mRNA])
+    // Filter each source GFF3 per enabled feature_type (lnc_RNA [, mRNA]): spliced
+    // transcripts only and, with --longest_isoform (ext.args), one per gene — the
+    // longest. Its output is the CANDIDATE set: it feeds extraction (→ TD2 →
+    // projection), decoy relocation, and FILTER_ANNOTATION, which turns it into the
+    // one filtered annotation everything downstream reads.
     ch_filter_input = ch_sources
         .flatMap { meta, _fasta, gff3 ->
             feature_types.collect { ft -> tuple(meta + [feature_type: ft, decoy: false], gff3, ft) }
@@ -179,34 +183,53 @@ workflow PREPROCESSING {
     // SeqKit stats are all derived from this so they reflect the filtering.
     ch_renamed_final = TD2_NONCODING.out.kept_fasta.mix(ch_renamed.rest)
 
-    // Subset the lncRNA filtered_gff3 by the coding IDs so the input GFF
-    // "filtered" stats reflect the drop. mRNA GFF3 is untouched. The decoy
-    // branch (RELOCATE_LOCI) still consumes the PRE-filter GFF3 upstream, so
-    // decoys remain an unfiltered null baseline.
-    FILTER_TRANSCRIPT.out.gff3
-        .branch { meta, _g ->
-            lnc:  meta.feature_type == 'lnc_RNA'
-            mrna: true
-        }
-        .set { ch_filt_gff }
+    // ── The one filtered annotation per (source, feature_type) ──────────────
+    // <id>.<ft>.filtered.gff3 (plans/20_longest_isoform.md) is built FROM the FASTA
+    // that is projected, not alongside it: FILTER_ANNOTATION keeps exactly the
+    // candidate transcripts whose renamed record survived into ch_final_fasta (TD2
+    // non-coding for lncRNA, every record for mRNA), translated back through
+    // RENAME_FASTA_HEADERS' id map by EXACT id. It fails loudly if the three disagree,
+    // so this file and spliced_fasta describe the same set by construction. It is
+    // then used three ways: input "filtered" stats here, the gffcompare reference in
+    // BENCHMARKING (for 'both' species), and published under sources/<id>/annotation/.
+    // Projection does not wait for it — spliced_fasta is emitted straight from
+    // ch_final_fasta.
+    //
+    // Decoys deliberately do NOT come from here: RELOCATE_LOCI (above) reads the
+    // FILTER_TRANSCRIPT candidates. A decoy borrows only a model's SHAPE (exon count,
+    // exon and intron lengths) and takes its sequence from intergenic DNA at the new
+    // site, so TD2's verdict on the original locus says nothing about it — and not
+    // waiting on TD2 keeps the decoy branch off its critical path. Decoys do inherit
+    // the longest-isoform selection, since that happens inside FILTER_TRANSCRIPT.
+    ch_final_fasta = ch_renamed_final.filter { meta, _fa -> !meta.decoy }
 
-    ch_lnc_gff_filter_in = ch_filt_gff.lnc
-        .map { meta, gff -> tuple(meta.id, meta, gff) }
-        .combine(
-            TD2_NONCODING.out.coding_ids.map { meta, ids -> tuple(meta.id, ids) },
-            by: 0
+    // Keyed on [id, feature_type]: one candidate GFF3, one id map and one final FASTA
+    // per source and feature type. failOnMismatch — a source whose map or FASTA never
+    // arrives must abort the run, not silently vanish from the results, the
+    // benchmarking reference and the report.
+    ch_annotation_in = FILTER_TRANSCRIPT.out.gff3
+        .map { meta, gff -> tuple(meta.id, meta.feature_type, meta, gff) }
+        .join(
+            RENAME_FASTA_HEADERS.out.id_map
+                .filter { meta, _map -> !meta.decoy }
+                .map    { meta, map  -> tuple(meta.id, meta.feature_type, map) },
+            by: [0, 1], failOnMismatch: true
         )
-        .map { _id, meta, gff, ids -> tuple(meta, gff, ids) }
+        .join(
+            ch_final_fasta.map { meta, fa -> tuple(meta.id, meta.feature_type, fa) },
+            by: [0, 1], failOnMismatch: true
+        )
+        .map { _id, _ft, meta, gff, map, fa -> tuple(meta, gff, map, fa) }
 
-    FILTER_LNC_GFF(ch_lnc_gff_filter_in)
+    FILTER_ANNOTATION(ch_annotation_in)
 
-    ch_filtered_gff3 = FILTER_LNC_GFF.out.gff3.mix(ch_filt_gff.mrna)
+    ch_filtered_gff3 = FILTER_ANNOTATION.out.gff3
 
     // ── Statistics & MultiQC adapters ─────────────────────────────────────────
     // Union of raw/filtered/decoy GFFs, all on the source genome. The raw source
     // GFF3 goes in still-gzipped — gff-feature-stats reads .gz directly. The
-    // "filtered" set uses the TD2-filtered lncRNA GFF3 (+ untouched mRNA) so the
-    // input stats reflect the coding-potential drop.
+    // "filtered" set is the one filtered annotation (spliced, longest isoform, lncRNA
+    // TD2-noncoding), so the input stats describe exactly what was projected.
     ch_stats_gff = ch_sources.map { meta, _fa, gff3 -> tuple(meta + [kind: 'raw'], gff3) }
         .mix(ch_filtered_gff3.map { m, g -> tuple(m + [kind: 'filtered'], g) })
         .mix(ch_decoy_gff3          .map { m, g -> tuple(m + [kind: 'decoy'],    g) })
@@ -220,12 +243,13 @@ workflow PREPROCESSING {
     ch_mqc_files = GFF_STATS_TO_MQC.out.tsv
         .mix(SEQKIT_TO_MQC.out.mqc)
         .mix(TD2_NONCODING.out.mqc)
+        .mix(FILTER_TRANSCRIPT.out.mqc)   // transcript funnel: spliced / longest isoform
 
     // Cardinalities below use N = sources, F = enabled feature types (1, or 2 with
     // --include_mrna). The decoy emits are all EMPTY without --include_decoy.
     emit:
-    spliced_fasta       = ch_renamed_final.filter { meta, fa -> !meta.decoy }  // [ meta, fasta ] × F·N (lncRNA coding-filtered)
-    filtered_gff3       = ch_filtered_gff3                                     // [ meta, gff3  ] × F·N (lncRNA coding-filtered)
+    spliced_fasta       = ch_final_fasta                                       // [ meta, fasta ] × F·N (lncRNA coding-filtered)
+    filtered_gff3       = ch_filtered_gff3                                     // [ meta, gff3  ] × F·N — describes spliced_fasta exactly; the benchmarking reference
     intergenic_bed      = ch_intergenic_bed                                    // [ meta, bed   ] × N   (0 without --include_decoy)
     decoy_gff3          = ch_decoy_gff3                                        // [ meta, gff3  ] × F·N (0 without --include_decoy)
     decoy_spliced_fasta = ch_renamed_final.filter { meta, fa -> meta.decoy }   // [ meta, fasta ] × F·N (0 without --include_decoy)

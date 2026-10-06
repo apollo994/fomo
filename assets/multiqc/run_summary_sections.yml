@@ -46,10 +46,14 @@ custom_data:
     section_name: "Source lncRNA — extraction and filtering funnel"
     description: >
       What happened to each source's lncRNA between the samplesheet GFF3 and the
-      transcripts actually offered for projection. Two filters apply, in order:
-      single-exon transcripts are dropped (FOMO transfers spliced models only), then
-      TD2/PSAURON drops anything with a complete, confident ORF. `kept` is what was
-      donated. Lengths are for the kept set; transcript length is the genomic span,
+      transcripts actually offered for projection. Four filters apply, in order:
+      models without a consistent strand are dropped (`dropped_unstranded`: strand "?"
+      or trans-spliced across both strands — almost always zero for lncRNA), then
+      single-exon transcripts (FOMO transfers spliced models only), then
+      every spliced isoform but the longest of its gene (`dropped_non_longest`; zero
+      with `--longest_isoform false`), then TD2/PSAURON drops anything with a
+      complete, confident ORF. `kept` is what was donated — exactly the transcripts of
+      the published `sources/<species>/annotation/<species>.lnc_RNA.filtered.gff3`. Lengths are for the kept set; transcript length is the genomic span,
       spliced length the summed exon length.
     plot_type: "table"
     pconfig:

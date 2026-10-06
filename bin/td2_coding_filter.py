@@ -17,8 +17,8 @@ FASTAs (`tid|source`, see bin/bam_to_gff.sh) — no delimiter-specific parsing.
 Outputs:
   --kept-fasta   FASTA of records NOT called coding (the retained non-coding set)
   --coding-ids   newline-separated list of coding seqnames (dropped) — for
-                 --stage input this is the BARE transcript id (stripped back
-                 to match the source's own, never-renamed gff3); for
+                 --stage input this is the BARE transcript id (informational
+                 since plans/20, see main()); for
                  --stage projected it is the id VERBATIM, unstripped, because
                  that stage's target gff3 (allModels) uses the same
                  source-qualified id and a bare tid would be ambiguous across
@@ -136,11 +136,12 @@ def main() -> int:
     # target GFF3 actually uses — the two stages don't agree, and stripping
     # is only correct for one of them:
     #   input     — TD2 sees the RENAMED fasta (tid|gene_class|species,
-    #                RENAME_FASTA_HEADERS), but FILTER_LNC_GFF's target is the
-    #                source's OWN gff3, whose ID= was never renamed — still
-    #                bare. Strip back to the token before the first '|' to
-    #                match it (single source per file, so bare tid is
-    #                unambiguous here).
+    #                RENAME_FASTA_HEADERS) of a single source, so the bare tid
+    #                is unambiguous; strip back to the token before the first
+    #                '|'. Since plans/20 nothing filters a GFF3 by this list:
+    #                FILTER_ANNOTATION builds the source's filtered GFF3 from
+    #                the KEPT fasta + RENAME_FASTA_HEADERS' id map, by exact id,
+    #                so this file is informational (debugging, provenance).
     #   projected — TD2 sees the projected fasta named after bam_to_gff.sh's
     #                own ID= (tid|source — see there), and FILTER_ALLMODELS's
     #                target GFF3 uses that SAME id verbatim. Stripping here
