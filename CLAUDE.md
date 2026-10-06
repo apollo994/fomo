@@ -79,6 +79,9 @@ targets/<target>/annotation/  <target>.allModels.<gtype>.raw.gff3         (every
                               <target>.from_<source>.<gtype>.projected.gff3
 targets/<target>/gffcompare/  *.stats *.tracking *.loci *.tmap *.refmap
 targets/<target>/select_top_sources/  <target>.top_sources.csv
+targets/<target>/curated/     <target>.curated.<gtype>.gff3.gz            (plans/21, every track)
+                              <target>.curated.<gtype>.merged.gff3.gz     (annotated targets)
+                              <target>.curated.<gtype>.curation.{tsv,json}
 targets/<target>/multiqc/     multiqc_report.html + multiqc_report_data/
 ```
 
@@ -131,7 +134,8 @@ With **S** sources (`role` ∈ {source, both}), **T** targets (`role` ∈ {targe
 `T` projected-lncRNA TD2 passes, `F·D·T` `GFFCOMPARE_COMBINE`,
 `(F·S·D + 2·F·D)·T_g` benchmark `GFFCOMPARE` **comparisons**, `2·F·T_g` `GFFCOMPARE_TOP`s,
 `F·S` `FILTER_ANNOTATION` (the filtered annotation, which doubles as the reference — there is
-no separate target-reference filter since plans/20), `T` MultiQC reports, and — independent of every one of those
+no separate target-reference filter since plans/20), `F·D·T` `CURATE_MODELS` (plans/21; none with
+`--curate false`), `T` MultiQC reports, and — independent of every one of those
 letters — **one** `RUN_SUMMARY_TABLES` + **one** `MULTIQC_RUN_SUMMARY` per run.
 
 The alignment count is `F·D·T` and **not** `F·S·D·T`: since plans/15 every source's spliced
@@ -201,6 +205,7 @@ exactly one output, so a `both` row could never reach both channels.
 | `PROJECTION` | **merge every source's spliced FASTA per gene type** (`F·D`, target-independent), index each target, **one minimap2 per (target, gene type)**, BAM→GFF, one projected-lncRNA TD2 pass per target, then **split back per source on `source=`**; one `GFF_STATS_PROJECTED_BATCH` task per target computes every source's stats + both aggregates' (plans/18); gffcompare-collapse `allModels` into `allModels_collapsed` | `gff3` (per target: **List** of every source's projected GFF3 ⊎ both aggregates — plans/18), `allmodels_raw`, `allmodels_collapsed`, `bam`, `index`, `mqc_files` |
 | `BENCHMARKING` | take each `both` target's reference from `PREPROCESSING.out.filtered_gff3` (no filtering of its own), **one `GFFCOMPARE_BATCH` task per target** loops gffcompare over every projected model vs. the reference (plans/18), then re-keys each result back to its own source/aggregate; GFF stats on target GFFs. **Targets without a `gff3` are filtered out here** | `stats` (per-source, re-keyed — same shape as before batching), `target_refs`, `mqc_files` |
 | `CONSENSUS_TOP` | rank sources by lncRNA transcript F1 **per target**, **subset `allModels` to those sources** (`top3_raw`), gffcompare-collapse it (`top3_collapsed`), score **both** | `gff3`, `stats`, `mqc_files` |
+| `CURATION` | plans/21. **One `CURATE_MODELS` task per (target, feature type, decoy)** on `allModels.<gtype>.raw.gff3` (`bin/curate_models.py` + `bin/curation_to_mqc.py`, one Wave image with python + gffcompare 0.12.6 + gffread 0.12.7). Keeps intron chains shared **exactly** by ≥ `curate_min_species` species (gffcompare `--no-merge` cliques, cross-checked in Python; self never counts), drops models with an exon on any **same-strand reference exon** (every biotype), links supported chains sharing a splice junction into genes, one representative per gene (most SJs → species → length → de), `ref_location` tag, then merges into the reference. The reference is the target's **samplesheet** GFF3, *not* the filtered ★ annotation; a pure target is curated without one (no merged file). Gated on `params.curate` via `ext.when` on `CURATE_MODELS` (always called, so its selectors never warn) | `curated`, `merged`, `report`, `mqc_files` (3 tables, target-scoped) |
 | `REPORTING` | per-target accuracy scatter + one MULTIQC per target | `report`, `data` |
 | `RUN_SUMMARY` | digest the pipeline-wide `mqc_files` union + `top_sources` CSVs + a samplesheet-derived roles CSV into run-level tables/plots, then **one MULTIQC for the whole run**. One task per run, no target dimension | `report`, `tables` |
 

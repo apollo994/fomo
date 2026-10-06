@@ -1,6 +1,6 @@
 # 21 — Curated annotation: chains shared by ≥ 2 species, merged with the reference
 
-## Status: phase A done (2026-10-06) on branch `curated-annotation` (uncommitted); phases B–C pending
+## Status: phases A + B done (2026-10-06) on branch `curated-annotation`; phase C (run summary) pending
 
 Phase A = `bin/curate_models.py` + `tests/curate_models/test_curate_models.py` (43 fixture checks
 pass). The real-data validation is in **Phase A results** at the end.
@@ -554,3 +554,46 @@ changed 20 / 3,996 representatives (all multi-chain genes; a 2-SJ chain in 2 spe
 
 Fixture 17 is inverted: the 3-SJ chain in 2 species beats the 1-SJ chain in 3 species (gene
 `n_chains=2`, `n_species_gene=5`).
+
+## Phase B results (2026-10-06)
+
+**What was built (vs the design in §5):**
+- **Container:** `CURATE_MODELS` runs one Seqera Containers (Wave) image built from
+  `conda-forge::python=3.11 bioconda::gffcompare=0.12.6 bioconda::gffread=0.12.7`:
+  - Docker: `community.wave.seqera.io/library/python_gffcompare_gffread:8f0a261560fe9c3b`
+  - Singularity: `oras://…:970e511c83295d93`
+
+  Same pattern as `TD2_PREDICT`.
+- **MultiQC tables:** `bin/curation_to_mqc.py` runs **in the same task**, not as a separate
+  `*_TO_MQC` process. It writes three tables, `*_curation_{observed,discarded,novel}_mqc.tsv`,
+  one row per track. They are routed to that target's report by `meta.target_id` and placed at
+  the head of the report (order 1300/1250/1200).
+- **`--curate false`:** implemented as `ext.when = { params.curate }` on `CURATE_MODELS`, and
+  `CURATION` is always called. A Groovy `if` around the call left the `CURATE_MODELS` selectors
+  unmatched, so Nextflow printed "no process matching config selector" warnings.
+- **Merged header:** if the reference does not start with `##gff-version`, the merged file gets
+  `##gff-version 3` plus the curate_models comment first. The test references are subsampled
+  and have no header. The reference lines themselves stay verbatim (new fixture; 62 checks).
+
+**Verification:**
+- **gffcompare 0.12.6** (in the container): 62/62 fixtures pass. On the 10 rev-2 targets, the
+  curated GFF3, merged GFF3 and report TSV are byte-identical to the 0.12.10 runs.
+- **`-profile test,crg --include_mrna --include_decoy`:** 204 tasks succeeded and every
+  (target × track) has its outputs.
+  - Alciphron (`both`, 1 non-self source) has 0 supported chains on every track, as expected
+    since ≥ 2 species are needed. It gets curated + merged files; with no curated genes the
+    merged file is the reference plus the header.
+  - Hippothoe (pure target, 2 sources) gets lncRNA 17 genes, mRNA 410, decoys 0 / 0. All are
+    `ref_location=no_reference` and there is no merged file.
+  - Each report renders the three curation sections exactly once, with 4 rows (one per track).
+    No `targets/null/`.
+  - `CURATE_MODELS` takes ~5–8 s and ~20 MB per task on the test data.
+- **Default `-profile test,crg`:** 2 curation tasks (lncRNA × 2 targets), 3 GFF3s
+  (alciphron curated + merged, hippothoe curated), sections rendered.
+- **`--curate false`:** no `curated/` directories, no curation sections, no new warnings (the 4
+  remaining are the pre-existing decoy-branch selectors when `--include_decoy` is off).
+- **`nextflow lint .`:** the same 7 errors as `main`, all in untouched files. The new
+  `Channel.empty()` deprecation warning went away with the `ext.when` change.
+
+**Phase C (pending):** run-summary columns (curated genes per target and track; decoy-normalised
+FDR when decoys are on).

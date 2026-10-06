@@ -609,8 +609,11 @@ def write_merged(path, ref_path, args, blocks, new_ids):
                 break
             if not line.endswith('\n'):
                 line += '\n'
+            if n == 0 and not line.startswith('##gff-version'):
+                o.write('\n'.join(header(args, len(blocks))) + '\n')   # reference has no header: add one
+                wrote_hdr = True
             o.write(line)
-            if not wrote_hdr and n == 0 and line.startswith('##gff-version'):
+            if not wrote_hdr and n == 0:
                 o.write(header(args, len(blocks))[1] + '\n')
                 wrote_hdr = True
             for c in at.get(n, ()):

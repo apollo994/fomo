@@ -2,6 +2,7 @@ include { PREPROCESSING      } from '../subworkflows/local/preprocessing'
 include { PROJECTION         } from '../subworkflows/local/projection'
 include { BENCHMARKING       } from '../subworkflows/local/benchmarking'
 include { CONSENSUS_TOP      } from '../subworkflows/local/consensus_top'
+include { CURATION           } from '../subworkflows/local/curation'
 include { REPORTING          } from '../subworkflows/local/reporting'
 include { RUN_SUMMARY        } from '../subworkflows/local/run_summary'
 include { samplesheetToList  } from 'plugin/nf-schema'
@@ -85,6 +86,14 @@ workflow FOMO {
         BENCHMARKING.out.target_refs
     )
 
+    // Curated annotation (plans/21): every allModels track — lncRNA, mRNA, decoys — keeps
+    // only intron chains shared exactly by >= params.curate_min_species species, minus any
+    // model overlapping the target's reference, and is merged into that reference. The
+    // reference is the samplesheet GFF3 (ch_targets), not the filtered ★ annotation.
+    // `--curate false` is applied as `ext.when` on CURATE_MODELS (conf/modules.config), not
+    // an `if` here: the process then always exists, so its config selectors never warn.
+    CURATION(PROJECTION.out.allmodels_raw, ch_targets)
+
     // The pipeline-wide union of MultiQC inputs, hoisted because it feeds BOTH
     // reporting paths. A channel read by two consumers is forked by Nextflow, so
     // this is a naming change only — neither consumer sees a shortened stream.
@@ -92,6 +101,7 @@ workflow FOMO {
         .mix(PROJECTION.out.mqc_files)
         .mix(BENCHMARKING.out.mqc_files)
         .mix(CONSENSUS_TOP.out.mqc_files)
+        .mix(CURATION.out.mqc_files)
 
     ch_target_ids = ch_targets.map { meta, _fasta, _gff3 -> meta.id }
 

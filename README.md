@@ -23,7 +23,11 @@ Pipeline stages:
    annotation (gffcompare) to score accuracy per source.
 4. **Consensus** — rank sources by accuracy and build a top-3 consensus annotation per
    target.
-5. **Reporting** — one MultiQC report per target, plus one run-level summary report.
+5. **Curation** — keep only intron chains shared exactly by ≥ 2 source species
+   (`--curate_min_species`), drop models overlapping any exon of the target's reference,
+   report one representative per gene (tagged with its location relative to the
+   reference) and merge the result into the reference annotation (`--curate false` skips it).
+6. **Reporting** — one MultiQC report per target, plus one run-level summary report.
 
 ## Usage
 
@@ -37,7 +41,10 @@ for the samplesheet format (`species,role,fasta,gff3`).
 ## Outputs
 
 ```
-targets/<target>/   alignment/, annotation/, gffcompare/, select_top_sources/, multiqc/
+targets/<target>/   alignment/, annotation/, gffcompare/, select_top_sources/, multiqc/,
+                    curated/<target>.curated.<gtype>.gff3.gz          — curated genes
+                            <target>.curated.<gtype>.merged.gff3.gz   — reference + curated
+                            <target>.curated.<gtype>.curation.{tsv,json} — curation report
 sources/<source>/   annotation/<source>.<ft>.filtered.gff3 — what was projected from
                     this source (and, for a `both` species, the benchmark reference)
 summary/            multiqc/ (run-level report), tables/

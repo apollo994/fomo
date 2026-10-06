@@ -105,6 +105,48 @@ custom_data:
 # a `# id:` header — embedding one would cause MultiQC to discover the
 # section twice (once via sp, once via the embedded id) and render every
 # section twice in the report.
+  curation_observed:
+    file_format: "tsv"
+    section_name: "Curation (1) — multi-species chains observed"
+    description: >
+      Intron chains shared EXACTLY (every splice junction identical; gffcompare --no-merge)
+      by at least --curate_min_species source species, before any reference filter. One row
+      per curated track (lncRNA; mRNA / decoys with --include_mrna / --include_decoy). The
+      target's own projections are excluded first (`self_excluded`) and never count as
+      support; single-exon models have no junction and are skipped. `genes` = supported
+      chains grouped by a shared splice junction.
+    plot_type: "table"
+    pconfig:
+      id: "curation_observed_table"
+      namespace: "Curation observed"
+  curation_discarded:
+    file_format: "tsv"
+    section_name: "Curation (2) — discarded by overlap with the reference"
+    description: >
+      Models with an exon overlapping ANY exon of the target's reference annotation on the
+      same strand (every biotype) are removed before support is counted.
+      `supported_chains_lost` = chains that fall below the species threshold as a result;
+      `chains_lost:<type>` splits them by the overlapped reference type, one primary type
+      per chain (mRNA > lncRNA > antisense > other transcript > small RNA > pseudogene), so
+      those columns add up to `supported_chains_lost`. NA for targets without a reference.
+    plot_type: "table"
+    pconfig:
+      id: "curation_discarded_table"
+      namespace: "Curation discarded"
+  curation_novel:
+    file_format: "tsv"
+    section_name: "Curation (3) — novel genes"
+    description: >
+      The curated annotation: one gene per group of supported chains sharing a splice
+      junction, represented by its chain with the most splice junctions (then most
+      species, longest, lowest de). Columns: genes by supporting species and by number of
+      chains; `location:<class>` relative to the reference (antisense_exonic, intronic,
+      sense_span_overlap, antisense_intronic, divergent, intergenic, no_reference); medians
+      of exons, exonic length, genomic span, intron length and de of the representatives.
+    plot_type: "table"
+    pconfig:
+      id: "curation_novel_table"
+      namespace: "Curation novel"
 sp:
   gffstats_input:
     fn: "*_gffstats_input_mqc.tsv"
@@ -120,3 +162,9 @@ sp:
     fn: "*_transcript_filter_mqc.tsv"
   td2_coding:
     fn: "*_td2_coding_mqc.tsv"
+  curation_observed:
+    fn: "*_curation_observed_mqc.tsv"
+  curation_discarded:
+    fn: "*_curation_discarded_mqc.tsv"
+  curation_novel:
+    fn: "*_curation_novel_mqc.tsv"

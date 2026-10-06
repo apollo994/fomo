@@ -294,6 +294,15 @@ def main():
     r2 = subprocess.run(['gffread', '-E', '-o', os.devnull, '/dev/stdin'], input='\n'.join(lines) + '\n', capture_output=True, text=True)
     check(r2.returncode == 0, '15 gffread accepts merged')
 
+    # 15 a reference without a ##gff-version line: the merged file gets one, then the reference verbatim
+    ref_nh = os.path.join(tmp, 'ref_noheader.gff3')
+    open(ref_nh, 'w').write(REF.split('\n', 1)[1])
+    r, pre_nh = run(tmp, 'noheader', M, ['--gene-prefix', 'FOMO_T'], ref_nh)
+    lines_nh = gzip.open(pre_nh + '.merged.gff3.gz', 'rt').read().splitlines()
+    check(r.returncode == 0 and lines_nh[0] == '##gff-version 3' and lines_nh[1].startswith('# curate_models')
+          and [ln for ln in lines_nh[2:] if '\tfomo\t' not in ln] == ref_lines[1:],
+          '15 reference without ##gff-version: header added, reference lines verbatim')
+
     # 12 no reference
     r, pre2 = run(tmp, 'noref', M, [])
     check(r.returncode == 0 and not os.path.exists(pre2 + '.merged.gff3.gz'), '12 no reference -> no merged file')
