@@ -21,7 +21,6 @@ include { MULTIQC as MULTIQC_RUN_SUMMARY } from '../../modules/nf-core/multiqc/m
 workflow RUN_SUMMARY {
     take:
     ch_all_mqc      // Channel<tuple(meta, path|List<path>)> — the pipeline-wide union
-    ch_top_sources  // Channel<tuple(meta, *.top_sources.csv)> × T_g
     ch_roles        // Channel<path> — species_roles.csv (single file)
 
     main:
@@ -35,15 +34,7 @@ workflow RUN_SUMMARY {
         .flatMap { _meta, p -> p instanceof List ? p : [p] }
         .collect()
 
-    // ifEmpty([]) is load-bearing: with no annotated target there is no ranking and
-    // no top_sources.csv, and .collect() on an empty channel emits NOTHING — the
-    // process would wait forever on an input that never arrives.
-    ch_top = ch_top_sources
-        .map { _meta, csv -> csv }
-        .collect()
-        .ifEmpty([])
-
-    RUN_SUMMARY_TABLES(ch_files, ch_top, ch_roles)
+    RUN_SUMMARY_TABLES(ch_files, ch_roles)
 
     MULTIQC_RUN_SUMMARY(
         RUN_SUMMARY_TABLES.out.mqc.map { files ->

@@ -8,19 +8,15 @@ process GFF_BY_SOURCE {
     // output glob can never pick it up — the outputs are written to the task root and
     // their names are not known until the task runs.
     //
-    // `keep` is optional: pass [] for split mode (one output per source=), or a
-    // one-column `source` CSV for subset mode (a single output holding just those
-    // sources). One shape serves both aliases — SPLIT_GFF_BY_SOURCE in PROJECTION and
-    // SUBSET_GFF_BY_SOURCE in CONSENSUS_TOP.
+    // One output per source= (SPLIT_GFF_BY_SOURCE in PROJECTION). The subset mode that
+    // built the top-N consensus was removed with it (plans/23).
     input:
-    tuple val(meta), path(gff3, stageAs: 'input/*'), path(keep)
+    tuple val(meta), path(gff3, stageAs: 'input/*')
 
-    // Split mode emits N files, subset mode exactly 1 — so this glob yields a List
-    // in one case and a bare Path in the other. Both consumers `.transpose()`, which
-    // passes a non-List element through unchanged (verified), so the single-file case
-    // is not silently dropped and no `arity` declaration is needed.
+    // A single source yields a bare Path rather than a List; projection.nf normalises
+    // both shapes (`gffs instanceof List ? gffs : [gffs]`).
     //
-    // optional: true — in split mode, a target onto which NOTHING projected from ANY
+    // optional: true — a target onto which NOTHING projected from ANY
     // source (allModels.raw.gff3 has zero records — a real outcome, not a broken run;
     // seen for real on divergent targets in a large all-vs-all) makes gff_by_source.py
     // write zero files and exit 0 (its own WARNING says so). Without `optional: true`
@@ -40,7 +36,6 @@ process GFF_BY_SOURCE {
     gff_by_source.py \\
         --gff ${gff3} \\
         --outdir . \\
-        ${keep ? "--keep ${keep}" : ''} \\
         ${args}
     """
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Split (or subset) a projected GFF3 by the source species that produced each model.
+Split a projected GFF3 by the source species that produced each model.
 
 Since the single-mapping redesign (plans/15) every source's spliced transcripts are
 merged into one FASTA and aligned to a target in ONE minimap2 run, so a target has a
@@ -12,14 +12,9 @@ The key is the `source=` attribute that `bin/bam_to_gff.sh` already stamps on ev
 name that `modules/local/rename_fasta_headers.nf` writes). Child features — `exon`,
 CDS, UTR — carry no `source=` and inherit it through `Parent`.
 
-Two modes:
-
-  split   --name-template '<target>.from_{source}.lnc_RNA.projected.gff3'
-          One output file per distinct `source=` value. `{source}` is substituted.
-
-  subset  --keep top_sources.csv --name '<target>.top3.lnc_RNA.raw.gff3'
-          One output file holding only the sources listed in the CSV (one column,
-          header `source` — the file bin/select_top_sources.py emits).
+  --name-template '<target>.from_{source}.lnc_RNA.projected.gff3'
+      One output file per distinct `source=` value. `{source}` is substituted.
+      (The subset mode that built the top-N consensus was removed with it, plans/23.)
 
 Records are written in input order, so a coordinate-sorted input yields
 coordinate-sorted, seqid-grouped outputs (which `gff-feature-stats` requires).
@@ -32,13 +27,12 @@ seen for real, two Drosophila species both used the same generic "lnc_RNA1412"
 id — so `bin/bam_to_gff.sh` makes `ID=` globally unique BY CONSTRUCTION
 (`<tid>|<source>`, not bare `<tid>`) rather than assuming upstream ids never
 collide. This check should therefore never fire now — but it still fails loudly
-rather than corrupting the consensus if that guarantee is ever broken.
+rather than corrupting the per-source split if that guarantee is ever broken.
 """
 import argparse
-import csv
 import os
 import sys
-from typing import Dict, List, Optional, Set, TextIO
+from typing import Dict, TextIO
 
 # Feature types that own a transcript-level ID. Mirrors filter_gff_by_id.py's TX_TYPES
 # so both scripts agree on what "a transcript" is; in practice bam_to_gff.sh only ever
@@ -60,46 +54,20 @@ def attr(col9: str, key: str) -> str:
     return ""
 
 
-def read_keep(path: str) -> Set[str]:
-    """Read the one-column `source` CSV emitted by bin/select_top_sources.py."""
-    keep: Set[str] = set()
-    with open(path, encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            source = (row.get("source") or "").strip()
-            if source:
-                keep.add(source)
-    return keep
-
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--gff", required=True, help="input GFF3 (an allModels.raw.gff3)")
     p.add_argument("--outdir", required=True, help="directory to write output GFF3s into")
-    p.add_argument("--name-template",
-                   help="split mode: output filename with a literal {source} placeholder")
-    p.add_argument("--keep", help="subset mode: CSV of sources to keep (header `source`)")
-    p.add_argument("--name", help="subset mode: output filename")
+    p.add_argument("--name-template", required=True,
+                   help="output filename with a literal {source} placeholder")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
 
-    subset = args.keep is not None
-    if subset:
-        if not args.name:
-            print("ERROR: --keep requires --name", file=sys.stderr)
-            return 2
-        keep = read_keep(args.keep)
-        if not keep:
-            print(f"ERROR: no sources listed in {args.keep}", file=sys.stderr)
-            return 1
-    elif not args.name_template:
-        print("ERROR: one of --name-template (split) or --keep/--name (subset) is required",
-              file=sys.stderr)
-        return 2
-    elif "{source}" not in args.name_template:
+    if "{source}" not in args.name_template:
         print("ERROR: --name-template must contain the literal {source}", file=sys.stderr)
         return 2
 
@@ -114,20 +82,8 @@ def main() -> int:
 
     handles: Dict[str, TextIO] = {}
     counts: Dict[str, int] = {}
-    subset_handle: Optional[TextIO] = None
-    skipped: Dict[str, int] = {}
 
-    def handle_for(source: str) -> Optional[TextIO]:
-        """Output handle for a source, or None if this record is not wanted."""
-        nonlocal subset_handle
-        if subset:
-            if source not in keep:
-                return None
-            if subset_handle is None:
-                subset_handle = open(os.path.join(args.outdir, args.name), "w",
-                                     encoding="utf-8")
-                subset_handle.write(GFF_HEADER)
-            return subset_handle
+    def handle_for(source: str) -> TextIO:
         if source not in handles:
             fname = args.name_template.replace("{source}", source)
             handles[source] = open(os.path.join(args.outdir, fname), "w", encoding="utf-8")
@@ -176,40 +132,20 @@ def main() -> int:
                         return 1
                     source_by_tid[fid] = source
 
-                out = handle_for(source)
-                if out is None:
-                    skipped[source] = skipped.get(source, 0) + 1
-                    continue
-                out.write(line)
+                handle_for(source).write(line)
                 counts[source] = counts.get(source, 0) + 1
     finally:
         for fh_out in handles.values():
             fh_out.close()
-        if subset_handle is not None:
-            subset_handle.close()
 
-    if subset:
-        missing = sorted(keep - set(counts))
-        if missing:
-            print(f"WARNING: requested sources absent from {args.gff}: "
-                  f"{', '.join(missing)}", file=sys.stderr)
-        if subset_handle is None:
-            # Every requested source projected nothing. Still emit a valid empty GFF3
-            # so downstream gffcompare/gff-feature-stats have something to read.
-            with open(os.path.join(args.outdir, args.name), "w", encoding="utf-8") as fh_out:
-                fh_out.write(GFF_HEADER)
-    elif not handles:
+    if not handles:
         print(f"WARNING: {args.gff} contained no records — no output files written",
               file=sys.stderr)
 
-    mode = "subset" if subset else "split"
-    for source in sorted(set(counts) | set(skipped)):
-        kept = counts.get(source, 0)
-        dropped = skipped.get(source, 0)
-        note = f" (skipped {dropped})" if dropped else ""
-        print(f"gff_by_source [{mode}]: {source}\t{kept} records{note}", file=sys.stderr)
-    print(f"gff_by_source [{mode}]: {len(source_by_tid)} transcripts across "
-          f"{len(set(counts) | set(skipped))} sources", file=sys.stderr)
+    for source in sorted(counts):
+        print(f"gff_by_source: {source}\t{counts[source]} records", file=sys.stderr)
+    print(f"gff_by_source: {len(source_by_tid)} transcripts across {len(counts)} sources",
+          file=sys.stderr)
     return 0
 
 

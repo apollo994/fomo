@@ -14,8 +14,6 @@ process RUN_SUMMARY_TABLES {
     // ${meta.target_id}., source-side ones are species-keyed), so a collision here
     // is Nextflow telling you a naming contract broke — which is the point.
     path(mqc_files, stageAs: 'mqc/*')
-    // May be EMPTY: no annotated target ⇒ no ranking ⇒ no top_sources.csv.
-    path(top_sources, stageAs: 'top_sources/*')
     path roles_csv
 
     output:
@@ -28,15 +26,10 @@ process RUN_SUMMARY_TABLES {
 
     script:
     def args = task.ext.args ?: ''
-    // `?:` on the List guards the empty-channel case; the instanceof guard keeps a
-    // single-file input (a bare Path, not a List) working.
-    def top_list = top_sources instanceof List ? top_sources : (top_sources ? [top_sources] : [])
-    def tops = top_list ? "--top-sources ${top_list.join(' ')}" : ''
     """
     run_summary_tables.py \\
         --mqc-dir mqc \\
         --roles ${roles_csv} \\
-        ${tops} \\
         ${args}
     """
 

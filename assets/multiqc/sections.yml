@@ -45,8 +45,7 @@ custom_data:
       against the target genome. One row per (target × source × feature_type ×
       decoy/not) — mRNA and decoy rows appear only with `--include_mrna` /
       `--include_decoy`. Projected models carry no CDS, so CDS columns are NA. The
-      `from_combined` and `from_top3` rows come from gffread, whose GFF3 output
-      has no gene features, so their n_genes reads 0.
+      `from_allModels_raw` row is every source pooled.
     plot_type: "table"
     pconfig:
       id: "gffstats_projection_table"

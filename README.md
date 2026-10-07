@@ -20,16 +20,15 @@ Pipeline stages:
    extract their sequences from each source, plus optional decoy sequences for a
    false-positive baseline. The result is one filtered annotation per source.
 2. **Projection** — splice-aware alignment (minimap2) of source sequences onto each
-   target genome, converted back to GFF3.
-3. **Benchmarking** — compare projected models against each `both` target's own filtered
-   annotation (gffcompare) to score accuracy per source.
-4. **Consensus** — rank sources by accuracy and build a top-3 consensus annotation per
-   target.
-5. **Curation** — keep only intron chains shared exactly by ≥ 2 source species
-   (`--curate_min_species`), drop models overlapping any exon of the target's reference,
-   report one representative per gene (tagged with its location relative to the
-   reference) and merge the result into the reference annotation (`--curate false` skips it).
-6. **Reporting** — one MultiQC report per target, plus one run-level summary report.
+   target genome, converted back to GFF3. A species is never projected onto itself.
+3. **Benchmarking** — compare `allModels` (every source pooled) and each source's
+   projected models against each `both` target's own filtered annotation (gffcompare).
+4. **Curation** — the consensus: keep only intron chains shared exactly by ≥ 2 source
+   species (`--curate_min_species`), drop models overlapping any exon of the target's
+   reference, report one representative per gene (tagged with its location and nearest
+   reference gene) and merge the result into the reference annotation (`--curate false`
+   skips it).
+5. **Reporting** — one MultiQC report per target, plus one run-level summary report.
 
 ## Usage
 
@@ -43,7 +42,7 @@ for the samplesheet format (`species,role,fasta,gff3`).
 ## Outputs
 
 ```
-targets/<target>/   alignment/, annotation/, gffcompare/, select_top_sources/, multiqc/,
+targets/<target>/   alignment/, annotation/, gffcompare/, multiqc/,
                     curated/<target>.curated.<gtype>.gff3.gz          — curated genes
                             <target>.curated.<gtype>.merged.gff3.gz   — reference + curated
                             <target>.curated.<gtype>.curation.{tsv,json} — curation report

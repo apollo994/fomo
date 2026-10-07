@@ -1,6 +1,6 @@
 # 23 — Remove self-projection, the top-N consensus and allModels_collapsed
 
-## Status: planned (2026-10-07). Implement **after plans/22**, on a branch off the plans/22 branch (`annotated-targets`).
+## Status: implemented (2026-10-07) on branch `no-self-no-top3`, off `annotated-targets` @ `99f648b` — see **Results**
 
 ## Decisions (2026-10-07)
 
@@ -194,8 +194,66 @@ Each `both` target's alignment, TD2, split and stats lose the self share of thei
 ## Open questions (defaults in **bold**)
 
 1. **Run-summary "added" metric** = **curated genes per target and track** (plans/21 phase C
-   folded in). Alternatives: `allModels` raw model counts (redundant) or none.
+   folded in). *Implemented as the default.*
 2. **Per-donor reporting without top-N:** **keep the per-donor accuracy (F1 per source × target)
-   heatmap and the donor table without "picked" counts.** Alternatively, add "curated genes
+   heatmap and the donor table without "picked" counts.** *Implemented as the default.* Alternatively, add "curated genes
    supported by this donor" (how often a donor's models appear in `supporting_models`), which
    would be a reference-free measure of donor usefulness.
+
+## Results (2026-10-07)
+
+**Implementation notes vs the design:**
+- **Self-exclusion** is in the FOMO-local branch of `modules/nf-core/minimap2/align`:
+  - a mawk filter on the last `|`-field of each header writes `<prefix>.query.fa`, which is
+    removed after alignment;
+  - it is triggered by `meta.exclude_self` (set in `projection.nf` from the target's
+    `role == 'both'`);
+  - the minimap2_samtools image has mawk 1.3.4 and zcat, so no image rebuild was needed;
+  - minimap2 on an empty query exits 0 and writes a header-only BAM (verified in the image).
+- **"Added" in the run summary is counted in GENES:** `genes_before` is the reference's
+  `n_genes` for that type; `curated_genes` is one representative per gene. With decoys,
+  `est_curated_fdr_pct` = (decoy curated genes / decoy multi-exon input models) /
+  (real curated genes / real multi-exon input models) × 100.
+- **Donor table:** `run_donor_ranking_mqc.tsv` keeps its name but holds accuracy only; the
+  picks bargraph and the top-sources table are gone.
+- **`curate_models.py`** warns (instead of the old "note") only if self models still reach it.
+
+**`-profile test,crg`, default sheet** (alciphron `both`, hippothoe `target` + gff3, thersamon
+`source`), not resumed: 65 tasks succeeded.
+- **No self-projection:** alciphron's `allModels.lnc_RNA.raw.gff3` has 0 `source=alciphron`
+  models (60 transcripts, was 115 with 55 self). There is no `from_Lycaena_alciphron_282377`
+  file.
+- **Benchmarking:** alciphron's gffcompare has exactly `from_thersamon` + `from_allModels_raw`.
+- **Removed outputs:** no `top3.*`, `*.collapsed.gff3`, `select_top_sources/` or
+  `*top_sources*`, and no such sections in any report.
+- **Regression vs the plans/22 run of the same sheet:**
+  - alciphron ← thersamon projected GFF3 is byte-identical, with Transcript Sn/Pr 28.8 / 28.3
+    on both runs;
+  - alciphron `allModels_raw` went from 91.5 / 47.0 (self-inflated) to 28.8 / 28.3, i.e.
+    exactly its one real donor;
+  - hippothoe's curated + merged GFF3s and curation report are byte-identical;
+  - alciphron's curation report differs only in `n_models` (115 → 60) and `self_excluded`
+    (55 → 0).
+- **Run summary:**
+  - "Source × target pairs (no self-projection)" = 3;
+  - targets table in genes: hippothoe lncRNA 64 + 3 curated, alciphron 62 + 0;
+  - every section renders once; no duplicated sections in the per-target reports.
+
+**`--include_mrna --include_decoy`** (resumed): 111 new + 60 cached tasks succeeded.
+- 0 self models on all four alciphron tracks (lncRNA 60, lncRNA decoy 40, mRNA 830, mRNA decoy
+  755 transcripts).
+- gffcompare: thersamon + allModels_raw per track.
+- Curated decoy genes 0. Hippothoe mRNA +1 curated gene.
+
+**Empty-query edge case** (`alciphron both` + `hippothoe target`, alciphron is the only donor):
+- alciphron's query is empty after exclusion, its `allModels.lnc_RNA.raw.gff3` has 0
+  transcripts, and there are no split files;
+- benchmarking ran on the empty `allModels_raw` (the honest 0-model result);
+- curation reports 0 models / 0 genes;
+- hippothoe still receives alciphron's models. The run completed.
+
+**`bin/gff_by_source.py`** (split-only now) reproduces all four per-source files of the plans/22
+run byte-for-byte.
+
+**`nextflow lint .`:** the same 7 errors as before, none new (41 clean files, 2 fewer:
+`consensus_top.nf` and `select_top_sources.nf` were deleted).

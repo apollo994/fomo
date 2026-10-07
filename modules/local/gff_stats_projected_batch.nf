@@ -4,8 +4,8 @@ process GFF_STATS_PROJECTED_BATCH {
 
     // Replaces the old per-source GFF_STATS_PROJECTED + GFF_STATS_PROJECTED_TO_MQC pair
     // (S·T tasks each) with ONE task per (target, feature_type, decoy) that loops over
-    // every source's projected GFF3 for that target, plus the two aggregate models
-    // (allModels_raw, allModels_collapsed). See plans/18_per_target_batching.md — this is
+    // every source's projected GFF3 for that target, plus the allModels_raw aggregate
+    // (allModels_collapsed was removed in plans/23). See plans/18_per_target_batching.md — this is
     // the fix for the Nextflow head OOMs the S·T-scaled task count was causing.
     //
     // The JSON gff-feature-stats writes never leaves this task (no longer a separate,
@@ -21,7 +21,7 @@ process GFF_STATS_PROJECTED_BATCH {
 
     input:
     tuple val(meta), path(gffs)   // every source's *.projected.gff3 for this target, plus
-                                   // the *.raw.gff3 and *.collapsed.gff3 aggregate models
+                                   // the *.raw.gff3 aggregate model
                                    // (see subworkflows/local/projection.nf: ch_projected_batch)
 
     output:
@@ -37,13 +37,12 @@ process GFF_STATS_PROJECTED_BATCH {
     // the exact string the old per-source ext.prefix built by hand from meta
     // (`<target>.from_<source>.<gtype>.projected` — SPLIT_GFF_BY_SOURCE's --name-template
     // and GFF_STATS_PROJECTED's old ext.prefix already agreed on this, see CLAUDE.md's
-    // "merge/split contract"). The two AGGREGATE files do NOT share that convention: they
-    // come from FILTER_ALLMODELS/COMBINED_GTF_TO_GFF, published as
-    // `<target>.allModels.<gtype>.raw|collapsed.gff3` — the old ext.prefix computed their
-    // stats-file name purely from meta (id='allModels_raw'/'allModels_collapsed'),
-    // independent of that input filename. So they are symlinked here, under the same
+    // "merge/split contract"). The AGGREGATE file does NOT share that convention: it
+    // comes from FILTER_ALLMODELS, published as `<target>.allModels.<gtype>.raw.gff3` —
+    // the old ext.prefix computed its stats-file name purely from meta (id='allModels_raw'),
+    // independent of that input filename. So it is symlinked here, under the same
     // '.from_<id>.<gtype>.projected.gff3' convention as the per-source files, using the
-    // two known pseudo-source ids — then one glob + one loop handles all S+2 items
+    // known pseudo-source id — then one glob + one loop handles all S+1 items
     // identically, and no manifest or per-item meta is needed inside the loop itself.
     //
     // The --name given to gff_stats_to_mqc.py is a SEPARATE string from the file prefix:
@@ -63,9 +62,6 @@ process GFF_STATS_PROJECTED_BATCH {
 
     for gff in *.raw.gff3; do
         ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
-    done
-    for gff in *.collapsed.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_collapsed.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
     done
 
     run_one() {
@@ -99,9 +95,6 @@ process GFF_STATS_PROJECTED_BATCH {
     shopt -s nullglob
     for gff in *.raw.gff3; do
         ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
-    done
-    for gff in *.collapsed.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_collapsed.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
     done
     for gff in *.projected.gff3; do
         prefix="\${gff%.gff3}"

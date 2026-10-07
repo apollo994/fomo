@@ -1,7 +1,6 @@
 include { PREPROCESSING      } from '../subworkflows/local/preprocessing'
 include { PROJECTION         } from '../subworkflows/local/projection'
 include { BENCHMARKING       } from '../subworkflows/local/benchmarking'
-include { CONSENSUS_TOP      } from '../subworkflows/local/consensus_top'
 include { CURATION           } from '../subworkflows/local/curation'
 include { REPORTING          } from '../subworkflows/local/reporting'
 include { RUN_SUMMARY        } from '../subworkflows/local/run_summary'
@@ -88,14 +87,6 @@ workflow FOMO {
     // so projections onto an un-annotated target are dropped there.
     BENCHMARKING(ch_targets, PROJECTION.out.gff3, PREPROCESSING.out.filtered_gff3)
 
-    // The top-N consensus is a SUBSET of the all-sources annotation, not a
-    // re-combination of per-source files, so CONSENSUS_TOP takes allModels directly.
-    // Self-pairs are in there; CONSENSUS_TOP drops them from the ranking pool only.
-    CONSENSUS_TOP(
-        PROJECTION.out.allmodels_raw,
-        BENCHMARKING.out.stats,
-        BENCHMARKING.out.target_refs
-    )
 
     // Curated annotation (plans/21): every allModels track — lncRNA, mRNA, decoys — keeps
     // only intron chains shared exactly by >= params.curate_min_species species, minus any
@@ -111,7 +102,6 @@ workflow FOMO {
     ch_all_mqc = PREPROCESSING.out.mqc_files
         .mix(PROJECTION.out.mqc_files)
         .mix(BENCHMARKING.out.mqc_files)
-        .mix(CONSENSUS_TOP.out.mqc_files)
         .mix(CURATION.out.mqc_files)
 
     ch_target_ids = ch_targets.map { meta, _fasta, _gff3 -> meta.id }
@@ -121,7 +111,7 @@ workflow FOMO {
     // them out with.
     REPORTING(
         ch_all_mqc,
-        BENCHMARKING.out.stats.mix(CONSENSUS_TOP.out.stats),
+        BENCHMARKING.out.stats,
         ch_target_ids
     )
 
@@ -137,5 +127,5 @@ workflow FOMO {
         .collectFile(name: 'species_roles.csv', newLine: true, sort: true,
                      seed: 'species,role,has_gff3')
 
-    RUN_SUMMARY(ch_all_mqc, CONSENSUS_TOP.out.top_sources, ch_roles)
+    RUN_SUMMARY(ch_all_mqc, ch_roles)
 }

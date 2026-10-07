@@ -35,8 +35,6 @@ custom_data:
       `is_target` are what it therefore does; `benchmarked` needs role `both` (a pure
       target's GFF3 is its curation reference only). The annotation columns are that species' own input
       annotation, so a pure target with no GFF3 shows NA — not zero.
-      `times_rank1` / `times_in_top_n` count how often the species was picked as a
-      donor, self-pairs excluded.
     plot_type: "table"
     pconfig:
       id: "run_species_table"
@@ -63,15 +61,18 @@ custom_data:
       col1_header: "Species"
   run_target_types:
     file_format: "tsv"
-    section_name: "Targets — annotation before and after projection"
+    section_name: "Targets — genes before and after curation"
     description: >
-      One row per (target × transcript type). `before` is the target's own
-      annotation; `added_*` are the candidate models FOMO projected onto it, from the
-      two collapsed aggregates — `allModels` (every source) and `top3` (the
-      best-scoring sources only, so a subset). `after` is the sum. A target with no
-      GFF3 has no `before` and shows NA there: it can be annotated but not compared.
-      `reads_mapped_percent` is the merged alignment's mapping rate for that class,
-      so a target that simply aligned badly is visible in the same row.
+      One row per (target × transcript type), in GENES. `genes_before` is the
+      target's own reference annotation; `curated_genes` are the genes FOMO adds —
+      intron chains shared exactly by at least `--curate_min_species` source species,
+      none overlapping a reference exon (one representative model per gene).
+      `genes_after` is the sum. A target with no GFF3 has no `genes_before` (NA): it is
+      curated without a reference. `reads_mapped_percent` is the merged alignment's
+      mapping rate for that class. With `--include_decoy`, `curated_decoy_genes` counts
+      decoy chains that still met the species threshold (chance agreement: decoys are
+      relocated per source into intergenic space), and `est_curated_fdr_pct` compares
+      the decoy and real curation rates, each per multi-exon input model.
     plot_type: "table"
     pconfig:
       id: "run_target_types_table"
@@ -79,12 +80,12 @@ custom_data:
       col1_header: "Target / type"
   run_aggregate_accuracy:
     file_format: "tsv"
-    section_name: "Aggregate models — accuracy and consensus gain"
+    section_name: "allModels vs best single donor — accuracy"
     description: >
-      gffcompare transcript-level accuracy per target for the aggregate models, with
-      `best_single_source` (the best real, non-self donor) as the baseline every
-      `delta_f1` is measured against. `raw` is the pooled projection, `collapsed` is
-      that pooled set after the gffcompare collapse. With `--include_decoy` the decoy
+      gffcompare transcript-level accuracy per benchmarked target for `allModels_raw`
+      (every source pooled, the target itself excluded), with `best_single_source`
+      (the best real donor) as the baseline every `delta_f1` is measured against.
+      With `--include_decoy` the decoy
       columns give the false-positive baseline: decoys are source loci relocated into
       the source's own intergenic space, so `est_fdr_pct` is decoy models as a
       percentage of real models — it can exceed 100% when the decoy track is as
@@ -98,27 +99,13 @@ custom_data:
     file_format: "tsv"
     section_name: "Donors — how good is each source, run-wide"
     description: >
-      Per source species, its lncRNA transcript-level F1 across every target it was
-      projected onto (self-pairs excluded — a species scores near-perfectly against
-      itself). `n_rank1` / `n_in_top_n` count top-N selections, which is what
-      actually drives the `top3` consensus.
+      Per source species, its lncRNA transcript-level F1 across every benchmarked
+      target it was projected onto, and how many models it projects per target.
     plot_type: "table"
     pconfig:
       id: "run_donor_ranking_table"
       namespace: "Donors"
       col1_header: "Species"
-  run_top_sources:
-    file_format: "tsv"
-    section_name: "Top-N donors picked per target"
-    description: >
-      The actual top-N selection per target, in rank order, as written by
-      SELECT_TOP_SOURCES and used to build that target's `top3` models. Only
-      benchmarked targets have one — the ranking is derived from gffcompare F1.
-    plot_type: "table"
-    pconfig:
-      id: "run_top_sources_table"
-      namespace: "Top sources"
-      col1_header: "Target"
 
 sp:
   run_overview:
@@ -133,5 +120,3 @@ sp:
     fn: "*run_aggregate_accuracy_mqc.tsv"
   run_donor_ranking:
     fn: "*run_donor_ranking_mqc.tsv"
-  run_top_sources:
-    fn: "*run_top_sources_mqc.tsv"

@@ -768,8 +768,11 @@ def main():
     obs['n_models'] = len(models)
     is_self = [m for m in models if m['species'] == target]
     obs['self_excluded'] = 0 if args.keep_self else len(is_self)
-    if not is_self and not args.keep_self:
-        log(f'note: no models with source={target} (pure target, or set --target)')
+    if is_self and not args.keep_self:
+        # Since plans/23 a species is never aligned to its own genome, so this only fires on
+        # inputs from older runs; they are excluded as before (they would never be support).
+        log(f'warning: {len(is_self):,} self-projected models (source={target}) — input predates '
+            f'plans/23; excluded')
     if not args.keep_self:
         models = [m for m in models if m['species'] != target]
     obs['unstranded'] = sum(m['strand'] not in '+-' for m in models)

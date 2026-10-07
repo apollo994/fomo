@@ -4,8 +4,8 @@ Shared helpers for the FOMO bin/ scripts that read gffcompare `.stats` files:
 the model-identity filename grammar, the aggregate pseudo-source ids, and the
 Sensitivity/Precision parser.
 
-This is a MODULE, not a script — it is imported by `select_top_sources.py`,
-`gffcompare_accuracy_mqc.py` and `run_summary_tables.py`, each of which does
+This is a MODULE, not a script — it is imported by `gffcompare_accuracy_mqc.py`
+and `run_summary_tables.py`, each of which does
 
     import sys
     from pathlib import Path
@@ -17,9 +17,9 @@ Nextflow only puts `bin/` on PATH, not on Python's import path — but it stages
 siblings on every executor. Do not "simplify" that preamble to a bare import.
 
 Why this file exists: the identity regex, AGGREGATE_IDS and the stats parser were
-duplicated across two scripts that MUST agree with each other and with the channel
-filter in `subworkflows/local/consensus_top.nf`. One copy here leaves exactly two
-places to keep in sync — this module and that filter.
+duplicated across scripts that MUST agree with each other and with the pseudo-source
+ids the Nextflow side writes (`allModels_raw`, symlinked by GFFCOMPARE_BATCH and
+GFF_STATS_PROJECTED_BATCH). One copy here leaves one place to keep in sync.
 """
 import os
 import re
@@ -29,11 +29,11 @@ from typing import Dict, NamedTuple, Optional, Tuple
 LEVELS = ["Base", "Exon", "Intron", "Intron_chain", "Transcript", "Locus"]
 
 # Pseudo-source ids standing for an aggregate model rather than a real species. They
-# use the same `from_<id>` filename convention as per-source stats, so a ranking pool
-# must skip them or the top-N would be picked from models built out of the top-N.
-# Kept in sync with the channel filter in subworkflows/local/consensus_top.nf, which
-# filters before this code ever sees a file — this is the second layer.
-AGGREGATE_IDS = ("allModels_raw", "allModels_collapsed", "top3_raw", "top3_collapsed")
+# use the same `from_<id>` filename convention as per-source stats, so per-source
+# tables (the donor accuracy matrix, best-single-source picks) must skip them. Since
+# plans/23 there is one: every source pooled, raw (allModels_collapsed and the top-N
+# consensus were removed).
+AGGREGATE_IDS = ("allModels_raw",)
 
 # <target>.from_<source>.<feature_type>[.decoy], after the .gffcompare.stats suffix
 # is stripped. Species names contain '_' and digits, hence the non-greedy captures
@@ -56,8 +56,8 @@ class Identity(NamedTuple):
 
     @property
     def is_self(self) -> bool:
-        """A species projected onto itself — the Sn/Pr ceiling control, excluded
-        from every ranking pool (see consensus_top.nf's meta.id != meta.target_id)."""
+        """A species projected onto itself. Never produced since plans/23 (self is
+        dropped at alignment); kept so a pre-23 run's stats are still filtered out."""
         return self.source == self.target
 
 
