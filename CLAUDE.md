@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FOMO is a Nextflow DSL2 pipeline that annotates candidate long non-coding RNAs (lncRNAs) on a target genome assembly by transferring lncRNA annotations from source species. Input: target `.fa` assembly + source `.gff3`/`.fa`. Output: `.gff3` of candidate lncRNAs on the target.
 
-Design plans cited as `plans/NN` live in the local `plans/` directory, which is **not tracked** (gitignored); the detailed history of plans 21–23 is kept in the tag `archive/plans-21-23`.
+Design plans cited as `plans/NN` live in the local `plans/` directory, which is **not tracked** in git; the detailed history of plans 21–23 is kept in the tag `archive/plans-21-23`.
 
 When developing pipelines:
 
