@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FOMO is a Nextflow DSL2 pipeline that annotates candidate long non-coding RNAs (lncRNAs) on a target genome assembly by transferring lncRNA annotations from source species. Input: target `.fa` assembly + source `.gff3`/`.fa`. Output: `.gff3` of candidate lncRNAs on the target.
 
+Design plans cited as `plans/NN` live in the local `plans/` directory, which is **not tracked** (gitignored); the detailed history of plans 21–23 is kept in the tag `archive/plans-21-23`.
+
 When developing pipelines:
 
 1. **Always use the Seqera MCP tools** to search nf-core modules before writing custom processes.
@@ -115,8 +117,9 @@ Conceptual stages and their **implementation status**:
 2. **Preprocessing** — prepare spliced sequences and decoy sequences for alignment. ✅ Implemented.
 3. **Projection** — one splice-aware minimap2 alignment of the merged all-sources sequences onto each target, split back per source afterwards. ✅ Implemented.
 4. **Benchmarking** — gffcompare of projected models vs. target reference annotation. ✅ Implemented.
-5. **Validation** — splice-junction validation of projected models. ❌ Not yet implemented (next step, see `BRAINSTORM.md`).
-6. **Reporting** — one MultiQC report per target, plus one run-level summary report. ✅ Implemented.
+5. **Curation** — intron chains shared exactly by ≥ 2 source species, minus reference-overlapping models, merged into the reference (plans/21–22). ✅ Implemented.
+6. **Validation** — splice-junction validation of projected models against target-genome evidence. ❌ Not yet implemented.
+7. **Reporting** — one MultiQC report per target, plus one run-level summary report. ✅ Implemented.
 
 ### Feature tracks (what gets transferred)
 
@@ -323,7 +326,7 @@ Four things that will bite:
 
 ### Preprocessing detail
 
-Each step maps to a legacy script in `legacy_scripts/preprocessing/` which serves as the reference implementation:
+Each step maps to a legacy script that served as the reference implementation (`legacy_scripts/preprocessing/`, no longer in the tree — see git history):
 
 | Step | Legacy script | Tool | Purpose |
 |------|--------------|------|---------|
@@ -333,7 +336,7 @@ Each step maps to a legacy script in `legacy_scripts/preprocessing/` which serve
 | Extract decoy spliced FASTA | `04_get_decoy_sequence_commands.sh` | AGAT | Extract exon sequences from decoy GFF3 |
 | Preprocessing statistics | `05_get_gff_statistics_commands.sh` | AGAT (now `gff-feature-stats`) | Collect GFF stats at each stage |
 
-The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and converts BAM → GFF3 with exon structure.
+The projection stage uses minimap2 (legacy reference: `legacy_scripts/minimap_transfer/`, in git history) and converts BAM → GFF3 with exon structure.
 
 # Key Tools
 - **gffread** - GFF3 manipulation. Prefer this over **AGAT** when possible. 
@@ -381,7 +384,7 @@ The projection stage uses minimap2 (see `legacy_scripts/minimap_transfer/`) and 
     GFF3, which carries the gene in `geneID=` and emits no gene features, reports 0 genes
     (none is produced since plans/23; the curated GFF3s carry real gene rows).
 - **AGAT** — GFF3 manipulation (filtering, longest isoform selection). No longer used by the
-  pipeline; kept as the reference implementation in `legacy_scripts/`.
+  pipeline; the AGAT-based reference implementation (`legacy_scripts/`) survives only in git history.
 - **minimap2** — splice-aware long-read alignment (source spliced FASTA → target)
 - **bedtools** — genomic interval arithmetic
 - **samtools** — BAM handling
