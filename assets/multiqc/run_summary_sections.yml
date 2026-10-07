@@ -17,8 +17,9 @@ custom_data:
     section_name: "Run overview"
     description: >
       What this run was: species per role, how many of them donate annotation
-      (sources), how many receive it (targets), how many of those could be
-      benchmarked (a target needs its own GFF3), the projection pair count, and the
+      (sources), how many receive it (targets), how many of those have a reference
+      annotation (used for curation), how many are benchmarked (role `both`: the
+      gffcompare reference is the filtered annotation only donors have), the projection pair count, and the
       parameters the rest of the report must be read against.
     plot_type: "table"
     pconfig:
@@ -31,8 +32,8 @@ custom_data:
     section_name: "Species — roles and annotation input"
     description: >
       One row per species. `role` is what the samplesheet asked for; `is_source` /
-      `is_target` are what it therefore does; `benchmarked` additionally needs a
-      GFF3 on the target side. The annotation columns are that species' own input
+      `is_target` are what it therefore does; `benchmarked` needs role `both` (a pure
+      target's GFF3 is its curation reference only). The annotation columns are that species' own input
       annotation, so a pure target with no GFF3 shows NA — not zero.
       `times_rank1` / `times_in_top_n` count how often the species was picked as a
       donor, self-pairs excluded.

@@ -29,16 +29,22 @@ donates its annotation *and* receives projections, so one run replaces the N run
 hand-written samplesheets that the pre-multitarget pipeline needed. A species is one row —
 `species` must be unique, and duplicates abort at launch (it keys every join).
 
-`gff3` is **required for `source` and `both`** and **forbidden for a pure `target`** — two
-`allOf`/`if`-`then` rules in the schema; a `target` row with a `gff3` aborts at launch with
-a message pointing to `both` (plans/20). A `gff3` belongs to a species that donates it,
-because the benchmarking reference *is* the source's own filtered annotation (see **The
-filtered-annotation contract**). So the annotated targets are exactly the `both` rows, and
-a species cannot be benchmarked without also donating. A pure target is projected onto and
-gets per-source models plus the `allModels` aggregates, but no gffcompare, no target GFF
-stats, and no top-N consensus (the ranking is derived from gffcompare F1). This falls out
-structurally — it has no filtered annotation, and the projection ⋈ reference join is an
-inner join, so nothing downstream needs a guard.
+`gff3` is **required for `source` and `both`** (an `allOf`/`if`-`then` rule in the schema)
+and **optional for a pure `target`** (plans/22; plans/20 had forbidden it). The two uses
+of a gff3 are different:
+
+- **Benchmarking** needs the species' own *filtered* annotation (see **The
+  filtered-annotation contract**), which only a donor has. So the **benchmarked targets
+  are exactly the `both` rows**, and a species cannot be benchmarked without also donating.
+- **Curation** (plans/21) uses the target's *samplesheet* gff3 as is — to drop overlapping
+  models, tag each curated gene with its reference gene (`ref_gene_*`) and build the merged
+  annotation. Any target with a gff3 gets it, `target` or `both`.
+
+So a pure target **with** a gff3 is curated against it and gets its raw GFF stats in its
+report and in the run summary, but no gffcompare and no top-N consensus; `workflows/fomo.nf`
+logs these targets at launch. A pure target **without** one is curated reference-free
+(`ref_location=no_reference`, no merged file). Neither needs a guard downstream: it has no
+filtered annotation, and the projection ⋈ reference join is an inner join on it.
 
 **Self-pairs (X→X, only possible with `both`) are run, kept in `allModels`, and excluded
 from the top-N ranking pool only.** The projection and its gffcompare are a useful Sn/Pr

@@ -105,6 +105,21 @@ for sp in ('A', 'B'):
     M += model(f'{lo}18far', sp, 'chr5', '+', [(8000, 8100), (8200, 8300)])        # ref (-) ends 6990: 1010 bp > 1000
     M += model(f'{lo}18cv', sp, 'chr5', '+', [(13000, 13100), (13200, 13300)])      # ref (-) downstream: tail-to-tail
     M += model(f'{lo}18dm', sp, 'chr5', '-', [(20000, 20100), (20200, 20300)])      # ref (+) starts 20500: 200 bp
+# 19 (plans/22) nearest reference gene tag on chr6; chr7 has no reference at all
+TAG = {  # rep -> (ref_location, ref_gene_id, ref_gene_name, ref_gene_biotype, orientation, distance)
+    'a61|A': ('intergenic', 'G1', 'GENEONE', 'protein_coding', 'sense', '700'),      # gene Name + gene_biotype
+    'a62|A': ('intergenic', 'G2', 'REFSEQSYM', 'lnc_RNA', 'antisense', '400'),       # RefSeq gene=; biotype from type
+    'a63|A': ('intergenic', 'G2', 'REFSEQSYM', 'lnc_RNA', 'sense', '1700'),          # tie 1700 vs G3 (+): sense wins
+    'a64|A': ('intronic', 'G3', '.', 'lncRNA', 'sense', '0'),                        # exons parented by the gene
+    'a71|A': ('intergenic', '.', '.', '.', '.', '.'),                                # seqid without reference
+}
+for sp in ('A', 'B'):
+    lo = sp.lower()
+    M += model(f'{lo}61', sp, 'chr6', '+', [(2000, 2100), (2200, 2300)])       # G1 (+) ends 1300 -> 700
+    M += model(f'{lo}62', sp, 'chr6', '+', [(4300, 4400), (4500, 4600)])       # G2 (-) starts 5000 -> 400; G1 3000
+    M += model(f'{lo}63', sp, 'chr6', '-', [(7000, 7100), (7200, 7300)])       # G2 (-) ends 5300 / G3 (+) starts 9000
+    M += model(f'{lo}64', sp, 'chr6', '+', [(9120, 9130), (9160, 9180)])       # inside G3's intron 9101-9199
+    M += model(f'{lo}71', sp, 'chr7', '+', [(100, 200), (300, 400)])
 # 15 a supported chain on chr3 (in the reference) to test placement in the merged file
 M += model('a15', 'A', 'chr3', '+', [(100, 200), (300, 400)])
 M += model('b15', 'B', 'chr3', '+', [(100, 200), (300, 400)])
@@ -159,6 +174,17 @@ chr5\tRefSeq\texon\t13700\t13800\t.\t-\t.\tID=exon-cv-2;Parent=rna-cv
 chr5\tRefSeq\tmRNA\t20500\t20800\t.\t+\t.\tID=rna-dm
 chr5\tRefSeq\texon\t20500\t20600\t.\t+\t.\tID=exon-dm-1;Parent=rna-dm
 chr5\tRefSeq\texon\t20700\t20800\t.\t+\t.\tID=exon-dm-2;Parent=rna-dm
+chr6\tRefSeq\tgene\t1000\t1300\t.\t+\t.\tID=G1;Name=GENEONE;gene_biotype=protein_coding
+chr6\tRefSeq\tmRNA\t1000\t1300\t.\t+\t.\tID=t1;Parent=G1;Name=GENEONE-201
+chr6\tRefSeq\texon\t1000\t1100\t.\t+\t.\tID=exon-t1-1;Parent=t1
+chr6\tRefSeq\texon\t1200\t1300\t.\t+\t.\tID=exon-t1-2;Parent=t1
+chr6\tRefSeq\tgene\t5000\t5300\t.\t-\t.\tID=G2
+chr6\tRefSeq\tlnc_RNA\t5000\t5300\t.\t-\t.\tID=t2;Parent=G2;gene=REFSEQSYM
+chr6\tRefSeq\texon\t5000\t5100\t.\t-\t.\tID=exon-t2-1;Parent=t2
+chr6\tRefSeq\texon\t5200\t5300\t.\t-\t.\tID=exon-t2-2;Parent=t2
+chr6\tRefSeq\tgene\t9000\t9300\t.\t+\t.\tID=G3;gene_biotype=lncRNA
+chr6\tRefSeq\texon\t9000\t9100\t.\t+\t.\tID=exon-g3-1;Parent=G3
+chr6\tRefSeq\texon\t9200\t9300\t.\t+\t.\tID=exon-g3-2;Parent=G3
 """
 
 REF_GTF = '\n'.join(
@@ -174,7 +200,14 @@ REF_GTF = '\n'.join(
         ('chr5', '4500', '4600', '-', 'dv', 'protein_coding'), ('chr5', '4700', '4800', '-', 'dv', 'protein_coding'),
         ('chr5', '6500', '6600', '-', 'far', 'lncRNA'), ('chr5', '6800', '6990', '-', 'far', 'lncRNA'),
         ('chr5', '13500', '13600', '-', 'cv', 'protein_coding'), ('chr5', '13700', '13800', '-', 'cv', 'protein_coding'),
-        ('chr5', '20500', '20600', '+', 'dm', 'protein_coding'), ('chr5', '20700', '20800', '+', 'dm', 'protein_coding')]) + '\n'
+        ('chr5', '20500', '20600', '+', 'dm', 'protein_coding'), ('chr5', '20700', '20800', '+', 'dm', 'protein_coding')]) + '\n' + \
+    ''.join('\t'.join([c, 'ens', 'exon', s, e, '.', st, '.', att]) + '\n' for c, s, e, st, att in [
+        ('chr6', '1000', '1100', '+', 'gene_id "G1"; transcript_id "t1"; gene_name "GENEONE"; gene_biotype "protein_coding";'),
+        ('chr6', '1200', '1300', '+', 'gene_id "G1"; transcript_id "t1"; gene_name "GENEONE"; gene_biotype "protein_coding";'),
+        ('chr6', '5000', '5100', '-', 'gene_id "G2"; transcript_id "t2"; gene_name "REFSEQSYM";'),
+        ('chr6', '5200', '5300', '-', 'gene_id "G2"; transcript_id "t2"; gene_name "REFSEQSYM";'),
+        ('chr6', '9000', '9100', '+', 'gene_id "G3"; transcript_id "t3"; gene_type "lncRNA";'),
+        ('chr6', '9200', '9300', '+', 'gene_id "G3"; transcript_id "t3"; gene_type "lncRNA";')])
 
 
 def run(tmp, name, gff_rows, extra, ref=None):
@@ -241,7 +274,7 @@ def main():
     check('a6|A' in rep or 'b6|B' in rep, '6  opposite-strand ref exon does not remove (same-strand rule)')
     check(n.get('genes_location:antisense_exonic') == 1, '6  counted as antisense_exonic')
     check('a7|A' in rep or 'b7|B' in rep, '7  inside a ref intron is kept')
-    check(n.get('genes_location:intronic') == 1, '7  counted as intronic')
+    check(n.get('genes_location:intronic') == 2, '7  counted as intronic (with 19 a64)')
     check('a17l|A' in rep and not any(x in rep for x in ('b17l|B', 'c17f|C', 'd17f|D', 'e17f|E')),
           '17 chain with more SJs (3 SJs, 2 sp) beats one shared by more species (1 SJ, 3 sp); tie -> smallest ID')
     t17 = [a for _, a in tx.values() if a['ID'] == 'a17l|A']
@@ -254,10 +287,24 @@ def main():
     check(all(genes[a['Parent']][1].get('ref_location') == a.get('ref_location') for _, a in tx.values()),
           '18 ref_location identical on gene and transcript rows')
     far = [a for _, a in tx.values() if a['ID'] == 'a18far|A']
-    check(far and far[0].get('ref_distance') == '1010' and far[0].get('ref_nearest') == 'lnc_RNA',
-          '18 intergenic just beyond --divergent-dist: ref_nearest=lnc_RNA, ref_distance=1010')
+    check(far and far[0].get('ref_distance') == '1010' and far[0].get('ref_gene_id') == 'rna-far'
+          and far[0].get('ref_gene_biotype') == 'lnc_RNA' and far[0].get('ref_gene_orientation') == 'antisense',
+          '18 intergenic just beyond --divergent-dist: nearest rna-far (lnc_RNA, antisense), ref_distance=1010')
+    for rid, (lc, gid, nm, bio, ori, dist) in TAG.items():
+        a = next((a for _, a in tx.values() if a['ID'] == rid), {})
+        got = tuple(a.get(k) for k in ('ref_location', 'ref_gene_id', 'ref_gene_name', 'ref_gene_biotype',
+                                       'ref_gene_orientation', 'ref_distance'))
+        check(got == (lc, gid, nm, bio, ori, dist), f'19 {rid} tag {got}')
+    g64 = next((genes[a['Parent']][1] for _, a in tx.values() if a['ID'] == 'a64|A'), {})
+    check(g64.get('ref_gene_id') == 'G3' and g64.get('ref_distance') == '0', '19 gene row carries ref_gene_id + ref_distance')
+    check(not any('ref_nearest' in a for _, a in tx.values()), '19 ref_nearest no longer written')
+    inter = [int(a['ref_distance']) for _, a in tx.values() if a.get('ref_location') == 'intergenic' and a.get('ref_distance') != '.']
+    check(n.get('intergenic_distance_n') == len(inter) and n.get('intergenic_distance_min') == min(inter)
+          and n.get('intergenic_distance_max') == max(inter), f"19 intergenic distance stats ({n.get('intergenic_distance_n')} genes)")
     dv = [a for _, a in tx.values() if a['ID'] == 'a18dv|A']
     check(dv and dv[0].get('ref_distance') == '200', '18 divergent: ref_distance=200')
+    check(dv and dv[0].get('ref_gene_id') == 'rna-dv' and dv[0].get('ref_gene_orientation') == 'antisense',
+          '18 divergent: tagged with its head-to-head partner rna-dv (antisense)')
     check(all(a.get('ref_distance') == '0' for _, a in tx.values() if a.get('ref_location') in
               ('antisense_exonic', 'intronic', 'sense_span_overlap', 'antisense_intronic')), '18 overlapping classes have ref_distance=0')
     loc_tot = sum(v for k, v in n.items() if k.startswith('genes_location:'))
@@ -272,7 +319,7 @@ def main():
     check(d.get('chains_lost_by_type:miRNA') == 1, '16 childless miRNA counted by its span')
     tot_primary = sum(v for k, v in d.items() if k.startswith('chains_lost_by_primary_type:'))
     check(tot_primary == d['supported_chains_lost'], '16 primary-type counts add up to supported_chains_lost')
-    exp_genes = {'b1|B', 'a3|A', 'a4p|A', 'c4q|C', 'a8r2|A', 'm_a|B', 'x%2Cy|B', 'a6|A', 'a7|A', 'a15|A', 'a17l|A'} | set(LOC)
+    exp_genes = {'b1|B', 'a3|A', 'a4p|A', 'c4q|C', 'a8r2|A', 'm_a|B', 'x%2Cy|B', 'a6|A', 'a7|A', 'a15|A', 'a17l|A'} | set(LOC) | set(TAG)
     check(rep == exp_genes, f'expected representatives exactly ({sorted(rep ^ exp_genes)})')
     check(all(a.get('gene_biotype') == 'fomo_lncRNA' for _, a in genes.values()) and
           all(a.get('transcript_biotype') == 'fomo_lncRNA' for _, a in tx.values()), 'biotype fomo_lncRNA on genes and transcripts')
@@ -287,7 +334,8 @@ def main():
     order = [f[0] for f in feat]
     blocks = [c for i, c in enumerate(order) if i == 0 or c != order[i - 1]]
     check(len(blocks) == len(set(blocks)), f'15 merged seqids contiguous ({blocks})')
-    check(blocks == ['chr2', 'chr3', 'chr4', 'chr5', 'chr1'], '15 curated chr2/chr3/chr5 genes inside their seqid block, chr1 appended')
+    check(blocks == ['chr2', 'chr3', 'chr4', 'chr5', 'chr6', 'chr1', 'chr7'],
+          f'15 curated chr2/3/5/6 genes inside their seqid block, chr1/chr7 appended ({blocks})')
     ref_lines = [ln for ln in REF.splitlines() if ln]
     check([ln for ln in lines if '\tfomo\t' not in ln and not ln.startswith('# curate_models')] == ref_lines,
           '15 reference lines verbatim and in order')
@@ -325,6 +373,22 @@ def main():
     check({a['ID'] for _, a in tx4.values()} == exp_genes, '13 GTF reference gives the same curated set')
     loc4 = {a['ID']: a.get('ref_location') for _, a in tx4.values()}
     check(all(loc4.get(k) == v for k, v in LOC.items()), '13 GTF reference gives the same ref_location classes')
+    t4 = {a['ID']: a for _, a in tx4.values()}
+    check(t4['a61|A'].get('ref_gene_name') == 'GENEONE' and t4['a61|A'].get('ref_gene_biotype') == 'protein_coding'
+          and t4['a62|A'].get('ref_gene_name') == 'REFSEQSYM' and t4['a64|A'].get('ref_gene_biotype') == 'lncRNA'
+          and t4['a64|A'].get('ref_gene_id') == 'G3' and t4['a71|A'].get('ref_gene_id') == '.',
+          '19 GTF reference: gene_name / gene_biotype / gene_type and gene_id tags')
+    # the consistency guard exits 1 on a tag that contradicts its class
+    sys.path.insert(0, os.path.dirname(SCRIPT))
+    import curate_models as cm
+    for loc, bad in (('intronic', dict(gene='g', name='.', biotype='.', orientation='sense', distance=5)),
+                     ('antisense_exonic', dict(gene='g', name='.', biotype='.', orientation='sense', distance=0)),
+                     ('divergent', dict(gene='g', name='.', biotype='.', orientation='antisense', distance=5000))):
+        try:
+            cm.check_location(loc, bad, 1000, 'x')
+            check(False, f'19 guard rejects {loc} {bad}')
+        except SystemExit as ex:
+            check(ex.code == 1, f'19 guard rejects {loc} with {bad["orientation"]} / distance {bad["distance"]}')
     # 11 empty input
     r, pre5 = run(tmp, 'empty', [], [], ref)
     check(r.returncode == 0, '11 empty input exits 0')

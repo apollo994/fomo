@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Curate fomo projected models: report intron chains shared exactly by >= N species (plans/21).
 
-Input:  a fomo GFF3 (<target>.allModels.<gtype>.raw.gff3 or any per-source / top3 subset; .gz ok)
+Input:  a fomo GFF3 (<target>.allModels.<gtype>.raw.gff3 or any per-source subset; .gz ok)
         with gene / transcript / exon rows and source=<species> on the transcript, and optionally
         the target's reference annotation (GFF3 or GTF, .gz ok).
 
@@ -26,8 +26,12 @@ Method
      transcript span, no exon overlap) > divergent (no overlap; head-to-head with an opposite-strand
      reference transcript, 5' ends <= --divergent-dist apart) > intergenic; no_reference without
      --ref. A reference transcript span is its first-to-last exon (CDS/UTR or own span if exon-less);
-     unstranded reference rows count on both strands. The transcript also gets ref_nearest (type of
-     the nearest reference transcript, either strand) and ref_distance (bp, 0 when overlapping).
+     unstranded reference rows count on both strands.
+  7. Reference gene tag (with --ref): ref_gene_id / ref_gene_name / ref_gene_biotype /
+     ref_gene_orientation (sense|antisense) / ref_distance (0 = overlapping) on the transcript
+     (id + distance on the gene too) — the gene the ref_location class refers to (overlapping or
+     divergent partner), else the nearest reference gene on either strand. '.' when the seqid has no
+     reference transcript.
 
 Output (--prefix P)
   P.gff3.gz           curated genes (gene + representative transcript + exons)
@@ -204,30 +208,38 @@ def read_models(path):
 
 # ------------------------------------------------------------------ reference
 class RefIndex:
-    """(chr, strand) -> intervals sorted by start, in typed arrays, each with a type label;
-    hits() returns every label overlapping [a, b] (>= 1 bp)."""
+    """(chr, strand) -> intervals sorted by start, in typed arrays, each with a label (any hashable,
+    stored once); hits() returns every label overlapping [a, b] (>= 1 bp).
+
+    Built with add(…, key) where key is a small int chosen by the caller (e.g. the index of the
+    parent transcript); freeze(labels) maps every key to its label in one pass, so the labels —
+    which need the whole reference read first (gene of a transcript) — cost no per-interval memory."""
 
     def __init__(self):
-        self.labels, self._lab = [], {}
+        self.labels = []
         self.build = collections.defaultdict(lambda: (array('l'), array('l'), array('l')))
         self.idx = {}
 
-    def add(self, chrom, strand, s, e, label):
-        li = self._lab.get(label)
-        if li is None:
-            li = self._lab[label] = len(self.labels)
-            self.labels.append(label)
-        st, en, lb = self.build[(chrom, strand)]
+    def add(self, chrom, strand, s, e, key):
+        st, en, kb = self.build[(chrom, strand)]
         st.append(s)
         en.append(e)
-        lb.append(li)
+        kb.append(key)
 
-    def freeze(self):
-        for key, (st, en, lb) in self.build.items():
+    def freeze(self, key_labels):
+        """key_labels: list, key -> label."""
+        lab_idx, kl = {}, []
+        for lab in key_labels:
+            li = lab_idx.get(lab)
+            if li is None:
+                li = lab_idx[lab] = len(self.labels)
+                self.labels.append(lab)
+            kl.append(li)
+        for key, (st, en, kb) in self.build.items():
             order = sorted(range(len(st)), key=st.__getitem__)
             st2 = array('l', (st[k] for k in order))
             en2 = array('l', (en[k] for k in order))
-            lb2 = array('l', (lb[k] for k in order))
+            lb2 = array('l', (kl[kb[k]] for k in order))
             self.idx[key] = (st2, en2, lb2, max(e - s for s, e in zip(st2, en2)) + 1)
         self.build = None
         return self
@@ -280,18 +292,24 @@ class RefIndex:
 
 
 def read_reference(path):
-    """-> (exon RefIndex, transcript-span RefIndex, Counter of interval origins, is GTF).
+    """-> (exon RefIndex, transcript-span RefIndex, Counter of interval origins, is GTF, gene_meta).
 
-    Every exon row counts, labelled by its parent's type (generic types refined by biotype). A
-    transcript-like feature without exons counts by its CDS/UTR rows or, with no children at all,
-    by its own span. Unstranded rows ('.', '?') count on both strands."""
+    Every exon row counts. A transcript-like feature without exons counts by its CDS/UTR rows or,
+    with no children at all, by its own span. Unstranded rows ('.', '?') count on both strands.
+    Both indexes carry the label (type, gene): `type` is the exon's parent type (generic types
+    refined by biotype, e.g. transcript:misc_RNA) and `gene` the top of its Parent chain (GFF3) or
+    its gene_id (GTF). gene_meta: gene -> (name, biotype); name = the gene's Name / gene_name /
+    gene, else the transcript's gene_name / gene, else '.'; biotype = the gene's gene_biotype /
+    biotype / gene_type, else the transcript's type label."""
     gtf = is_gtf(path)
     intern = sys.intern
-    feat = {}                                  # transcript/gene id -> type label
-    pending = []                               # exons / CDS seen before their parent: (pid, kind, chrom, strands, s, e)
+    feat = {}                                  # feature id -> type label
+    parent_of = {}                             # feature id -> first Parent (GFF3)
+    gname, galt, gbio = {}, {}, {}             # id -> Name/gene_name/gene; transcript gene_name/gene; biotype
+    keys, key_ids = {}, []                     # parent id -> int key (interval label key)
     cds = collections.defaultdict(list)        # parent -> CDS/UTR intervals (used only if it has no exon)
     with_exons, has_child, parented = set(), set(), []
-    spans = {}                                 # (parent, chrom, strand) -> (min, max)
+    spans = {}                                 # (key, chrom, strand) -> (min, max)
     ex_idx = RefIndex()
     origin = collections.Counter()
 
@@ -302,13 +320,20 @@ def read_reference(path):
                 return intern(f'{t}:{bt}')
         return intern(t)
 
+    def key_of(pid):
+        k = keys.get(pid)
+        if k is None:
+            k = keys[pid] = len(key_ids)
+            key_ids.append(pid)
+        return k
+
     def add_iv(pid, chrom, strands, s, e):
-        lab = feat.get(pid, 'unknown_parent')
+        k = key_of(pid)
         for st in strands:
-            ex_idx.add(chrom, st, s, e, lab)
-            k = (pid, chrom, st)
-            lo_hi = spans.get(k)
-            spans[k] = (s, e) if lo_hi is None else (min(lo_hi[0], s), max(lo_hi[1], e))
+            ex_idx.add(chrom, st, s, e, k)
+            sk = (k, chrom, st)
+            lo_hi = spans.get(sk)
+            spans[sk] = (s, e) if lo_hi is None else (min(lo_hi[0], s), max(lo_hi[1], e))
 
     with opener(path) as fh:
         for line in fh:
@@ -329,6 +354,13 @@ def read_reference(path):
                     continue
                 if f[2] == 'transcript' or (f[2] == 'exon' and tid not in feat):
                     feat[tid] = lab_of('transcript', a)
+                    gid = a.get('gene_id') or tid
+                    parent_of[tid] = gid
+                    if a.get('gene_name'):
+                        gname.setdefault(gid, a['gene_name'])
+                    bt = a.get('gene_biotype') or a.get('gene_type')
+                    if bt:
+                        gbio.setdefault(gid, bt)
                 if f[2] == 'exon':
                     with_exons.add(tid)
                     add_iv(tid, chrom, strands, s, e)
@@ -339,14 +371,10 @@ def read_reference(path):
             t = f[2]
             if t == 'exon':
                 m = PARENT_RE.search(f[8])
-                parents = m.group(1).split(',') if m else ['<orphan exon>']
                 origin['exon'] += 1
-                for p in parents:
+                for p in (m.group(1).split(',') if m else ['<orphan exon>']):
                     with_exons.add(p)
-                    if p in feat:
-                        add_iv(p, chrom, strands, s, e)
-                    else:
-                        pending.append((p, chrom, strands, s, e))
+                    add_iv(p, chrom, strands, s, e)
                 continue
             if t in CDS_LIKE:
                 m = PARENT_RE.search(f[8])
@@ -355,13 +383,23 @@ def read_reference(path):
                 continue
             a = dict(gff3_attrs(f[8]))
             parents = [p for p in a.get('Parent', '').split(',') if p]
-            if 'ID' in a:
-                feat[a['ID']] = lab_of(t, a)
+            fid = a.get('ID')
+            if fid:
+                feat[fid] = lab_of(t, a)
+                if parents:
+                    parent_of[fid] = parents[0]
+                nm = a.get('Name') or a.get('gene_name') or a.get('gene')
+                if nm:
+                    gname[fid] = nm
+                alt = a.get('gene_name') or a.get('gene')
+                if alt:
+                    galt[fid] = alt
+                bt = a.get('gene_biotype') or a.get('biotype') or a.get('gene_type')
+                if bt:
+                    gbio[fid] = bt
             has_child.update(parents)
-            if parents and 'ID' in a and t not in NOT_TRANSCRIPT and t not in GENE_LEVEL:
-                parented.append((a['ID'], chrom, strands, s, e))
-    for p, chrom, strands, s, e in pending:                     # exons listed before their parent
-        add_iv(p, chrom, strands, s, e)
+            if parents and fid and t not in NOT_TRANSCRIPT and t not in GENE_LEVEL:
+                parented.append((fid, chrom, strands, s, e))
     for p, rows in cds.items():                                 # CDS/UTR of a model without exons
         if p in with_exons:
             continue
@@ -373,10 +411,23 @@ def read_reference(path):
             continue
         add_iv(fid, chrom, strands, s, e)
         origin['childless_feature_span'] += 1
+
+    # resolve every interval key to (type label, gene) now that the whole file is read
+    gene_meta, key_labels = {}, []
+    for pid in key_ids:
+        g, depth = pid, 0
+        while g in parent_of and depth < 10:                    # top of the Parent chain (GTF: gene_id)
+            g = parent_of[g]
+            depth += 1
+        typ = feat.get(pid, 'unknown_parent')
+        if g not in gene_meta:
+            nm = gname.get(g) if g != pid else None             # a transcript's own Name is not a gene name
+            gene_meta[g] = (nm or galt.get(pid) or gname.get(pid) or '.', gbio.get(g) or typ)
+        key_labels.append((typ, g))
     tx_idx = RefIndex()
-    for (p, chrom, st), (lo, hi) in spans.items():
-        tx_idx.add(chrom, st, lo, hi, feat.get(p, 'unknown_parent'))
-    return ex_idx.freeze(), tx_idx.freeze(), origin, gtf
+    for (k, chrom, st), (lo, hi) in spans.items():
+        tx_idx.add(chrom, st, lo, hi, k)
+    return ex_idx.freeze(key_labels), tx_idx.freeze(key_labels), origin, gtf, gene_meta
 
 
 # ------------------------------------------------------------------ gffcompare
@@ -501,30 +552,69 @@ LOCATIONS = ('antisense_exonic', 'intronic', 'sense_span_overlap', 'antisense_in
              'intergenic', 'no_reference')
 
 
-def ref_location(r, ex_idx, tx_idx, divergent_dist):
-    """-> (class, nearest type label or '.', distance or '.') of representative r vs the reference."""
+OVERLAPPING = ('antisense_exonic', 'intronic', 'sense_span_overlap', 'antisense_intronic')
+
+
+def ref_location(r, ex_idx, tx_idx, gene_meta, divergent_dist):
+    """-> (class, ref) of representative r vs the reference. ref = dict(gene, name, biotype,
+    orientation, distance) for the reference gene the class refers to: the gene of the overlapping
+    opposite-strand exon (antisense_exonic), of the innermost containing same-strand transcript
+    (intronic), of an overlapping transcript (sense_span_overlap / antisense_intronic), the
+    head-to-head partner (divergent), or the nearest gene on either strand (intergenic; ties: sense,
+    then gene id). None when the seqid has no reference transcript (or without a reference).
+    Distance: 0 when overlapping, else start/end coordinate difference (adjacent = 1)."""
     if ex_idx is None:
-        return 'no_reference', None, None
+        return 'no_reference', None
     c, strand, ex = r['chr'], r['strand'], r['exons']
     S, E = ex[0][0], ex[-1][1]
     opp = '-' if strand == '+' else '+'
-    near = [n for n in (tx_idx.nearest(c, strand, S, E), tx_idx.nearest(c, opp, S, E)) if n]
-    nb = min(near) if near else None
-    nlab, ndist = (nb[1], nb[0]) if nb else ('.', '.')
-    if any(ex_idx.hits(c, opp, s, e) for s, e in ex):
-        return 'antisense_exonic', nlab, ndist
+
+    def mk(g, orientation, d):
+        name, bio = gene_meta[g]
+        return dict(gene=g, name=name, biotype=bio, orientation=orientation, distance=d)
+
+    anti = {g for s, e in ex for _, g in ex_idx.hits(c, opp, s, e)}
+    if anti:
+        return 'antisense_exonic', mk(min(anti), 'antisense', 0)
     same = tx_idx.intervals(c, strand, S, E)
-    if any(s <= S and e >= E for s, e, _ in same):
-        return 'intronic', nlab, ndist
+    cont = [(e2 - s2, g) for s2, e2, (_, g) in same if s2 <= S and e2 >= E]
+    if cont:
+        return 'intronic', mk(min(cont)[1], 'sense', 0)
     if same:
-        return 'sense_span_overlap', nlab, ndist
-    if tx_idx.intervals(c, opp, S, E):
-        return 'antisense_intronic', nlab, ndist
+        return 'sense_span_overlap', mk(min(g for _, _, (_, g) in same), 'sense', 0)
+    oppov = tx_idx.intervals(c, opp, S, E)
+    if oppov:
+        return 'antisense_intronic', mk(min(g for _, _, (_, g) in oppov), 'antisense', 0)
     # head-to-head: an opposite-strand transcript whose 5' end lies within divergent_dist upstream of ours
-    win = (S - divergent_dist, S - 1) if strand == '+' else (E + 1, E + divergent_dist)
-    if divergent_dist > 0 and tx_idx.intervals(c, opp, *win):
-        return 'divergent', nlab, ndist
-    return 'intergenic', nlab, ndist
+    if divergent_dist > 0:
+        win = (S - divergent_dist, S - 1) if strand == '+' else (E + 1, E + divergent_dist)
+        part = tx_idx.intervals(c, opp, *win)
+        if part:
+            d, g = min(((S - e2) if strand == '+' else (s2 - E), g) for s2, e2, (_, g) in part)
+            return 'divergent', mk(g, 'antisense', d)
+    near = []
+    for st, o in ((strand, 0), (opp, 1)):
+        n = tx_idx.nearest(c, st, S, E)
+        if n:
+            near.append((n[0], o, n[1][1]))
+    if not near:
+        return 'intergenic', None
+    d, o, g = min(near)
+    return 'intergenic', mk(g, 'sense' if o == 0 else 'antisense', d)
+
+
+def check_location(loc, ref, divergent_dist, rid):
+    """Exit 1 if the tag contradicts the class (it cannot by construction; this guards changes)."""
+    ok = True
+    if loc in OVERLAPPING:
+        ok = ref is not None and ref['distance'] == 0 and \
+            ref['orientation'] == ('antisense' if loc.startswith('antisense') else 'sense')
+    elif loc == 'divergent':
+        ok = ref is not None and ref['orientation'] == 'antisense' and 0 < ref['distance'] <= divergent_dist
+    elif loc == 'intergenic':
+        ok = ref is None or ref['distance'] > 0
+    if not ok:
+        die(f'inconsistent reference tag for {rid}: ref_location={loc}, {ref}')
 
 
 # ------------------------------------------------------------------ output
@@ -538,13 +628,19 @@ def gene_blocks(genes, gene_prefix, biotype, track):
         s, e = r['exons'][0][0], r['exons'][-1][1]
         lines = ['\t'.join([r['chr'], 'fomo', 'gene', str(s), str(e), '.', r['strand'], '.',
                             f"ID={esc(gid)};gene_biotype={biotype};n_chains={g['n_chains']};"
-                            f"n_species_gene={g['n_species_gene']};ref_location={g['location']};curated_track={esc(track)}"])]
+                            f"n_species_gene={g['n_species_gene']};ref_location={g['location']}"
+                            + (f";ref_gene_id={esc((g['ref'] or {}).get('gene', '.'))};"
+                               f"ref_distance={(g['ref'] or {}).get('distance', '.')}" if g['location'] != 'no_reference' else '')
+                            + f";curated_track={esc(track)}"])]
         extra = [('transcript_biotype', biotype), ('n_supporting_species', str(len(g['species']))),
                  ('supporting_species', ','.join(esc(x) for x in g['species'])),
                  ('supporting_models', ','.join(esc(m['id']) for m in g['support'])),
                  ('n_sj', str(len(r['chain']))), ('ref_location', g['location'])]
-        if g['nearest'] is not None:
-            extra += [('ref_nearest', esc(g['nearest'])), ('ref_distance', str(g['distance']))]
+        if g['location'] != 'no_reference':
+            ref = g['ref'] or dict(gene='.', name='.', biotype='.', orientation='.', distance='.')
+            extra += [('ref_gene_id', esc(ref['gene'])), ('ref_gene_name', esc(ref['name'])),
+                      ('ref_gene_biotype', esc(ref['biotype'])), ('ref_gene_orientation', ref['orientation']),
+                      ('ref_distance', str(ref['distance']))]
         keys = {k for k, _ in extra}
         rid = r['id']
         a = [('ID', rid), ('Parent', esc(gid))]
@@ -686,16 +782,16 @@ def main():
 
     # reference filter (per model; the overlapped types are kept for the report)
     ref_gtf = False
-    ex_idx = tx_idx = None
+    ex_idx = tx_idx = gene_meta = None
     if args.ref:
-        ex_idx, tx_idx, origin, ref_gtf = read_reference(args.ref)
+        ex_idx, tx_idx, origin, ref_gtf, gene_meta = read_reference(args.ref)
         log(f'reference {args.ref}: ' + ', '.join(f'{v:,} {k}' for k, v in origin.items()))
         for m in models:
             hits = set()
             strands = (m['strand'],) if args.strand == 'same' else ('+', '-')
             for st in strands:
                 for s, e in m['exons']:
-                    hits |= ex_idx.hits(m['chr'], st, s, e)
+                    hits |= {t for t, _ in ex_idx.hits(m['chr'], st, s, e)}
             m['ref_hits'] = hits
     else:
         for m in models:
@@ -755,10 +851,11 @@ def main():
                                        -exonic_len(m), m['de'], m['id']))
         rk = (rep['chr'], rep['strand'], rep['chain'])
         support = sorted((m for m in by_chain[rk] if not m['ref_hits']), key=lambda m: (m['species'], m['id']))
-        loc, nlab, ndist = ref_location(rep, ex_idx, tx_idx, args.divergent_dist)
+        loc, ref = ref_location(rep, ex_idx, tx_idx, gene_meta, args.divergent_dist)
+        check_location(loc, ref, args.divergent_dist, rep['id'])
         genes.append(dict(rep=rep, chains=g, n_chains=len(g), species=sorted(sp_post[rk]), support=support,
                           n_species_gene=len(set().union(*(sp_post[k] for k in g))),
-                          location=loc, nearest=nlab, distance=ndist))
+                          location=loc, ref=ref))
     seq_rank = {c: i for i, c in enumerate(dict.fromkeys(m['chr'] for m in models))}
     genes.sort(key=lambda g: (seq_rank[g['rep']['chr']], g['rep']['exons'][0][0], g['rep']['strand'],
                               g['rep']['exons'][-1][1], g['rep']['id']))
@@ -784,6 +881,10 @@ def main():
     loc_n = collections.Counter(g['location'] for g in genes)
     for c in LOCATIONS:
         nov[f'genes_location:{c}'] = loc_n[c]
+    if args.ref:
+        for k, v in qstats([g['ref']['distance'] for g in genes
+                            if g['location'] == 'intergenic' and g['ref']]).items():
+            nov[f'intergenic_distance_{k}'] = v
 
     # write + validate
     out_plain = args.prefix + '.gff3'

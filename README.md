@@ -8,8 +8,10 @@ target genome assembly by transferring lncRNA annotations from source species.
 
 Each species in the samplesheet can act as a `source` (donates annotation), a `target`
 (receives projections), or `both` — so a single run can cover an all-vs-all comparison
-across many species. A `gff3` is required for `source` and `both` and must be left empty
-for `target`: to benchmark a species against its own annotation, make it `both`.
+across many species. A `gff3` is required for `source` and `both`. A `target` may also give
+one: it is then the reference the curated annotation is filtered against, tagged with and
+merged into, but the target is not benchmarked — to benchmark a species against its own
+annotation, make it `both` (it then also donates).
 
 Pipeline stages:
 

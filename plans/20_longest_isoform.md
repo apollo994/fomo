@@ -46,7 +46,7 @@ strips the known `.<feature>` suffix by length).
 | Tie-break | lexicographically smallest transcript ID (generic, not `Ensembl_canonical`) |
 | One file | ★ `<sp>.<ft>.filtered.gff3` is built **from** the projected FASTA via an id map written at rename time — one extraction, no re-extraction |
 | gffcompare reference | ★ — `FILTER_TARGET` deleted; the reference is longest-isoform **and** TD2-filtered |
-| Pure targets with a `gff3` | **not allowed** — a `target` row with a `gff3` fails samplesheet validation (§4). Only `source`/`both` rows carry an annotation, so ★ exists exactly for the sources and every annotated target is a `both` |
+| Pure targets with a `gff3` | **not allowed** — a `target` row with a `gff3` fails samplesheet validation (§4). Only `source`/`both` rows carry an annotation, so ★ exists exactly for the sources and every annotated target is a `both`. *Superseded by plans/22 (2026-10-07): a pure target may carry a `gff3`, used as its curation reference only; benchmarking stays `both`-only.* |
 | Decoys | relocated from `FILTER_TRANSCRIPT` output (spliced + longest, pre-TD2) — TD2 is irrelevant to a decoy |
 | Results | `sources/<sp>/annotation/` — one per `source`/`both` row |
 | Funnel reporting | new `dropped_non_longest` column, fed by a `FILTER_TRANSCRIPT` counts table |

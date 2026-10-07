@@ -6,6 +6,7 @@ One row per curated track; Sample = <target>.<track> (track = <feature_type>[.de
   <prefix>_curation_discarded_mqc.tsv  (2) discarded by overlap with the reference, chains lost per
                                            primary reference type (with a reference only; otherwise NA)
   <prefix>_curation_novel_mqc.tsv      (3) the novel genes: support, chains, ref_location, medians
+                                           (incl. distance of intergenic genes to the nearest reference gene)
 
 No `# id:` header: the sections are routed by `sp` filename patterns only (assets/multiqc/sections.yml),
 since a file found by both renders twice. Stdlib only.
@@ -54,6 +55,7 @@ def main():
     cols = [(k, nov.get(k, 0)) for k in NOVEL]
     cols += [(f'location:{c}', nov.get(f'genes_location:{c}', 0)) for c in LOCATIONS]
     cols += [(f'median_{m}', nov.get(f'{m}_median')) for m in MEDIANS]
+    cols += [('median_intergenic_distance', nov.get('intergenic_distance_median') if has_ref else None)]
     write(f'{args.prefix}_curation_novel_mqc.tsv', sample, cols)
 
 

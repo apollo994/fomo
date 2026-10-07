@@ -142,7 +142,10 @@ custom_data:
       species, longest, lowest de). Columns: genes by supporting species and by number of
       chains; `location:<class>` relative to the reference (antisense_exonic, intronic,
       sense_span_overlap, antisense_intronic, divergent, intergenic, no_reference); medians
-      of exons, exonic length, genomic span, intron length and de of the representatives.
+      of exons, exonic length, genomic span, intron length and de of the representatives, and
+      the median distance of intergenic genes to their nearest reference gene. Each curated
+      gene names that reference gene in its GFF3 (ref_gene_id / ref_gene_name /
+      ref_gene_biotype / ref_gene_orientation / ref_distance).
     plot_type: "table"
     pconfig:
       id: "curation_novel_table"

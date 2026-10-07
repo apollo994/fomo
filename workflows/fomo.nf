@@ -59,6 +59,17 @@ workflow FOMO {
     ch_sources = ch_input.filter { meta, _fasta, _gff3 -> meta.role in ['source', 'both'] }
     ch_targets = ch_input.filter { meta, _fasta, _gff3 -> meta.role in ['target', 'both'] }
 
+    // A pure 'target' may carry a gff3 (plans/22): it is that target's CURATION reference
+    // (filter overlapping models, tag the nearest reference gene, merged output) and its raw
+    // GFF stats are reported — but it is NOT benchmarked, since the gffcompare reference is the
+    // filtered annotation that only donors have (plans/20). Say so at launch, so a missing
+    // gffcompare section for such a target is not a surprise.
+    def ref_only = rows.findAll { meta, _fa, gff3 -> meta.role == 'target' && gff3 }.collect { meta, _fa, _gff -> meta.id }
+    if (ref_only) {
+        log.info "Targets with a reference annotation used for curation only (not benchmarked — " +
+                 "use role 'both' to benchmark, which also makes them donors): ${ref_only.join(', ')}"
+    }
+
     // Source-side work is entirely target-independent (decoys relocate into the
     // SOURCE's own intergenic space), so this runs once per species — S tasks, not
     // S·T. Do not fan it out per target.

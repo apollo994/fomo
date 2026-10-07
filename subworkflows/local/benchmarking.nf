@@ -18,13 +18,13 @@ workflow BENCHMARKING {
 
     // Benchmarking needs a reference annotation, and the reference IS the species'
     // filtered annotation (spliced, longest isoform, lncRNA TD2-noncoding) — the same
-    // file its own projection was extracted from. Only a source has one, and a gff3
-    // on a pure 'target' row is rejected by assets/schema_input.json, so the annotated
-    // targets are exactly the 'both' rows. The filter states the intent ("this
+    // file its own projection was extracted from. Only a source has one, so the
+    // benchmarked targets are exactly the 'both' rows. The filter states the intent ("this
     // species is a target") rather than hard-coding 'both'. A pure target has no
-    // reference, and its projections are dropped by the inner join below, so no
-    // further guard is needed — no gffcompare, target GFF stats, or top-N consensus
-    // are produced for it.
+    // filtered annotation, and its projections are dropped by the inner join below, so no
+    // further guard is needed — no gffcompare or top-N consensus is produced for it. Since
+    // plans/22 a pure target MAY carry a samplesheet gff3: it is its curation reference
+    // (subworkflows/local/curation.nf) and gets the kind:'raw' stats below, nothing else.
     //
     // The reference is TD2-filtered ON PURPOSE: the query side is too (PROJECTION's
     // projected-lncRNA TD2 pass), so scoring it against an unfiltered reference would

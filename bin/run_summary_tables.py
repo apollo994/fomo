@@ -308,7 +308,11 @@ def section_overview(inp: Inputs, args, summary: dict) -> None:
     roles = inp.roles
     sources = sorted(s for s, r in roles.items() if r["is_source"])
     targets = sorted(s for s, r in roles.items() if r["is_target"])
-    annotated = [t for t in targets if roles[t]["has_gff3"]]
+    # Benchmarked = donor AND target with a gff3 (role 'both'): the gffcompare reference is the
+    # species' filtered annotation, which only donors have. A pure target may carry a gff3 too
+    # (plans/22) — it is then that target's curation reference, but not benchmarked.
+    annotated = [t for t in targets if roles[t]["has_gff3"] and roles[t]["is_source"]]
+    with_reference = [t for t in targets if roles[t]["has_gff3"]]
     self_pairs = [s for s in sources if s in targets]
 
     feature_types = ["lnc_RNA"] + (["mRNA"] if args.include_mrna else [])
@@ -316,11 +320,12 @@ def section_overview(inp: Inputs, args, summary: dict) -> None:
     metrics = [
         ("Species in samplesheet", len(roles)),
         ("… role source (donor only)", sum(1 for r in roles.values() if r["role"] == "source")),
-        ("… role target (annotated only)", sum(1 for r in roles.values() if r["role"] == "target")),
+        ("… role target (projected onto, not a donor)", sum(1 for r in roles.values() if r["role"] == "target")),
         ("… role both (donor and target)", sum(1 for r in roles.values() if r["role"] == "both")),
         ("Sources (S)", len(sources)),
         ("Targets (T)", len(targets)),
-        ("Targets benchmarked (with GFF3)", len(annotated)),
+        ("Targets with a reference annotation (curation)", len(with_reference)),
+        ("Targets benchmarked (role both)", len(annotated)),
         ("Source × target pairs", len(sources) * len(targets)),
         ("… of which self-pairs", len(self_pairs)),
         ("Feature types transferred", ", ".join(feature_types)),
@@ -338,6 +343,7 @@ def section_overview(inp: Inputs, args, summary: dict) -> None:
         "n_sources": len(sources),
         "n_targets": len(targets),
         "n_targets_annotated": len(annotated),
+        "n_targets_with_reference": len(with_reference),
         "n_pairs": len(sources) * len(targets),
         "n_self_pairs": len(self_pairs),
         "feature_types": feature_types,
@@ -394,7 +400,7 @@ def section_species(inp: Inputs, args, summary: dict) -> None:
             "has_gff3": info["has_gff3"],
             "is_source": info["is_source"],
             "is_target": info["is_target"],
-            "benchmarked": info["is_target"] and info["has_gff3"],
+            "benchmarked": info["is_target"] and info["is_source"] and info["has_gff3"],
             "input_genes_total": own["genes_total"],
             "input_lncRNA_transcripts_raw": num((own["raw_row"] or {}).get("n_transcripts")),
             "spliced_kept": num((td2_row or {}).get("n_in")),
