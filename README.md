@@ -8,8 +8,10 @@ target genome assembly by transferring lncRNA annotations from source species.
 
 Each species in the samplesheet can act as a `source` (donates annotation), a `target`
 (receives projections), or `both` — so a single run can cover an all-vs-all comparison
-across many species. A `gff3` is required for `source` and `both` and must be left empty
-for `target`: to benchmark a species against its own annotation, make it `both`.
+across many species. A `gff3` is required for `source` and `both`. A `target` may also give
+one: it is then the reference the curated annotation is filtered against, tagged with and
+merged into, but the target is not benchmarked — to benchmark a species against its own
+annotation, make it `both` (it then also donates).
 
 Pipeline stages:
 
@@ -18,11 +20,14 @@ Pipeline stages:
    extract their sequences from each source, plus optional decoy sequences for a
    false-positive baseline. The result is one filtered annotation per source.
 2. **Projection** — splice-aware alignment (minimap2) of source sequences onto each
-   target genome, converted back to GFF3.
-3. **Benchmarking** — compare projected models against each `both` target's own filtered
-   annotation (gffcompare) to score accuracy per source.
-4. **Consensus** — rank sources by accuracy and build a top-3 consensus annotation per
-   target.
+   target genome, converted back to GFF3. A species is never projected onto itself.
+3. **Benchmarking** — compare `allModels` (every source pooled) and each source's
+   projected models against each `both` target's own filtered annotation (gffcompare).
+4. **Curation** — the consensus: keep only intron chains shared exactly by ≥ 2 source
+   species (`--curate_min_species`), drop models overlapping any exon of the target's
+   reference, report one representative per gene (tagged with its location and nearest
+   reference gene) and merge the result into the reference annotation (`--curate false`
+   skips it).
 5. **Reporting** — one MultiQC report per target, plus one run-level summary report.
 
 ## Usage
@@ -37,7 +42,10 @@ for the samplesheet format (`species,role,fasta,gff3`).
 ## Outputs
 
 ```
-targets/<target>/   alignment/, annotation/, gffcompare/, select_top_sources/, multiqc/
+targets/<target>/   alignment/, annotation/, gffcompare/, multiqc/,
+                    curated/<target>.curated.<gtype>.gff3.gz          — curated genes
+                            <target>.curated.<gtype>.merged.gff3.gz   — reference + curated
+                            <target>.curated.<gtype>.curation.{tsv,json} — curation report
 sources/<source>/   annotation/<source>.<ft>.filtered.gff3 — what was projected from
                     this source (and, for a `both` species, the benchmark reference)
 summary/            multiqc/ (run-level report), tables/

@@ -96,13 +96,20 @@
                     "help_text": "Off by default: single-exon projections (alignments with no splice gap) are discarded by bam_to_gff.sh, since source transcripts are spliced and a single-exon projection is usually a collapsed or spurious mapping. Turn on to retain them.",
                     "fa_icon": "fas fa-stream"
                 },
-                "top_consensus_n": {
+                "curate": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Build the curated annotation: intron chains shared exactly by several species, merged into the reference.",
+                    "help_text": "For every allModels track (lncRNA, and mRNA / decoys when enabled) keep only intron chains shared exactly by at least --curate_min_species source species (the target itself never counts), drop models with an exon overlapping any reference exon on the same strand, group supported chains that share a splice junction into genes and report one representative per gene (most splice junctions, then most species, longest, lowest de). Writes <target>.curated.<gtype>.gff3.gz and, for annotated targets, <target>.curated.<gtype>.merged.gff3.gz (reference + curated genes) under targets/<target>/curated/. See plans/21.",
+                    "fa_icon": "fas fa-check-double"
+                },
+                "curate_min_species": {
                     "type": "integer",
-                    "default": 3,
-                    "minimum": 1,
-                    "description": "Number of top sources (by lncRNA transcript F1) pooled into the consensus annotation.",
-                    "help_text": "Sources are ranked by lncRNA transcript-level F1 from their gffcompare-vs-reference stats; the top N feed a gffcompare-combine consensus of both their lncRNA and mRNA projections (emitted as the 'top3' / from_top3 models). If fewer than N sources exist, all are combined.",
-                    "fa_icon": "fas fa-medal"
+                    "default": 2,
+                    "minimum": 2,
+                    "description": "Minimum number of source species sharing an identical intron chain for it to be reported.",
+                    "help_text": "Support is counted after the reference filter and never includes the target's own projections. Only takes effect with --curate.",
+                    "fa_icon": "fas fa-users"
                 },
                 "td2_psauron_min": {
                     "type": "number",

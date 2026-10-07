@@ -1,7 +1,7 @@
 include { PREPROCESSING      } from '../subworkflows/local/preprocessing'
 include { PROJECTION         } from '../subworkflows/local/projection'
 include { BENCHMARKING       } from '../subworkflows/local/benchmarking'
-include { CONSENSUS_TOP      } from '../subworkflows/local/consensus_top'
+include { CURATION           } from '../subworkflows/local/curation'
 include { REPORTING          } from '../subworkflows/local/reporting'
 include { RUN_SUMMARY        } from '../subworkflows/local/run_summary'
 include { samplesheetToList  } from 'plugin/nf-schema'
@@ -58,6 +58,17 @@ workflow FOMO {
     ch_sources = ch_input.filter { meta, _fasta, _gff3 -> meta.role in ['source', 'both'] }
     ch_targets = ch_input.filter { meta, _fasta, _gff3 -> meta.role in ['target', 'both'] }
 
+    // A pure 'target' may carry a gff3 (plans/22): it is that target's CURATION reference
+    // (filter overlapping models, tag the nearest reference gene, merged output) and its raw
+    // GFF stats are reported — but it is NOT benchmarked, since the gffcompare reference is the
+    // filtered annotation that only donors have (plans/20). Say so at launch, so a missing
+    // gffcompare section for such a target is not a surprise.
+    def ref_only = rows.findAll { meta, _fa, gff3 -> meta.role == 'target' && gff3 }.collect { meta, _fa, _gff -> meta.id }
+    if (ref_only) {
+        log.info "Targets with a reference annotation used for curation only (not benchmarked — " +
+                 "use role 'both' to benchmark, which also makes them donors): ${ref_only.join(', ')}"
+    }
+
     // Source-side work is entirely target-independent (decoys relocate into the
     // SOURCE's own intergenic space), so this runs once per species — S tasks, not
     // S·T. Do not fan it out per target.
@@ -76,14 +87,14 @@ workflow FOMO {
     // so projections onto an un-annotated target are dropped there.
     BENCHMARKING(ch_targets, PROJECTION.out.gff3, PREPROCESSING.out.filtered_gff3)
 
-    // The top-N consensus is a SUBSET of the all-sources annotation, not a
-    // re-combination of per-source files, so CONSENSUS_TOP takes allModels directly.
-    // Self-pairs are in there; CONSENSUS_TOP drops them from the ranking pool only.
-    CONSENSUS_TOP(
-        PROJECTION.out.allmodels_raw,
-        BENCHMARKING.out.stats,
-        BENCHMARKING.out.target_refs
-    )
+
+    // Curated annotation (plans/21): every allModels track — lncRNA, mRNA, decoys — keeps
+    // only intron chains shared exactly by >= params.curate_min_species species, minus any
+    // model overlapping the target's reference, and is merged into that reference. The
+    // reference is the samplesheet GFF3 (ch_targets), not the filtered ★ annotation.
+    // `--curate false` is applied as `ext.when` on CURATE_MODELS (conf/modules.config), not
+    // an `if` here: the process then always exists, so its config selectors never warn.
+    CURATION(PROJECTION.out.allmodels_raw, ch_targets)
 
     // The pipeline-wide union of MultiQC inputs, hoisted because it feeds BOTH
     // reporting paths. A channel read by two consumers is forked by Nextflow, so
@@ -91,7 +102,7 @@ workflow FOMO {
     ch_all_mqc = PREPROCESSING.out.mqc_files
         .mix(PROJECTION.out.mqc_files)
         .mix(BENCHMARKING.out.mqc_files)
-        .mix(CONSENSUS_TOP.out.mqc_files)
+        .mix(CURATION.out.mqc_files)
 
     ch_target_ids = ch_targets.map { meta, _fasta, _gff3 -> meta.id }
 
@@ -100,7 +111,7 @@ workflow FOMO {
     // them out with.
     REPORTING(
         ch_all_mqc,
-        BENCHMARKING.out.stats.mix(CONSENSUS_TOP.out.stats),
+        BENCHMARKING.out.stats,
         ch_target_ids
     )
 
@@ -116,5 +127,5 @@ workflow FOMO {
         .collectFile(name: 'species_roles.csv', newLine: true, sort: true,
                      seed: 'species,role,has_gff3')
 
-    RUN_SUMMARY(ch_all_mqc, CONSENSUS_TOP.out.top_sources, ch_roles)
+    RUN_SUMMARY(ch_all_mqc, ch_roles)
 }

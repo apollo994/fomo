@@ -2,15 +2,15 @@ process GFFCOMPARE_BATCH {
     tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_high'
 
-    // Replaces the old per-source BENCHMARKING:GFFCOMPARE ((F·S·D+2·F·D)·T_g tasks) with
-    // ONE task per (target, feature_type, decoy) that loops S+2 separate single-query
-    // gffcompare invocations — every source plus the two aggregate models — against this
-    // target's one reference. See plans/18_per_target_batching.md.
+    // Replaces the old per-source BENCHMARKING:GFFCOMPARE tasks with ONE task per
+    // (target, feature_type, decoy) that loops separate single-query gffcompare
+    // invocations — every source (never the target itself, plans/23) plus the allModels
+    // raw aggregate — against this target's one reference. See plans/18_per_target_batching.md.
     //
     // Deliberately NOT gffcompare's native multi-query mode (`gffcompare -r ref q1 q2 …`):
-    // that POOLS every query's transcripts into one shared Sn/Pr, but
-    // CONSENSUS_TOP:SELECT_TOP_SOURCES needs a per-source F1 to rank donors
-    // (consensus_top.nf) — a pooled comparison would destroy exactly that signal. Each
+    // that POOLS every query's transcripts into one shared Sn/Pr, but the per-source
+    // accuracy (reports, run-summary donor table) needs one F1 per source — a pooled
+    // comparison would destroy exactly that signal. Each
     // loop iteration is therefore its own complete single-query gffcompare run, under its
     // own `-o` prefix, so its `.stats`/`.tracking`/`.loci`/`.tmap`/`.refmap` are exactly
     // what the un-batched module used to write for that source — only how many times the
@@ -22,7 +22,7 @@ process GFFCOMPARE_BATCH {
 
     input:
     tuple val(meta), path(gffs)          // every source's projected GFF3 for this target,
-                                          // plus the *.raw.gff3 / *.collapsed.gff3 aggregates
+                                          // plus the *.raw.gff3 aggregate
     tuple val(ref_meta), path(reference) // this target's one filtered reference GFF3
                                           // (BENCHMARKING:FILTER_TARGET) — no fasta (-s)
                                           // input, exactly like the un-batched call, which
@@ -47,18 +47,15 @@ process GFFCOMPARE_BATCH {
     // ext.prefix was `<target>.from_<id>.<gtype>[.decoy].gffcompare` — computed purely
     // from meta, WITHOUT a '.projected' segment, unlike GFF_STATS_PROJECTED's old prefix.
     // So the prefix here strips the longer '.projected.gff3' suffix, not just '.gff3'.
-    // The two aggregate files carry no per-file identity of their own at all (see
+    // The aggregate file carries no per-file identity of its own at all (see
     // gff_stats_projected_batch.nf's identical note) — symlinked here to the same
-    // '.from_<id>.<gtype>.projected.gff3' shape as the per-source files, using the two
-    // known pseudo-source ids, so the same suffix-stripping rule applies uniformly.
+    // '.from_<id>.<gtype>.projected.gff3' shape as the per-source files, using the
+    // known pseudo-source id, so the same suffix-stripping rule applies uniformly.
     """
     shopt -s nullglob
 
     for gff in *.raw.gff3; do
         ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
-    done
-    for gff in *.collapsed.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_collapsed.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
     done
 
     run_one() {
@@ -78,9 +75,6 @@ process GFFCOMPARE_BATCH {
     shopt -s nullglob
     for gff in *.raw.gff3; do
         ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
-    done
-    for gff in *.collapsed.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_collapsed.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
     done
     for gff in *.projected.gff3; do
         prefix="\${gff%.projected.gff3}"

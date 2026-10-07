@@ -6,8 +6,6 @@ include { SAMTOOLS_STATS                           } from '../../modules/nf-core
 include { SAMTOOLS_TO_MQC                          } from '../../modules/local/samtools_to_mqc'
 include { BAM_TO_GFF                               } from '../../modules/local/bam_to_gff'
 include { GFF_STATS_PROJECTED_BATCH                } from '../../modules/local/gff_stats_projected_batch'
-include { GFFCOMPARE        as GFFCOMPARE_COMBINE  } from '../../modules/nf-core/gffcompare/main'
-include { GFFREAD           as COMBINED_GTF_TO_GFF } from '../../modules/nf-core/gffread/main'
 include { GFFREAD           as EXTRACT_PROJECTED_LNC } from '../../modules/nf-core/gffread/main'
 include { TD2_NONCODING     as TD2_NONCODING_PROJ  } from './td2_noncoding'
 include { FILTER_GFF_BY_ID  as FILTER_ALLMODELS    } from '../../modules/local/filter_gff_by_id'
@@ -29,9 +27,11 @@ workflow PROJECTION {
     // the assembly file rather than the species; nothing keys off that name.
     MINIMAP2_INDEX(ch_target.map { meta, fa, _gff3 -> tuple(meta, fa) })
 
-    // Per-target reference bundle, keyed by target id: [ target_id, mmi ].
-    // MINIMAP2_ALIGN takes only the index, so no genome travels with it.
-    ch_ref = MINIMAP2_INDEX.out.index.map { meta, mmi -> tuple(meta.id, mmi) }
+    // Per-target reference bundle, keyed by target id: [ target_id, is_source, mmi ].
+    // MINIMAP2_ALIGN takes only the index, so no genome travels with it. `is_source` marks a
+    // 'both' target, whose own sequences are in the merged FASTA and must be dropped at
+    // alignment (no self-projection, plans/23).
+    ch_ref = MINIMAP2_INDEX.out.index.map { meta, mmi -> tuple(meta.id, meta.role == 'both', mmi) }
 
     // ── Merge every source's spliced transcripts, per feature class ───────────
     // One FASTA per gene type — {lnc_RNA, mRNA, lnc_RNA_decoy, mRNA_decoy}, of which
@@ -42,7 +42,7 @@ workflow PROJECTION {
     // `source=` GFF attribute — which is how the per-source view is recovered below.
     //
     // Classes stay separate rather than merging into one global FASTA because every
-    // downstream grouping (consensus, benchmarking, MultiQC ordering) is keyed on
+    // downstream grouping (curation, benchmarking, MultiQC ordering) is keyed on
     // gene type; splitting them back out would need a second demux dimension.
     //
     // This is target-independent — F·D tasks, NOT F·D·T. Do not fan it out per target.
@@ -59,18 +59,22 @@ workflow PROJECTION {
 
     // Fan the merged tracks out over targets: F·D·T alignments. combine() without
     // `by` is a full cartesian product and buffers the right-hand side, so each of
-    // the T references is reused across all F·D tracks. Self-projections are part of
-    // the merged FASTA like any other source — they are the Sn/Pr ceiling control,
-    // and they stay in allModels (they are only excluded from the top-N ranking pool,
-    // in consensus_top.nf).
+    // the T references is reused across all F·D tracks.
+    //
+    // NO SELF-PROJECTION (plans/23): the merged FASTA is shared by every target, so a
+    // 'both' target's own records are in it; `exclude_self` makes MINIMAP2_ALIGN drop them
+    // (by the species field of the header) before aligning. A species is never projected
+    // onto itself — not in allModels, not in the per-source split, not in any decoy track.
+    // When a target's only source is itself the query is empty, minimap2 writes a
+    // header-only BAM, and the "nothing projected" path below takes over.
     //
     // multiMap, not a value channel: with T > 1 the reference must be paired with
     // its own reads task-by-task. A broadcast/.first() reference would silently
     // align every source onto whichever target's index materialised first.
     ch_align = MERGE_SOURCE_FASTA.out.fasta
         .combine(ch_ref)
-        .multiMap { meta, reads, tid, mmi ->
-            reads:     tuple(meta + [id: 'allModels', target_id: tid], reads)
+        .multiMap { meta, reads, tid, is_source, mmi ->
+            reads:     tuple(meta + [id: 'allModels', target_id: tid, exclude_self: is_source], reads)
             reference: tuple([id: tid], mmi)
         }
 
@@ -110,7 +114,7 @@ workflow PROJECTION {
 
     // ── TD2 coding-potential filter on the projected lncRNA ──────────────────
     // Runs ONCE per target (T tasks, not S·T) on the whole all-sources model set —
-    // the split happens after it, so every per-source GFF3 and the consensus inherit
+    // the split happens after it, so every per-source GFF3 and the curated set inherit
     // the same filtering. Real mRNA and all decoys pass through untouched (they still
     // go through FILTER_ALLMODELS with an empty drop list, so that a single process
     // produces every allModels.*.raw.gff3).
@@ -170,64 +174,29 @@ workflow PROJECTION {
     // A pure attribute filter on `source=`, so each output is byte-for-byte the
     // subset of allModels belonging to that species — and, because the input is
     // coordinate-sorted, still grouped by seqid as gff-feature-stats requires.
-    // [] = split mode (the third slot carries a keep-list in subset mode; see
-    // consensus_top.nf).
-    SPLIT_GFF_BY_SOURCE(
-        ch_allmodels_raw.map { meta, gff -> tuple(meta, gff, []) }
-    )
-
-    // ── Collapse the raw model set into a consensus ───────────────────────────
-    // gffcompare in combine mode (no reference annotation) over the SINGLE
-    // allModels GFF3 — it merges transcripts sharing an intron chain, so one input
-    // file holding every source collapses exactly as N per-source files used to.
-    // One consensus per (target, gene type): <target>.allModels.<gtype>.combined.gtf.
-    //
-    // Self-projections are INCLUDED, unlike the pre-single-mapping consensus. The
-    // rule now lives in exactly one place: self is part of allModels, and is
-    // excluded only from the top-N RANKING pool (consensus_top.nf), where it would
-    // otherwise take the #1 F1 slot on every annotated target and turn top3 into a
-    // restatement of the target's own annotation. Do not re-add a self filter here.
-    //
-    // `gtype` rides in on the merge meta (see ch_merged above), so no re-derivation.
-    GFFCOMPARE_COMBINE(
-        ch_allmodels_raw,
-        [[:], [], []],   // no reference sequence  (-s)
-        [[:], []]        // no reference annotation (-r) → pure combine mode
-    )
-
-    // Convert each combined GTF → GFF3 so it matches the rest of the pipeline, and
-    // give it the pseudo-source id 'allModels_collapsed' so it flows through the same
-    // GFF stats / benchmarking naming closures as per-source projections (yielding
-    // "from_allModels_collapsed" rows).
-    COMBINED_GTF_TO_GFF(
-        GFFCOMPARE_COMBINE.out.combined_gtf.map { meta, gtf -> tuple(meta + [id: 'allModels_collapsed'], gtf) },
-        []   // no genome FASTA needed for a pure GTF→GFF3 conversion
-    )
+    SPLIT_GFF_BY_SOURCE(ch_allmodels_raw)
 
     // ── One list per (target, feature_type, decoy): every source's split GFF3 +
-    // the two aggregate models ─────────────────────────────────────────────────
+    // the allModels aggregate ─────────────────────────────────────────────────────
     // Never transposed into individual per-source items — that is the entire point of
     // plans/18_per_target_batching.md. GFF_STATS_PROJECTED_BATCH and (via the `gff3`
     // emit) BENCHMARKING's GFFCOMPARE_BATCH each do ONE task per (target, feature_type,
     // decoy) that loops over the whole list internally, instead of one task per source.
     //
     // Joined on a string key rather than Nextflow's positional combine(by:...), because
-    // the three inputs disagree on tuple shape (SPLIT_GFF_BY_SOURCE's is a List, the two
-    // aggregates are bare paths) — simpler to normalise to (key, meta, List<path>) first.
+    // the two inputs disagree on tuple shape (SPLIT_GFF_BY_SOURCE's is a List, the
+    // aggregate a bare path) — simpler to normalise to (key, meta, List<path>) first.
     // The key expression is repeated inline (not factored into a shared closure) since
-    // the three inputs' metas are structurally identical here but not guaranteed to stay
+    // the two inputs' metas are structurally identical here but not guaranteed to stay
     // that way independently — each `.map` states its own key on the meta it actually has.
     //
     // ch_allmodels_raw is the one side guaranteed present for every (target, feature_type,
     // decoy): FILTER_ALLMODELS writes its output unconditionally (script-level, not a
-    // glob), even when the model set is empty. The other two are NOT guaranteed:
-    //   - SPLIT_GFF_BY_SOURCE emits nothing (optional, see gff_by_source.nf) when
-    //     allModels.raw.gff3 has zero records — nothing from ANY source projected onto
-    //     this target and survived TD2 filtering. Real, seen on divergent targets in a
-    //     large all-vs-all run, not a broken pipeline.
-    //   - COMBINED_GTF_TO_GFF then never runs either, because gffcompare's own
-    //     combine-mode output is `optional: true` upstream (modules/nf-core/gffcompare)
-    //     and an empty allModels.raw.gff3 gives it nothing to collapse.
+    // glob), even when the model set is empty. The split side is NOT guaranteed:
+    // SPLIT_GFF_BY_SOURCE emits nothing (optional, see gff_by_source.nf) when
+    // allModels.raw.gff3 has zero records — nothing from ANY source projected onto this
+    // target and survived TD2 filtering (seen on divergent targets in a large all-vs-all
+    // run; and, since plans/23, a 'both' target whose only source is itself).
     // `join(..., remainder: true)` keeps this target's key anyway (filling the missing
     // side with null) instead of the plain inner-join silently dropping it — which would
     // otherwise make the target vanish from GFF_STATS_PROJECTED_BATCH and (via the `gff3`
@@ -235,15 +204,11 @@ workflow PROJECTION {
     ch_split_list = SPLIT_GFF_BY_SOURCE.out.gff3
         .map { meta, gffs -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gffs instanceof List ? gffs : [gffs]) }
 
-    ch_collapsed_one = COMBINED_GTF_TO_GFF.out.gffread_gff
-        .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gff) }
-
     ch_projected_batch = ch_allmodels_raw
         .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", meta, gff) }
-        .join(ch_split_list,    remainder: true)
-        .join(ch_collapsed_one, remainder: true)
-        .map { _key, meta, rawGff, splitGffs, collapsedGff ->
-            tuple(meta, ([rawGff] + (splitGffs ?: []) + [collapsedGff]).findAll { it })
+        .join(ch_split_list, remainder: true)
+        .map { _key, meta, rawGff, splitGffs ->
+            tuple(meta, ([rawGff] + (splitGffs ?: [])).findAll { it })
         }
 
     // ── Statistics on projected models ───────────────────────────────────────
@@ -267,8 +232,7 @@ workflow PROJECTION {
     emit:
     bam                 = MINIMAP2_ALIGN.out.bam     // [ meta, *.bam     ] × F·D·T (all-sources)
     index               = MINIMAP2_ALIGN.out.index   // [ meta, *.bam.csi ] × F·D·T
-    allmodels_raw       = ch_allmodels_raw           // [ meta(id:'allModels'), *.gff3 ] × F·D·T (self included)
-    allmodels_collapsed = COMBINED_GTF_TO_GFF.out.gffread_gff  // [ meta(id:'allModels_collapsed'), *.gff3 ] × F·D·T
-    gff3                = ch_projected_batch         // [ meta, List<gff3> ] × F·D·T — per target: every source + both aggregates (plans/18)
+    allmodels_raw       = ch_allmodels_raw           // [ meta(id:'allModels'), *.gff3 ] × F·D·T (every source but the target itself)
+    gff3                = ch_projected_batch         // [ meta, List<gff3> ] × F·D·T — per target: every source + allModels raw (plans/18)
     mqc_files           = ch_mqc_files               // [ meta, *_mqc.tsv ] (one table per projected model + samtools + TD2)
 }

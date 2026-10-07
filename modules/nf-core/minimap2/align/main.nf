@@ -38,6 +38,16 @@ process MINIMAP2_ALIGN {
     def samtools_reset_fastq = bam_input ? "samtools reset --threads ${task.cpus-1} $args3 $reads | samtools fastq --threads ${task.cpus-1} $args4 |" : ''
     def query = bam_input ? "-" : reads
     def target = reference ?: (bam_input ? error("Error: minimap2/align BAM input mode requires reference") : reads)
+    // FOMO-local (plans/23): no self-projection. When the target is also a source
+    // (meta.exclude_self, set in subworkflows/local/projection.nf), drop the query records
+    // whose species — the last `|`-field of `>tid|type|species` (RENAME_FASTA_HEADERS) —
+    // is the target itself, so a species is never aligned to its own genome. Written to a
+    // temporary file, not piped into minimap2, for the exit-code reason given below.
+    def drop_self = meta.exclude_self && meta.target_id
+    def query_in  = drop_self ? "${prefix}.query.fa" : query
+    def self_cmd  = drop_self
+        ? "awk -v s='${meta.target_id}' '/^>/ { n = split(substr(\$1, 2), f, \"|\"); keep = (f[n] != s) } keep' ${query} > ${prefix}.query.fa"
+        : ''
     if (bam_format && !bam_input) {
         // FOMO-local deviation from upstream nf-core, scoped to the one shape this
         // pipeline actually calls (subworkflows/local/projection.nf: bam_format=true,
@@ -52,18 +62,20 @@ process MINIMAP2_ALIGN {
         // before samtools sort ever runs — no pipe, nothing to mask. The bam_input /
         // paf branches below are unused by FOMO and keep the original piped form.
         """
+        ${self_cmd}
+
         minimap2 \\
             ${args} \\
             -t ${task.cpus} \\
             ${target} \\
-            ${query} \\
+            ${query_in} \\
             ${cigar_paf} \\
             ${set_cigar_bam} \\
             -a \\
             -o ${prefix}.unsorted.sam
 
         samtools sort -@ ${task.cpus-1} -o ${bam_index} ${args2} ${prefix}.unsorted.sam
-        rm ${prefix}.unsorted.sam
+        rm -f ${prefix}.unsorted.sam ${drop_self ? "${prefix}.query.fa" : ''}
         """
     } else {
         def bam_output = bam_format ? "-a | samtools sort -@ ${task.cpus-1} -o ${bam_index} ${args2}" : "-o ${prefix}.paf"

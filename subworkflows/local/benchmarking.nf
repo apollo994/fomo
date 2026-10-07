@@ -18,13 +18,13 @@ workflow BENCHMARKING {
 
     // Benchmarking needs a reference annotation, and the reference IS the species'
     // filtered annotation (spliced, longest isoform, lncRNA TD2-noncoding) — the same
-    // file its own projection was extracted from. Only a source has one, and a gff3
-    // on a pure 'target' row is rejected by assets/schema_input.json, so the annotated
-    // targets are exactly the 'both' rows. The filter states the intent ("this
+    // file its own projection was extracted from. Only a source has one, so the
+    // benchmarked targets are exactly the 'both' rows. The filter states the intent ("this
     // species is a target") rather than hard-coding 'both'. A pure target has no
-    // reference, and its projections are dropped by the inner join below, so no
-    // further guard is needed — no gffcompare, target GFF stats, or top-N consensus
-    // are produced for it.
+    // filtered annotation, and its projections are dropped by the inner join below, so no
+    // further guard is needed — no gffcompare is produced for it. Since
+    // plans/22 a pure target MAY carry a samplesheet gff3: it is its curation reference
+    // (subworkflows/local/curation.nf) and gets the kind:'raw' stats below, nothing else.
     //
     // The reference is TD2-filtered ON PURPOSE: the query side is too (PROJECTION's
     // projected-lncRNA TD2 pass), so scoring it against an unfiltered reference would
@@ -67,15 +67,13 @@ workflow BENCHMARKING {
         ch_split.reference
     )
 
-    // Re-key each stats file back to its own source (or aggregate pseudo-source) — the
-    // exact same string-slice re-keying projection.nf uses for the GFF3 split (the split
-    // template and this arithmetic must agree; see CLAUDE.md's "merge/split contract").
-    // CONSENSUS_TOP:SELECT_TOP_SOURCES needs this: its ranking filter excludes self and
-    // the aggregate pseudo-sources by `meta.id` BEFORE grouping per target
-    // (consensus_top.nf), so GFFCOMPARE_BATCH's one-shared-meta batch output must be
-    // exploded back into individual (meta, statsFile) pairs first. This is a THIRD place
-    // that must agree with consensus_top.nf's channel filter and fomo_stats.py's
-    // AGGREGATE_IDS (CLAUDE.md's meta-map contract already names the first two).
+    // Re-key each stats file back to its own source (or the `allModels_raw` aggregate
+    // pseudo-source) — the exact same string-slice re-keying projection.nf uses for the
+    // GFF3 split (the split template and this arithmetic must agree; see CLAUDE.md's
+    // "merge/split contract"). REPORTING's accuracy scatter and the run summary want one
+    // point per source, so GFFCOMPARE_BATCH's one-shared-meta batch output is exploded back
+    // into individual (meta, statsFile) pairs here. The id grammar must agree with
+    // fomo_stats.py's AGGREGATE_IDS (CLAUDE.md's meta-map contract).
     ch_stats_persource = GFFCOMPARE_BATCH.out.stats
         .transpose()
         .map { meta, stats ->
@@ -98,8 +96,8 @@ workflow BENCHMARKING {
     GFF_STATS_TARGET(ch_target_stats_gff)
     GFF_STATS_TARGET_TO_MQC(GFF_STATS_TARGET.out.json)
 
-    // The custom accuracy scatter is built in REPORTING (over the union of these
-    // stats and the top-3 consensus stats) so the consensus shows as its own dot.
+    // The custom accuracy scatter is built in REPORTING over these stats (every source +
+    // allModels raw, one dot each).
     ch_mqc_files = ch_stats_persource
         .mix(GFF_STATS_TARGET_TO_MQC.out.tsv)
 
@@ -107,9 +105,9 @@ workflow BENCHMARKING {
     // T_g = targets that supplied a gff3 (everything here scales with T_g, not T).
     // GFFCOMPARE_BATCH itself runs F·D·T_g tasks (plans/18), but the re-keyed stats
     // channel below is unchanged in SHAPE from before batching — one item per source
-    // (or aggregate) per target, same (F·S·D + 2·F·D)·T_g count of individual files.
+    // (or aggregate) per target: F·(S−1)·D + F·D individual files per benchmarked target —
+    // every source but the target itself (no self-projection, plans/23) + allModels raw.
     emit:
-    stats         = ch_stats_persource          // [ meta, *.stats ] × (F·S·D + 2·F·D)·T_g
-    target_refs   = ch_target_refs              // [ meta(id=target, feature_type), gff3 ] × F·T_g
+    stats         = ch_stats_persource          // [ meta, *.stats ] × (F·(S−1)·D + F·D)·T_g
     mqc_files     = ch_mqc_files                // [ meta, path    ] (the stats above + (F+1) GFF_STATS pairs per target: transcript + gene table each)
 }

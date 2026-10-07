@@ -10,9 +10,8 @@ Sensitivity on 0..1 axes — but encodes:
 
   * marker SYMBOL  = feature class  (lncRNA → circle, mRNA → square,
                                      decoy → triangle-up)
-  * marker COLOUR  = source         (one colour per source species, plus one per
-                                     aggregate model: allModels / top3, raw and
-                                     collapsed)
+  * marker COLOUR  = source         (one colour per source species, plus one for
+                                     the allModels raw aggregate)
   * point NAME     = full sample id (so the tooltip is informative)
 
 Input: one or more gffcompare `.stats` files named
@@ -28,7 +27,7 @@ from typing import Dict, List
 # Nextflow only puts bin/ on PATH, not on Python's import path — but it stages the
 # whole directory, so a __file__-relative insert finds the sibling module. The
 # identity grammar, AGGREGATE_IDS, the level list and the stats parser live there
-# because this script and select_top_sources.py must agree on all of them.
+# because this script and run_summary_tables.py must agree on all of them.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fomo_stats import (  # noqa: E402
     AGGREGATE_IDS,
@@ -90,8 +89,8 @@ def main() -> int:
               "accuracy plot", file=sys.stderr)
 
     # Stable colour assignment: the aggregate pseudo-sources first, in the fixed
-    # AGGREGATE_IDS order, then the real species alphabetically — so the four headline
-    # models keep the same colours no matter which species a run happens to include.
+    # AGGREGATE_IDS order, then the real species alphabetically — so the headline
+    # aggregate keeps the same colour no matter which species a run happens to include.
     present = {ident.source for ident, _acc in records}
     sources = [s for s in AGGREGATE_IDS if s in present] + sorted(present - set(AGGREGATE_IDS))
     colour_by_source = {s: PALETTE[i % len(PALETTE)] for i, s in enumerate(sources)}
@@ -123,7 +122,7 @@ def main() -> int:
             "Sensitivity vs Precision per feature level (use the dropdown to "
             "switch level). Marker symbol = feature class "
             "(lncRNA ●, mRNA ■, decoy ▲); colour = source species "
-            "or aggregate model (allModels / top3, each raw and collapsed). "
+            "or the allModels aggregate (every source pooled, raw). "
             "Hover a point for its sample name."
         ),
         "plot_type": "scatter",

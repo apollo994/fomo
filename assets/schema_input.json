@@ -16,7 +16,7 @@
             "role": {
                 "type": "string",
                 "enum": ["source", "target", "both"],
-                "errorMessage": "Role must be 'source' (donor only), 'target' (annotated only, no gff3), or 'both' (donor and target — the all-vs-all case)",
+                "errorMessage": "Role must be 'source' (donor only), 'target' (projected onto, not a donor; an optional gff3 is used only as the curation reference), or 'both' (donor and target, benchmarked against its own annotation — the all-vs-all case)",
                 "meta": ["role"]
             },
             "fasta": {
@@ -43,17 +43,7 @@
                 },
                 "then": {
                     "required": ["gff3"],
-                    "errorMessage": "A row with role 'source' or 'both' donates its annotation and MUST have a gff3. Only a pure 'target' leaves it empty — it is then annotated but not benchmarked (no gffcompare, no top-N consensus)."
-                }
-            },
-            {
-                "if": {
-                    "properties": { "role": { "const": "target" } },
-                    "required": ["role"]
-                },
-                "then": {
-                    "not": { "required": ["gff3"] },
-                    "errorMessage": "A row with role 'target' must leave gff3 empty: a target is only projected onto. To also benchmark it against its own annotation, use role 'both' — note that this makes it a donor to every other target too."
+                    "errorMessage": "A row with role 'source' or 'both' donates its annotation and MUST have a gff3. A pure 'target' may leave it empty, or give its own annotation to be used as the curation reference only (filter overlapping models, tag the nearest reference gene, merged output) — it is not benchmarked; use role 'both' for that, which also makes it a donor."
                 }
             }
         ]

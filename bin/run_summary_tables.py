@@ -7,8 +7,9 @@ run do": species per role, how much annotation went in and how much survived
 filtering, how much each target gained, and which donors are worth using.
 
 Everything is derived from artefacts the pipeline already produces — the
-`*_mqc.tsv` adapter tables, the gffcompare `.stats` files and the top_sources CSVs
-— so this script adds no new measurement, only cross-target arithmetic. Identity
+`*_mqc.tsv` adapter tables (including the curation tables, plans/21) and the
+gffcompare `.stats` files — so this script adds no new measurement, only
+cross-target arithmetic. Identity
 comes from the `Sample` column (the ext.sample_name ladders in conf/modules.config
 encode target/source/class) and from the stats filename grammar in fomo_stats.py.
 Nothing here parses a GFF or a BAM.
@@ -17,13 +18,11 @@ Outputs, in report order (see assets/multiqc/run_summary_main.yml):
   run_overview_mqc.tsv            run overview: roles, pair counts, params
   run_species_mqc.tsv             per species: role + its own annotation input
   run_source_funnel_mqc.{tsv,json} per source: raw → stranded → spliced → longest → non-coding funnel
-  run_target_types_mqc.tsv        per (target × transcript type): before/added/after
-  run_target_before_after_mqc.json  the same, as a stacked bargraph
+  run_target_types_mqc.tsv        per (target × transcript type): genes before / curated / after
+  run_target_before_after_mqc.json  the lncRNA genes, as a stacked bargraph
   run_accuracy_heatmap_{f1,sn,pr}_mqc.json  source × target accuracy matrices
-  run_aggregate_accuracy_mqc.{tsv,json}  aggregate models vs best single donor
-  run_donor_ranking_mqc.tsv       per source: F1 across targets, top-N picks
-  run_donor_picks_mqc.json        top-N picks per species, as a bargraph
-  run_top_sources_mqc.tsv         the actual rank_1..rank_N per target
+  run_aggregate_accuracy_mqc.{tsv,json}  allModels (every source, raw) vs best single donor
+  run_donor_ranking_mqc.tsv       per source: F1 across targets
   run_summary.json                every number above, machine-readable
 """
 import argparse
@@ -134,7 +133,7 @@ def write_json(name: str, doc: dict) -> None:
 class Inputs:
     """Everything the run produced, indexed by identity rather than by filename."""
 
-    def __init__(self, mqc_dir: Path, roles_csv: Path, top_source_files: Sequence[Path]):
+    def __init__(self, mqc_dir: Path, roles_csv: Path):
         files = sorted(p for p in mqc_dir.rglob("*") if p.is_file())
         self._assert_unique(files)
 
@@ -151,9 +150,11 @@ class Inputs:
         self.filter_rows = read_tsvs(pick("_transcript_filter_mqc.tsv"))
         self.align_rows = read_tsvs(pick("_samtools_align_mqc.tsv"))
         self.stats_files = pick(".gffcompare.stats")
+        # CURATE_MODELS (plans/21): one row per (target, track); Sample = <target>.<ft>[.decoy]
+        self.curation_novel_rows = read_tsvs(pick("_curation_novel_mqc.tsv"))
+        self.curation_observed_rows = read_tsvs(pick("_curation_observed_mqc.tsv"))
 
         self.roles = self._read_roles(roles_csv)
-        self.top_sources = self._read_top_sources(top_source_files)
 
         print(
             "run_summary: staged "
@@ -162,7 +163,7 @@ class Inputs:
             f"{len(self.filter_rows)} transcript-filter, "
             f"{len(self.align_rows)} alignment rows; "
             f"{len(self.stats_files)} gffcompare stats; "
-            f"{len(self.top_sources)} top_sources",
+            f"{len(self.curation_novel_rows)} curation tracks",
             file=sys.stderr,
         )
 
@@ -200,14 +201,25 @@ class Inputs:
         return roles
 
     @staticmethod
-    def _read_top_sources(paths: Sequence[Path]) -> Dict[str, List[str]]:
-        """{target: [source, …] in rank order} from <target>.top_sources.csv."""
-        picks: Dict[str, List[str]] = {}
-        for path in paths:
-            target = path.name[: -len(".top_sources.csv")]
-            with path.open(encoding="utf-8") as fh:
-                picks[target] = [r["source"] for r in csv.DictReader(fh)]
-        return picks
+    def _curation_key(sample: str) -> Optional[tuple]:
+        """`<target>.<feature_type>[.decoy]` → (target, feature_type, decoy), suffixes
+        stripped by length (species ids may contain anything but '.')."""
+        decoy = sample.endswith(".decoy")
+        rest = sample[: -len(".decoy")] if decoy else sample
+        for ft in ("lnc_RNA", "mRNA"):
+            if rest.endswith("." + ft):
+                return rest[: -len(ft) - 1], ft, decoy
+        return None
+
+    def curation_index(self) -> Dict[tuple, dict]:
+        """{(target, feature_type, decoy): {**novel row, **observed row}}."""
+        index: Dict[tuple, dict] = {}
+        for row in self.curation_observed_rows + self.curation_novel_rows:
+            key = self._curation_key(row["Sample"])
+            if key is None:
+                sys.exit(f"ERROR: unparseable curation Sample '{row['Sample']}' in {row['__file']}")
+            index.setdefault(key, {}).update(row)
+        return index
 
     # ── indexed views ──────────────────────────────────────────────────────────
     def annotation_index(self) -> Dict[tuple, dict]:
@@ -308,24 +320,28 @@ def section_overview(inp: Inputs, args, summary: dict) -> None:
     roles = inp.roles
     sources = sorted(s for s, r in roles.items() if r["is_source"])
     targets = sorted(s for s, r in roles.items() if r["is_target"])
-    annotated = [t for t in targets if roles[t]["has_gff3"]]
-    self_pairs = [s for s in sources if s in targets]
+    # Benchmarked = donor AND target with a gff3 (role 'both'): the gffcompare reference is the
+    # species' filtered annotation, which only donors have. A pure target may carry a gff3 too
+    # (plans/22) — it is then that target's curation reference, but not benchmarked.
+    annotated = [t for t in targets if roles[t]["has_gff3"] and roles[t]["is_source"]]
+    with_reference = [t for t in targets if roles[t]["has_gff3"]]
+    # No self-projection (plans/23): a 'both' species is never projected onto itself.
+    n_pairs = len(sources) * len(targets) - sum(1 for s in sources if s in targets)
 
     feature_types = ["lnc_RNA"] + (["mRNA"] if args.include_mrna else [])
 
     metrics = [
         ("Species in samplesheet", len(roles)),
         ("… role source (donor only)", sum(1 for r in roles.values() if r["role"] == "source")),
-        ("… role target (annotated only)", sum(1 for r in roles.values() if r["role"] == "target")),
+        ("… role target (projected onto, not a donor)", sum(1 for r in roles.values() if r["role"] == "target")),
         ("… role both (donor and target)", sum(1 for r in roles.values() if r["role"] == "both")),
         ("Sources (S)", len(sources)),
         ("Targets (T)", len(targets)),
-        ("Targets benchmarked (with GFF3)", len(annotated)),
-        ("Source × target pairs", len(sources) * len(targets)),
-        ("… of which self-pairs", len(self_pairs)),
+        ("Targets with a reference annotation (curation)", len(with_reference)),
+        ("Targets benchmarked (role both)", len(annotated)),
+        ("Source × target pairs (no self-projection)", n_pairs),
         ("Feature types transferred", ", ".join(feature_types)),
         ("Decoy track (--include_decoy)", args.include_decoy),
-        ("Top-N consensus (--top_consensus_n)", args.top_n),
         ("PSAURON cutoff (--td2_psauron_min)", args.psauron_min),
     ]
     write_tsv("run_overview_mqc.tsv", ["Metric", "Value"], metrics)
@@ -338,12 +354,11 @@ def section_overview(inp: Inputs, args, summary: dict) -> None:
         "n_sources": len(sources),
         "n_targets": len(targets),
         "n_targets_annotated": len(annotated),
-        "n_pairs": len(sources) * len(targets),
-        "n_self_pairs": len(self_pairs),
+        "n_targets_with_reference": len(with_reference),
+        "n_pairs": n_pairs,
         "feature_types": feature_types,
         "include_mrna": args.include_mrna,
         "include_decoy": args.include_decoy,
-        "top_consensus_n": args.top_n,
         "td2_psauron_min": args.psauron_min,
     }
     summary["sources"] = sources
@@ -373,17 +388,9 @@ def _own_annotation(species: str, role_info: dict, ann: Dict[tuple, dict],
 def section_species(inp: Inputs, args, summary: dict) -> None:
     ann, genes, td2 = inp.annotation_index(), inp.gene_index(), inp.td2_index()
 
-    rank1 = defaultdict(int)
-    in_top = defaultdict(int)
-    for picks in inp.top_sources.values():
-        for i, source in enumerate(picks):
-            in_top[source] += 1
-            if i == 0:
-                rank1[source] += 1
-
     header = ["Sample", "role", "has_gff3", "is_source", "is_target", "benchmarked",
               "input_genes_total", "input_lncRNA_transcripts_raw", "spliced_kept",
-              "td2_coding_dropped", "lncRNA_donated", "times_rank1", "times_in_top_n"]
+              "td2_coding_dropped", "lncRNA_donated"]
     rows, records = [], {}
     for species in sorted(inp.roles):
         info = inp.roles[species]
@@ -394,14 +401,12 @@ def section_species(inp: Inputs, args, summary: dict) -> None:
             "has_gff3": info["has_gff3"],
             "is_source": info["is_source"],
             "is_target": info["is_target"],
-            "benchmarked": info["is_target"] and info["has_gff3"],
+            "benchmarked": info["is_target"] and info["is_source"] and info["has_gff3"],
             "input_genes_total": own["genes_total"],
             "input_lncRNA_transcripts_raw": num((own["raw_row"] or {}).get("n_transcripts")),
             "spliced_kept": num((td2_row or {}).get("n_in")),
             "td2_coding_dropped": num((td2_row or {}).get("n_coding")),
             "lncRNA_donated": num((td2_row or {}).get("n_kept")),
-            "times_rank1": rank1.get(species, 0) if info["is_source"] else None,
-            "times_in_top_n": in_top.get(species, 0) if info["is_source"] else None,
         }
         records[species] = record
         rows.append([species] + [record[k] for k in header[1:]])
@@ -515,97 +520,86 @@ def section_source_funnel(inp: Inputs, args, summary: dict) -> None:
 
 
 def section_targets(inp: Inputs, args, summary: dict) -> None:
-    ann, projections, align = inp.annotation_index(), inp.projection_index(), inp.alignment_index()
+    """Per (target × transcript type): genes already annotated, curated genes FOMO adds
+    (plans/21: intron chains shared by >= 2 species, none overlapping the reference), and
+    the sum. Counted in GENES on both sides — a curated gene is one representative model,
+    and the reference count is its gene count (isoforms would inflate 'before')."""
+    ann, cur, align = inp.annotation_index(), inp.curation_index(), inp.alignment_index()
     targets = sorted(s for s, r in inp.roles.items() if r["is_target"])
-    # Only the ENABLED tracks can gain models. A type FOMO does not transfer gains a
-    # known zero; an enabled type with no projection row is a genuine unknown (NA).
+    # Only the ENABLED tracks are curated. A type FOMO does not transfer gains a known
+    # zero; an enabled type without a curation row is a genuine unknown (NA).
     enabled = {"lnc_RNA"} | ({"mRNA"} if args.include_mrna else set())
 
-    def models(target: str, model: str, token: str) -> Optional[float]:
-        rows = projections.get((target, model, token))
-        if not rows:
-            return None
-        return add(*[num(r.get("n_transcripts")) or 0.0 for r in rows])
+    def curated(target: str, ft: str, decoy: bool, key: str = "genes") -> Optional[float]:
+        row = cur.get((target, ft, decoy))
+        return None if row is None else num(row.get(key))
 
-    header = ["Sample", "target", "transcript_type", "before",
-              "added_allModels_collapsed", "added_top3_collapsed",
-              "after_allModels", "after_top3",
-              "pct_increase_allModels", "pct_increase_top3", "reads_mapped_percent"]
+    header = ["Sample", "target", "transcript_type", "genes_before", "curated_genes",
+              "genes_after", "pct_increase", "reads_mapped_percent"]
+    if args.include_decoy:
+        # Decoys are relocated per source into intergenic space, so a decoy curated gene is
+        # a chance cross-species agreement. Normalised per multi-exon input model, because
+        # decoy_cap makes the decoy and real inputs different sizes.
+        header += ["curated_decoy_genes", "est_curated_fdr_pct"]
     rows, records = [], defaultdict(dict)
-    bar_all, bar_top = {}, {}
+    bar = {}
 
     for target in targets:
-        annotated = inp.roles[target]["has_gff3"]
-        # Types present in the target's own annotation, plus the classes that
-        # received projections (an un-annotated target only has the latter).
-        types = sorted({
-            key[3] for key in ann
-            if key[0] == target and key[1] == "target" and key[2] == "1_raw"
-        })
-        for ttype in TYPE_TO_TOKEN:
-            if ttype not in types and models(target, "allModels_collapsed", TYPE_TO_TOKEN[ttype]):
-                types.append(ttype)
-        types = sorted(set(types))
-
-        for ttype in types:
-            token = TYPE_TO_TOKEN.get(ttype) if ttype in enabled else None
-            before = num((ann.get((target, "target", "1_raw", ttype)) or {}).get("n_transcripts")) \
-                if annotated else None
-            if token is None:
-                added_all = added_top = 0.0
+        has_ref = inp.roles[target]["has_gff3"]
+        types = {key[3] for key in ann if key[0] == target and key[1] == "target" and key[2] == "1_raw"}
+        types |= {ft for (t, ft, d) in cur if t == target and not d}
+        for ttype in sorted(types):
+            before = num((ann.get((target, "target", "1_raw", ttype)) or {}).get("n_genes")) \
+                if has_ref else None
+            if ttype not in enabled:
+                added = 0.0
             else:
-                added_all = models(target, "allModels_collapsed", token)
-                added_top = models(target, "top3_collapsed", token)
-            mapped = None
-            if token:
-                mapped = num((align.get((target, token)) or {}).get("reads_mapped_percent"))
-
+                added = curated(target, ttype, False)
+            token = TYPE_TO_TOKEN.get(ttype) if ttype in enabled else None
+            mapped = num((align.get((target, token)) or {}).get("reads_mapped_percent")) if token else None
             record = {
                 "target": target,
                 "transcript_type": ttype,
-                "before": before,
-                "added_allModels_collapsed": added_all,
-                "added_top3_collapsed": added_top,
-                "after_allModels": add(before, added_all),
-                "after_top3": add(before, added_top),
-                "pct_increase_allModels": pct(added_all, before),
-                "pct_increase_top3": pct(added_top, before),
+                "genes_before": before,
+                "curated_genes": added,
+                "genes_after": add(before, added) if has_ref else added,
+                "pct_increase": pct(added, before),
                 "reads_mapped_percent": mapped,
             }
+            if args.include_decoy:
+                decoy = curated(target, ttype, True) if ttype in enabled else None
+                real_in = curated(target, ttype, False, "multi_exon_models")
+                decoy_in = curated(target, ttype, True, "multi_exon_models")
+                rate_real = None if added is None or not real_in else added / real_in
+                rate_decoy = None if decoy is None or not decoy_in else decoy / decoy_in
+                record["curated_decoy_genes"] = decoy
+                record["est_curated_fdr_pct"] = (
+                    None if rate_real in (None, 0) or rate_decoy is None else 100.0 * rate_decoy / rate_real)
             records[target][ttype] = record
             rows.append([f"{target}.{ttype}"] + [record[k] for k in header[1:]])
 
-        # The bargraph is the headline: existing lncRNA vs what FOMO added.
         lnc = records[target].get("lnc_RNA", {})
-        existing = lnc.get("before") or 0.0
-        if lnc.get("added_allModels_collapsed") is not None:
-            bar_all[target] = {"existing_lncRNA": existing,
-                               "new_candidates": lnc["added_allModels_collapsed"]}
-        if lnc.get("added_top3_collapsed") is not None:
-            bar_top[target] = {"existing_lncRNA": existing,
-                               "new_candidates": lnc["added_top3_collapsed"]}
+        if lnc.get("curated_genes") is not None:
+            bar[target] = {"existing_lncRNA_genes": lnc.get("genes_before") or 0.0,
+                           "curated_lncRNA_genes": lnc["curated_genes"]}
 
     write_tsv("run_target_types_mqc.tsv", header, rows)
     write_json("run_target_before_after_mqc.json", {
         "id": "run_target_before_after",
-        "section_name": "Targets — lncRNA before and after FOMO",
+        "section_name": "Targets — lncRNA genes before and after FOMO",
         "description": (
-            "Per target: lncRNA already annotated versus candidate lncRNA added by "
-            "FOMO, for each collapsed aggregate (switch datasets above the plot). "
-            "`allModels` pools every source; `top3` pools only the best-scoring ones, "
-            "so it is a subset. A target with no annotation of its own starts at zero."
+            "Per target: lncRNA genes already in its reference annotation versus the curated "
+            "lncRNA genes FOMO adds — intron chains shared exactly by at least "
+            "--curate_min_species source species, none overlapping a reference exon. A "
+            "target without a reference annotation starts at zero."
         ),
         "plot_type": "bargraph",
         "pconfig": {
             "id": "run_target_before_after_bargraph",
-            "title": "FOMO: target lncRNA before and after",
-            "ylab": "transcripts",
-            "data_labels": [
-                {"name": "allModels (every source)", "ylab": "transcripts"},
-                {"name": "top3 (best sources)", "ylab": "transcripts"},
-            ],
+            "title": "FOMO: target lncRNA genes before and after curation",
+            "ylab": "genes",
         },
-        "data": [bar_all, bar_top],
+        "data": bar,
     })
     summary["targets_before_after"] = {t: dict(v) for t, v in records.items()}
 
@@ -620,8 +614,7 @@ def section_heatmap(inp: Inputs, args, summary: dict) -> None:
     # matrices makes the whole report fail with "No analysis results found" (verified
     # against the 1.35 container). Bargraphs DO accept multi-dataset — heatmaps do not.
     METRICS = [
-        ("f1", "F1", "F1 (the harmonic mean of the two below, and the score the "
-                     "top-N ranking uses)"),
+        ("f1", "F1", "F1 (the harmonic mean of the two below)"),
         ("sn", "Sensitivity", "Sensitivity — how much of the target's real annotation "
                               "the projection recovered"),
         ("pr", "Precision", "Precision — how much of the projection is real "
@@ -630,9 +623,8 @@ def section_heatmap(inp: Inputs, args, summary: dict) -> None:
     shared = (
         "lncRNA transcript-level gffcompare accuracy for each source → target "
         "projection. A blank cell means that pair was not benchmarked — the target "
-        "has no annotation of its own to compare against. The diagonal, where a "
-        "species is projected onto itself, is the ceiling control: it is what a "
-        "perfect donor would score, and it is excluded from every ranking."
+        "is not benchmarked (only role `both` targets are). The diagonal is always "
+        "blank: a species is never projected onto itself (plans/23)."
     )
 
     records: Dict[str, dict] = {}
@@ -689,9 +681,8 @@ def section_aggregates(inp: Inputs, args, summary: dict) -> None:
     rows, plot, records = [], {}, defaultdict(dict)
     for target in targets:
         for ft in feature_types:
-            # Baseline: the best real, non-self donor. Self is excluded for the same
-            # reason consensus_top.nf excludes it from the ranking pool — a species
-            # against itself is a near-perfect copy and would flatter nothing else.
+            # Baseline: the best real donor. (`source != target` only matters for a pre-23
+            # run that still carried self-projections — a near-perfect copy of itself.)
             candidates = {
                 source: cell["f1"]
                 for (tgt, source, feat, decoy), cell in acc.items()
@@ -743,12 +734,11 @@ def section_aggregates(inp: Inputs, args, summary: dict) -> None:
     write_tsv("run_aggregate_accuracy_mqc.tsv", header, rows)
     write_json("run_aggregate_accuracy_mqc.json", {
         "id": "run_aggregate_accuracy_plot",
-        "section_name": "Aggregate models — lncRNA F1 per target",
+        "section_name": "allModels vs best single donor — lncRNA F1 per target",
         "description": (
             "lncRNA transcript-level F1 per target for the best single donor and for "
-            "each aggregate model, side by side. This is the consensus question: does "
-            "pooling every source (allModels), or only the top-N (top3), beat the best "
-            "single donor — and does the gffcompare collapse help or hurt."
+            "allModels (every source pooled, raw), side by side: does pooling every "
+            "donor beat the best single one?"
         ),
         "plot_type": "bargraph",
         "pconfig": {
@@ -764,21 +754,15 @@ def section_aggregates(inp: Inputs, args, summary: dict) -> None:
 
 
 def section_donors(inp: Inputs, args, summary: dict) -> None:
+    """Per source: lncRNA transcript F1 across the benchmarked targets, and how many
+    models it projects per target (self-pairs never exist since plans/23)."""
     acc, projections = inp.accuracy(), inp.projection_index()
     sources = sorted(s for s, r in inp.roles.items() if r["is_source"])
 
-    rank1, in_top = defaultdict(int), defaultdict(int)
-    for picks in inp.top_sources.values():
-        for i, source in enumerate(picks):
-            in_top[source] += 1
-            if i == 0:
-                rank1[source] += 1
-
     header = ["Sample", "mean_f1", "median_f1", "best_f1", "n_targets_scored",
-              "n_rank1", "n_in_top_n", "mean_models_projected"]
+              "mean_models_projected"]
     rows, records = [], {}
     for source in sources:
-        # Self-pairs excluded everywhere in this table (see consensus_top.nf).
         scores = [
             cell["f1"] for (target, src, ft, decoy), cell in acc.items()
             if src == source and ft == "lnc_RNA" and not decoy and target != source
@@ -794,46 +778,13 @@ def section_donors(inp: Inputs, args, summary: dict) -> None:
             "median_f1": statistics.median(scores) if scores else None,
             "best_f1": max(scores) if scores else None,
             "n_targets_scored": len(scores),
-            "n_rank1": rank1.get(source, 0),
-            "n_in_top_n": in_top.get(source, 0),
             "mean_models_projected": statistics.fmean(counts) if counts else None,
         }
         records[source] = record
         rows.append([source] + [record[k] for k in header[1:]])
 
     write_tsv("run_donor_ranking_mqc.tsv", header, rows)
-    write_json("run_donor_picks_mqc.json", {
-        "id": "run_donor_picks",
-        "section_name": "Donors — how often each source was picked",
-        "description": (
-            "How many targets picked each source into their top-N consensus, split by "
-            "whether it ranked first. A source that is never picked contributes "
-            "nothing to any `top3` model."
-        ),
-        "plot_type": "bargraph",
-        "pconfig": {
-            "id": "run_donor_picks_bargraph",
-            "title": "FOMO: top-N donor selections per species",
-            "ylab": "targets",
-            "cpswitch_counts_label": "Targets",
-        },
-        "data": {
-            s: {"picked_rank1": rank1.get(s, 0),
-                "picked_rank2plus": in_top.get(s, 0) - rank1.get(s, 0)}
-            for s in sources
-        },
-    })
     summary["donors"] = records
-
-    # The actual selection per target, in rank order.
-    width = max([len(p) for p in inp.top_sources.values()] or [0]) or args.top_n
-    top_header = ["Sample"] + [f"rank_{i + 1}" for i in range(width)]
-    top_rows = []
-    for target in sorted(inp.top_sources):
-        picks = inp.top_sources[target]
-        top_rows.append([target] + [picks[i] if i < len(picks) else NA for i in range(width)])
-    write_tsv("run_top_sources_mqc.tsv", top_header, top_rows)
-    summary["top_sources"] = inp.top_sources
 
 
 # ── entry point ─────────────────────────────────────────────────────────────────
@@ -847,11 +798,8 @@ def parse_args() -> argparse.Namespace:
                    help="directory holding the staged pipeline-wide MultiQC inputs")
     p.add_argument("--roles", required=True, type=Path,
                    help="species_roles.csv (species,role,has_gff3)")
-    p.add_argument("--top-sources", nargs="*", type=Path, default=[],
-                   help="<target>.top_sources.csv files (none if no target is annotated)")
     p.add_argument("--include-mrna", type=bool_arg, default=False)
     p.add_argument("--include-decoy", type=bool_arg, default=False)
-    p.add_argument("--top-n", type=int, default=3)
     p.add_argument("--psauron-min", type=float, default=0.5)
     return p.parse_args()
 
@@ -861,7 +809,7 @@ def main() -> int:
     if not args.mqc_dir.is_dir():
         sys.exit(f"ERROR: --mqc-dir '{args.mqc_dir}' is not a directory")
 
-    inp = Inputs(args.mqc_dir, args.roles, args.top_sources)
+    inp = Inputs(args.mqc_dir, args.roles)
     summary: dict = {}
 
     section_overview(inp, args, summary)
