@@ -137,14 +137,15 @@ custom_data:
     section_name: "Curation (3) — novel genes"
     description: >
       The curated annotation: one gene per group of supported chains sharing a splice
-      junction, represented by its chain with the most splice junctions (then most
-      species, longest, lowest de). Columns: genes by supporting species and by number of
-      chains; `location:<class>` relative to the reference (antisense_exonic, intronic,
-      sense_span_overlap, antisense_intronic, divergent, intergenic, no_reference); medians
-      of exons, exonic length, genomic span, intron length and de of the representatives, and
-      the median distance of intergenic genes to their nearest reference gene. Each curated
-      gene names that reference gene in its GFF3 (ref_gene_id / ref_gene_name /
-      ref_gene_biotype / ref_gene_orientation / ref_distance).
+      junction, with one transcript per supported chain (t1 = the chain shared by the most
+      species; its exons are those of the chain's longest model). Columns: genes and
+      transcripts; genes by supporting species (over all their chains) and by number of
+      chains; `location:<class>` of the gene relative to the reference (antisense_exonic,
+      intronic, sense_span_overlap, antisense_intronic, divergent, intergenic,
+      no_reference); medians of exons, exonic length, intron length and de over transcripts,
+      of genomic span over genes, and the median distance of intergenic genes to their
+      nearest reference gene. Each curated gene names that reference gene in its GFF3
+      (ref_gene_id / ref_gene_name / ref_gene_biotype / ref_gene_orientation / ref_distance).
     plot_type: "table"
     pconfig:
       id: "curation_novel_table"

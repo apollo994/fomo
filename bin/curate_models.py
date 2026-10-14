@@ -16,10 +16,13 @@ Method
      model with that chain (gffcompare drops same-species duplicates). A chain is supported when
      its models (after the filter) come from >= --min-species species.
   4. Genes: supported chains sharing >= 1 splice junction (identical intron), connected components.
-  5. One representative per gene: most SJs -> the chain shared by the most species (after the
-     filter) -> longest exonic length -> lowest de -> ID. It lists its supporting species and the IDs of
-     every model with its chain.
-  6. Location relative to the reference (ref_location on gene and transcript; first match wins):
+  5. One transcript per supported chain of the gene (plans/25). Its exons are those of the chain's
+     representative: the longest exonic length among the chain's models (after the filter) -> lowest
+     de -> ID. Transcripts are numbered t1, t2, ... by support: most species -> most SJs -> longest
+     -> leftmost start -> rightmost end -> representative ID. Each lists the IDs of every model with
+     its chain (supporting_transcripts) and their species.
+  6. Location relative to the reference (ref_location on the gene; first match wins), computed on the
+     gene's footprint (union of its transcripts' exons):
      antisense_exonic (exon overlaps an opposite-strand reference exon) > intronic (span inside one
      same-strand reference transcript span) > sense_span_overlap (overlaps a same-strand reference
      transcript span, not contained) > antisense_intronic (overlaps an opposite-strand reference
@@ -27,14 +30,21 @@ Method
      reference transcript, 5' ends <= --divergent-dist apart) > intergenic; no_reference without
      --ref. A reference transcript span is its first-to-last exon (CDS/UTR or own span if exon-less);
      unstranded reference rows count on both strands.
-  7. Reference gene tag (with --ref): ref_gene_id / ref_gene_name / ref_gene_biotype /
-     ref_gene_orientation (sense|antisense) / ref_distance (0 = overlapping) on the transcript
-     (id + distance on the gene too) — the gene the ref_location class refers to (overlapping or
-     divergent partner), else the nearest reference gene on either strand. '.' when the seqid has no
-     reference transcript.
+  7. Reference gene tag (with --ref), on the gene: ref_gene_id / ref_gene_name / ref_gene_biotype /
+     ref_gene_orientation (sense|antisense) / ref_distance (0 = overlapping) — the gene the
+     ref_location class refers to (overlapping or divergent partner), else the nearest reference gene
+     on either strand. Keys without a value are omitted (e.g. no ref_* key at all when the seqid has
+     no reference transcript; no ref_gene_name for an unnamed gene).
+
+IDs (plans/25): H = first 12 hex of sha1('<track>|<seqid>|<strand>|<sorted intron chains>') of the
+gene; gene <P>_g_H, transcript <P>_t<n>_H, exon <P>_t<n>e<k>_H with k numbered 5'->3', where
+P = --id-prefix (default fomo_<tag>, tag = lncRNA | mRNA | decoy_lncRNA | decoy_mRNA, also the
+biotype). The same chains on the same assembly always give the same IDs, whatever the source set.
+Transcripts are typed by the track (lnc_RNA | mRNA; decoys as their real track); alignment metrics
+are not copied (they stay in the per-source projected GFF3s, keyed by supporting_transcripts).
 
 Output (--prefix P)
-  P.gff3.gz           curated genes (gene + representative transcript + exons)
+  P.gff3.gz           curated genes (gene + one transcript per supported chain + exons)
   P.merged.gff3.gz    the reference verbatim + curated genes, each after its seqid's last
                       reference line (with --ref only)
   P.curation.tsv      report: table / metric / value (observed, discarded_by_reference, novel)
@@ -45,6 +55,7 @@ import bisect
 import collections
 from array import array
 import gzip
+import hashlib
 import json
 import math
 import os
@@ -110,23 +121,20 @@ def is_gtf(path):
 
 
 def track_info(track):
+    """-> (tag, transcript feature type): ('lncRNA' | 'mRNA' | 'decoy_lncRNA' | 'decoy_mRNA', 'lnc_RNA' | 'mRNA').
+    The tag is the biotype and the default ID prefix token; decoys keep their real track's feature type."""
     t = track or ''
-    decoy = 'decoy' in t
-    kind = 'mRNA' if re.search(r'(^|[._])mRNA($|[._])', t) else 'lncRNA'
-    return 'fomo_' + ('decoy_' if decoy else '') + kind
+    mrna = bool(re.search(r'(^|[._])mRNA($|[._])', t))
+    return ('decoy_' if 'decoy' in t else '') + ('mRNA' if mrna else 'lncRNA'), ('mRNA' if mrna else 'lnc_RNA')
 
 
 # ------------------------------------------------------------------ models
 class Model:
-    """One projected model. Compact (slots, interned seqid/species, raw transcript line kept as one
-    string); m['f'] / m['a'] parse that line on demand, only needed for representatives."""
-    __slots__ = ('id', 'chr', 'strand', 'exons', 'species', 'de', 'line', 'chain', 'ref_hits')
+    """One projected model. Compact (slots, interned seqid/species); its attributes are not kept,
+    since the curated output carries none of them (plans/25)."""
+    __slots__ = ('id', 'chr', 'strand', 'exons', 'species', 'de', 'chain', 'ref_hits')
 
     def __getitem__(self, k):
-        if k == 'f':
-            return self.line.rstrip('\n').split('\t')
-        if k == 'a':
-            return gff3_attrs(self['f'][8])
         return getattr(self, k)
 
     def __setitem__(self, k, v):
@@ -198,7 +206,7 @@ def read_models(path):
         except ValueError:
             de = float('nan')
         m = Model()
-        m.id, m.chr, m.strand, m.exons, m.species, m.line = tid, chrom, strand, ex, intern(sp), line
+        m.id, m.chr, m.strand, m.exons, m.species = tid, chrom, strand, ex, intern(sp)
         m.de = de if not math.isnan(de) else float('inf')
         m.chain = tuple((ex[i][1], ex[i + 1][0]) for i in range(len(ex) - 1))
         m.ref_hits = set()
@@ -556,13 +564,14 @@ OVERLAPPING = ('antisense_exonic', 'intronic', 'sense_span_overlap', 'antisense_
 
 
 def ref_location(r, ex_idx, tx_idx, gene_meta, divergent_dist):
-    """-> (class, ref) of representative r vs the reference. ref = dict(gene, name, biotype,
-    orientation, distance) for the reference gene the class refers to: the gene of the overlapping
-    opposite-strand exon (antisense_exonic), of the innermost containing same-strand transcript
-    (intronic), of an overlapping transcript (sense_span_overlap / antisense_intronic), the
-    head-to-head partner (divergent), or the nearest gene on either strand (intergenic; ties: sense,
-    then gene id). None when the seqid has no reference transcript (or without a reference).
-    Distance: 0 when overlapping, else start/end coordinate difference (adjacent = 1)."""
+    """-> (class, ref) of r (a gene footprint: chr, strand, sorted disjoint exons) vs the reference.
+    ref = dict(gene, name, biotype, orientation, distance) for the reference gene the class refers
+    to: the gene of the overlapping opposite-strand exon (antisense_exonic), of the innermost
+    containing same-strand transcript (intronic), of an overlapping transcript (sense_span_overlap /
+    antisense_intronic), the head-to-head partner (divergent), or the nearest gene on either strand
+    (intergenic; ties: sense, then gene id). None when the seqid has no reference transcript (or
+    without a reference). Distance: 0 when overlapping, else start/end coordinate difference
+    (adjacent = 1)."""
     if ex_idx is None:
         return 'no_reference', None
     c, strand, ex = r['chr'], r['strand'], r['exons']
@@ -618,58 +627,88 @@ def check_location(loc, ref, divergent_dist, rid):
 
 
 # ------------------------------------------------------------------ output
-def gene_blocks(genes, gene_prefix, biotype, track):
-    """-> list of (seqid, start, [lines]) per curated gene, numbered in output order."""
+def merge_exons(exons):
+    """-> sorted, disjoint union of (start, end) intervals (overlapping or abutting ones merged)."""
+    out = []
+    for s, e in sorted(exons):
+        if out and s <= out[-1][1] + 1:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return tuple(out)
+
+
+def gene_hash(track, chr_, strand, chains, n=12):
+    """plans/25: content ID of a gene = its track, seqid, strand and sorted intron chains."""
+    key = f'{track}|{chr_}|{strand}|' + ';'.join(sorted(','.join(f'{a}-{b}' for a, b in ch) for ch in chains))
+    return hashlib.sha1(key.encode()).hexdigest()[:n]
+
+
+def ref_attrs(loc, ref):
+    """-> [(key, value)] of the gene's reference tags; keys without a value are omitted."""
+    a = [('ref_location', loc)]
+    if loc == 'no_reference' or not ref:
+        return a
+    for k, v in (('ref_gene_id', esc(ref['gene'])), ('ref_gene_name', esc(ref['name'])),
+                 ('ref_gene_biotype', esc(ref['biotype'])), ('ref_gene_orientation', ref['orientation']),
+                 ('ref_distance', str(ref['distance']))):
+        if v not in ('', '.'):
+            a.append((k, v))
+    return a
+
+
+def gene_blocks(genes, tag, ftype):
+    """-> list of (seqid, start, [lines]) per curated gene: gene, then t1 + its exons, t2 + ..."""
     blocks = []
-    for i, g in enumerate(genes, 1):
-        r = g['rep']
-        gid = f'{gene_prefix}_G{i:06d}'
-        g['gene_id'] = gid
-        s, e = r['exons'][0][0], r['exons'][-1][1]
-        lines = ['\t'.join([r['chr'], 'fomo', 'gene', str(s), str(e), '.', r['strand'], '.',
-                            f"ID={esc(gid)};gene_biotype={biotype};n_chains={g['n_chains']};"
-                            f"n_species_gene={g['n_species_gene']};ref_location={g['location']}"
-                            + (f";ref_gene_id={esc((g['ref'] or {}).get('gene', '.'))};"
-                               f"ref_distance={(g['ref'] or {}).get('distance', '.')}" if g['location'] != 'no_reference' else '')
-                            + f";curated_track={esc(track)}"])]
-        extra = [('transcript_biotype', biotype), ('n_supporting_species', str(len(g['species']))),
-                 ('supporting_species', ','.join(esc(x) for x in g['species'])),
-                 ('supporting_models', ','.join(esc(m['id']) for m in g['support'])),
-                 ('n_sj', str(len(r['chain']))), ('ref_location', g['location'])]
-        if g['location'] != 'no_reference':
-            ref = g['ref'] or dict(gene='.', name='.', biotype='.', orientation='.', distance='.')
-            extra += [('ref_gene_id', esc(ref['gene'])), ('ref_gene_name', esc(ref['name'])),
-                      ('ref_gene_biotype', esc(ref['biotype'])), ('ref_gene_orientation', ref['orientation']),
-                      ('ref_distance', str(ref['distance']))]
-        keys = {k for k, _ in extra}
-        rid = r['id']
-        a = [('ID', rid), ('Parent', esc(gid))]
-        a += [(k, v) for k, v in r['a'] if k not in ('ID', 'Parent') and k not in keys] + extra
-        lines.append('\t'.join([r['chr'], 'fomo', r['f'][2], str(s), str(e), r['f'][5], r['strand'], '.',
-                                ';'.join(f'{k}={v}' for k, v in a)]))
-        for j, (xs, xe) in enumerate(r['exons'], 1):
-            lines.append('\t'.join([r['chr'], 'fomo', 'exon', str(xs), str(xe), '.', r['strand'], '.',
-                                    f'ID={rid}.exon{j};Parent={rid}']))
-        blocks.append((r['chr'], s, lines))
+    for g in genes:
+        gid = g['gene_id']
+        a = [('ID', gid), ('biotype', tag), ('n_chains', str(g['n_chains'])), ('n_species', str(len(g['species'])))]
+        a += ref_attrs(g['location'], g['ref'])
+        lines = ['\t'.join([g['chr'], 'fomo', 'gene', str(g['start']), str(g['end']), '.', g['strand'], '.',
+                            ';'.join(f'{k}={v}' for k, v in a)])]
+        for t in g['tx']:
+            r, tid = t['rep'], t['id']
+            a = [('ID', tid), ('Parent', gid), ('biotype', tag), ('representative_transcript', esc(r['id'])),
+                 ('supporting_transcripts', ','.join(esc(m['id']) for m in t['support'])),
+                 ('supporting_species', ','.join(esc(x) for x in t['species'])), ('n_sj', str(len(r['chain'])))]
+            lines.append('\t'.join([r['chr'], 'fomo', ftype, str(r['exons'][0][0]), str(r['exons'][-1][1]), '.',
+                                    r['strand'], '.', ';'.join(f'{k}={v}' for k, v in a)]))
+            n = len(r['exons'])
+            for j, (xs, xe) in enumerate(r['exons']):
+                k = j + 1 if r['strand'] == '+' else n - j                       # exon number 5'->3'
+                lines.append('\t'.join([r['chr'], 'fomo', 'exon', str(xs), str(xe), '.', r['strand'], '.',
+                                        f"ID={t['exon_prefix']}e{k}_{g['hash']};Parent={tid}"]))
+        blocks.append((g['chr'], g['start'], lines))
     return blocks
 
 
-def header(args, n_genes):
+def all_ids(genes):
+    """-> every gene / transcript / exon ID written for these genes."""
+    ids = set()
+    for g in genes:
+        ids.add(g['gene_id'])
+        for t in g['tx']:
+            ids.add(t['id'])
+            ids.update(f"{t['exon_prefix']}e{k}_{g['hash']}" for k in range(1, len(t['rep']['exons']) + 1))
+    return ids
+
+
+def header(args, n_genes, n_tx):
     return ['##gff-version 3',
             f'# curate_models: intron chains shared exactly by >={args.min_species} species (gffcompare --no-merge), '
-            f'linked into genes by shared splice junctions; one representative per gene; reference filter: '
-            f"{'same-strand' if args.strand == 'same' else 'either-strand'} overlap with any reference exon; "
-            f'{n_genes} genes']
+            f'linked into genes by shared splice junctions; one transcript per supported chain (t1 = most species); '
+            f"reference filter: {'same-strand' if args.strand == 'same' else 'either-strand'} overlap with any reference exon; "
+            f'{n_genes} genes, {n_tx} transcripts']
 
 
-def write_curated(path, args, blocks):
+def write_curated(path, args, blocks, n_tx):
     with open(path, 'w') as o:
-        o.write('\n'.join(header(args, len(blocks))) + '\n')
+        o.write('\n'.join(header(args, len(blocks), n_tx)) + '\n')
         for _, _, lines in blocks:
             o.write('\n'.join(lines) + '\n')
 
 
-def write_merged(path, ref_path, args, blocks, new_ids):
+def write_merged(path, ref_path, args, blocks, new_ids, n_tx):
     """Reference verbatim; each seqid's curated blocks right after its last reference feature line.
     Exits 1 if a curated ID is already used by the reference."""
     last = {}
@@ -684,7 +723,7 @@ def write_merged(path, ref_path, args, blocks, new_ids):
                 if len(f) >= 9:
                     m = id_re.search(f[8])
                     if m and m.group(1).strip() in new_ids:
-                        die(f'curated ID {m.group(1).strip()} already used in the reference; set --gene-prefix')
+                        die(f'curated ID {m.group(1).strip()} already used in the reference; set --id-prefix')
     by_seq = collections.defaultdict(list)
     for c, _, lines in blocks:
         by_seq[c].append(lines)
@@ -706,11 +745,11 @@ def write_merged(path, ref_path, args, blocks, new_ids):
             if not line.endswith('\n'):
                 line += '\n'
             if n == 0 and not line.startswith('##gff-version'):
-                o.write('\n'.join(header(args, len(blocks))) + '\n')   # reference has no header: add one
+                o.write('\n'.join(header(args, len(blocks), n_tx)) + '\n')   # reference has no header: add one
                 wrote_hdr = True
             o.write(line)
             if not wrote_hdr and n == 0:
-                o.write(header(args, len(blocks))[1] + '\n')
+                o.write(header(args, len(blocks), n_tx)[1] + '\n')
                 wrote_hdr = True
             for c in at.get(n, ()):
                 for lines in by_seq[c]:
@@ -738,7 +777,8 @@ def main():
     p.add_argument('--prefix', required=True, help='output path prefix, e.g. outdir/<target>.curated.lnc_RNA')
     p.add_argument('--target', help='target species as written in source= (default: from the --gff file name)')
     p.add_argument('--track', help='gene type of the input, e.g. lnc_RNA, mRNA, lnc_RNA.decoy (default: from the file name)')
-    p.add_argument('--gene-prefix', help='prefix of curated gene IDs (default: basename of --prefix)')
+    p.add_argument('--id-prefix', help='prefix of curated gene / transcript / exon IDs (default: fomo_<tag>, e.g. '
+                   'fomo_lncRNA); change it only if the IDs clash with the reference')
     p.add_argument('--min-species', type=int, default=2)
     p.add_argument('--strand', choices=['same', 'both'], default='same', help='reference overlap strand (default same)')
     p.add_argument('--keep-self', action='store_true', help="count the target's own projections as support")
@@ -757,8 +797,8 @@ def main():
     base = os.path.basename(args.gff)
     target = args.target or re.sub(r'\.(allModels|top\d+|from_).*$', '', base)
     track = args.track or next((m.group(1) for m in [re.search(r'\.((?:lnc_RNA|mRNA)(?:\.decoy)?)\.', base)] if m), 'lnc_RNA')
-    biotype = track_info(track)
-    gene_prefix = args.gene_prefix or os.path.basename(args.prefix)
+    tag, ftype = track_info(track)
+    id_prefix = esc(args.id_prefix or f'fomo_{tag}')
     out_dir = os.path.dirname(os.path.abspath(args.prefix))
     os.makedirs(out_dir, exist_ok=True)
 
@@ -846,38 +886,54 @@ def main():
             for t, v in sorted(cnt.items(), key=lambda x: (-x[1], x[0])):
                 dis[f'{name}:{t}'] = v
 
-    # genes, representative
-    genes = []
+    # genes: one transcript per supported chain (plans/25)
+    genes, by_hash = [], {}
     for g in link_genes(sup_post):
-        cand = [m for k in g for m in by_chain[k] if not m['ref_hits']]
-        rep = min(cand, key=lambda m: (-len(m['chain']), -len(sp_post[(m['chr'], m['strand'], m['chain'])]),
-                                       -exonic_len(m), m['de'], m['id']))
-        rk = (rep['chr'], rep['strand'], rep['chain'])
-        support = sorted((m for m in by_chain[rk] if not m['ref_hits']), key=lambda m: (m['species'], m['id']))
-        loc, ref = ref_location(rep, ex_idx, tx_idx, gene_meta, args.divergent_dist)
-        check_location(loc, ref, args.divergent_dist, rep['id'])
-        genes.append(dict(rep=rep, chains=g, n_chains=len(g), species=sorted(sp_post[rk]), support=support,
-                          n_species_gene=len(set().union(*(sp_post[k] for k in g))),
-                          location=loc, ref=ref))
+        tx = []
+        for k in g:
+            cand = [m for m in by_chain[k] if not m['ref_hits']]
+            rep = min(cand, key=lambda m: (-exonic_len(m), m['de'], m['id']))
+            tx.append(dict(rep=rep, key=k, species=sorted(sp_post[k]),
+                           support=sorted(cand, key=lambda m: (m['species'], m['id']))))
+        tx.sort(key=lambda t: (-len(t['species']), -len(t['key'][2]), -exonic_len(t['rep']),
+                               t['rep']['exons'][0][0], t['rep']['exons'][-1][1], t['rep']['id']))
+        c, st = g[0][0], g[0][1]
+        foot = merge_exons([x for t in tx for x in t['rep']['exons']])
+        h = gene_hash(track, c, st, [k[2] for k in g])
+        if h in by_hash:
+            o = by_hash[h]
+            die(f"gene hash collision {h}: {c}:{st}:{foot[0][0]}-{foot[-1][1]} and {o['chr']}:{o['strand']}:{o['start']}-{o['end']}")
+        gid = f'{id_prefix}_g_{h}'
+        loc, ref = ref_location(dict(chr=c, strand=st, exons=foot), ex_idx, tx_idx, gene_meta, args.divergent_dist)
+        check_location(loc, ref, args.divergent_dist, gid)
+        for i, t in enumerate(tx, 1):
+            t['id'], t['exon_prefix'] = f'{id_prefix}_t{i}_{h}', f'{id_prefix}_t{i}'
+        gene = dict(gene_id=gid, hash=h, chr=c, strand=st, start=foot[0][0], end=foot[-1][1], tx=tx,
+                    chains=g, n_chains=len(g), species=sorted(set().union(*(sp_post[k] for k in g))),
+                    location=loc, ref=ref)
+        by_hash[h] = gene
+        genes.append(gene)
     seq_rank = {c: i for i, c in enumerate(dict.fromkeys(m['chr'] for m in models))}
-    genes.sort(key=lambda g: (seq_rank[g['rep']['chr']], g['rep']['exons'][0][0], g['rep']['strand'],
-                              g['rep']['exons'][-1][1], g['rep']['id']))
-    blocks = gene_blocks(genes, gene_prefix, biotype, track)
+    genes.sort(key=lambda g: (seq_rank[g['chr']], g['start'], g['strand'], g['end'], g['hash']))
+    blocks = gene_blocks(genes, tag, ftype)
+    txs = [t for g in genes for t in g['tx']]
 
-    # novel model stats
+    # novel model stats (per gene: species, chains, span, location; per transcript: structure, support)
     nov['genes'] = len(genes)
+    nov['transcripts'] = len(txs)
+    nov['transcripts_per_gene_mean'] = round(len(txs) / len(genes), 3) if genes else 0
     for n in range(args.min_species, 5):
         nov[f'genes_{n}sp'] = sum(len(g['species']) == n for g in genes)
     nov['genes_ge5sp'] = sum(len(g['species']) >= 5 for g in genes)
     for n in (1, 2):
         nov[f'genes_{n}chain'] = sum(g['n_chains'] == n for g in genes)
     nov['genes_ge3chain'] = sum(g['n_chains'] >= 3 for g in genes)
-    reps = [g['rep'] for g in genes]
+    reps = [t['rep'] for t in txs]
     for name, vals in (('n_exons', [len(r['exons']) for r in reps]),
                        ('transcript_length', [exonic_len(r) for r in reps]),
-                       ('gene_span', [r['exons'][-1][1] - r['exons'][0][0] + 1 for r in reps]),
+                       ('gene_span', [g['end'] - g['start'] + 1 for g in genes]),
                        ('intron_length', [b - a - 1 for r in reps for a, b in r['chain']]),
-                       ('supporting_models', [len(g['support']) for g in genes]),
+                       ('supporting_models', [len(t['support']) for t in txs]),
                        ('de', [r['de'] for r in reps if r['de'] != float('inf')])):
         for k, v in qstats(vals).items():
             nov[f'{name}_{k}'] = v
@@ -891,7 +947,7 @@ def main():
 
     # write + validate
     out_plain = args.prefix + '.gff3'
-    write_curated(out_plain, args, blocks)
+    write_curated(out_plain, args, blocks, len(txs))
     if not args.skip_gffread:
         ok, err = gffread_ok(args.gffread, out_plain)
         if not ok:
@@ -899,8 +955,7 @@ def main():
     gzip_file(out_plain, out_plain + '.gz')
     os.remove(out_plain)
     if args.ref:
-        new_ids = {g['gene_id'] for g in genes} | {g['rep']['id'] for g in genes} | \
-                  {f"{g['rep']['id']}.exon{j}" for g in genes for j in range(1, len(g['rep']['exons']) + 1)}
+        new_ids = all_ids(genes)
         ref_for_merge = args.ref
         if ref_gtf:
             ref_for_merge = args.prefix + '.ref_from_gtf.gff3'
@@ -911,7 +966,7 @@ def main():
         merged_plain = args.prefix + '.merged.gff3'
         # not re-validated with gffread: the reference part is copied verbatim (gffread hard-errors on some
         # real references, e.g. RefSeq trans-spliced strand '?'), and the curated part was validated above
-        write_merged(merged_plain, ref_for_merge, args, blocks, new_ids)
+        write_merged(merged_plain, ref_for_merge, args, blocks, new_ids, len(txs))
         gzip_file(merged_plain, merged_plain + '.gz')
         os.remove(merged_plain)
         if ref_gtf:
@@ -919,18 +974,19 @@ def main():
 
     if args.chains_tsv:
         gene_of = {k: g['gene_id'] for g in genes for k in g['chains']}
-        rep_of = {(g['rep']['chr'], g['rep']['strand'], g['rep']['chain']): g['rep']['id'] for g in genes}
+        tx_of = {t['key']: t for g in genes for t in g['tx']}
         with gzip.open(args.prefix + '.chains.tsv.gz', 'wt') as o:
-            o.write('chr\tstrand\tintrons\tn_species_pre\tn_species_post\tstatus\tref_types\tgene_id\trepresentative\tspecies_pre\tmodels\n')
+            o.write('chr\tstrand\tintrons\tn_species_pre\tn_species_post\tstatus\tref_types\tgene_id\ttranscript_id\trepresentative\tspecies_pre\tmodels\n')
             for k in sorted(sup_pre, key=lambda k: (seq_rank.get(k[0], 0), k[2][0], k[1])):
                 types = set().union(*(m['ref_hits'] for m in by_chain[k]))
                 o.write('\t'.join([k[0], k[1], ','.join(f'{a}-{b}' for a, b in k[2]), str(len(sp_pre[k])), str(len(sp_post[k])),
                                    'kept' if k in sup_post else 'lost_ref', ','.join(sorted(types)) or '.',
-                                   gene_of.get(k, '.'), rep_of.get(k, '.'), ','.join(sorted(sp_pre[k])),
+                                   gene_of.get(k, '.'), tx_of[k]['id'] if k in tx_of else '.',
+                                   tx_of[k]['rep']['id'] if k in tx_of else '.', ','.join(sorted(sp_pre[k])),
                                    ','.join(m['id'] for m in by_chain[k])]) + '\n')
 
     R['observed'], R['discarded_by_reference'], R['novel'] = obs, dis, nov
-    R['params'] = dict(gff=args.gff, ref=args.ref, target=target, track=track, biotype=biotype,
+    R['params'] = dict(gff=args.gff, ref=args.ref, target=target, track=track, biotype=tag, id_prefix=id_prefix,
                        min_species=args.min_species, strand=args.strand, keep_self=args.keep_self,
                        divergent_dist=args.divergent_dist)
     with open(args.prefix + '.curation.tsv', 'w') as o:
@@ -941,7 +997,7 @@ def main():
     with open(args.prefix + '.curation.json', 'w') as o:
         json.dump(R, o, indent=1)
     log(f"supported chains {obs['supported_chains']:,} -> {len(sup_post):,} after reference filter; "
-        f"{len(genes):,} curated genes -> {args.prefix}.gff3.gz in {time.time() - t0:.0f}s")
+        f"{len(genes):,} curated genes, {len(txs):,} transcripts -> {args.prefix}.gff3.gz in {time.time() - t0:.0f}s")
 
 
 if __name__ == '__main__':

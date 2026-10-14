@@ -25,9 +25,10 @@ Pipeline stages:
    projected models against each `both` target's own filtered annotation (gffcompare).
 4. **Curation** — the consensus: keep only intron chains shared exactly by ≥ 2 source
    species (`--curate_min_species`), drop models overlapping any exon of the target's
-   reference, report one representative per gene (tagged with its location and nearest
-   reference gene) and merge the result into the reference annotation (`--curate false`
-   skips it).
+   reference, report one transcript per supported chain, grouped into genes by shared
+   splice junctions (each gene tagged with its location and nearest reference gene; IDs are
+   content hashes of the intron chains, stable across runs) and merge the result into the
+   reference annotation (`--curate false` skips it).
 5. **Reporting** — one MultiQC report per target, plus one run-level summary report.
 
 ## Usage

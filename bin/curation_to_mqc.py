@@ -5,7 +5,8 @@ One row per curated track; Sample = <target>.<track> (track = <feature_type>[.de
   <prefix>_curation_observed_mqc.tsv   (1) multi-species chains observed, before the reference filter
   <prefix>_curation_discarded_mqc.tsv  (2) discarded by overlap with the reference, chains lost per
                                            primary reference type (with a reference only; otherwise NA)
-  <prefix>_curation_novel_mqc.tsv      (3) the novel genes: support, chains, ref_location, medians
+  <prefix>_curation_novel_mqc.tsv      (3) the novel genes and transcripts (one per supported chain, plans/25):
+                                           support, chains, ref_location, medians
                                            (incl. distance of intergenic genes to the nearest reference gene)
 
 No `# id:` header: the sections are routed by `sp` filename patterns only (assets/multiqc/sections.yml),
@@ -19,7 +20,7 @@ OBSERVED = ['n_models', 'self_excluded', 'single_exon', 'multi_exon_models', 'sp
             'supported_chains_ge5sp', 'models_in_supported_chains', 'genes']
 DISCARDED = ['models_removed', 'models_removed_in_supported_chains', 'supported_chains_lost',
              'supported_chains_kept_after_removal', 'genes_lost']
-NOVEL = ['genes', 'genes_2sp', 'genes_3sp', 'genes_4sp', 'genes_ge5sp', 'genes_1chain', 'genes_2chain',
+NOVEL = ['genes', 'transcripts', 'genes_2sp', 'genes_3sp', 'genes_4sp', 'genes_ge5sp', 'genes_1chain', 'genes_2chain',
          'genes_ge3chain']
 LOCATIONS = ['intergenic', 'divergent', 'antisense_exonic', 'antisense_intronic', 'intronic',
              'sense_span_overlap', 'no_reference']
