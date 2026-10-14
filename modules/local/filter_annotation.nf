@@ -14,7 +14,7 @@ process FILTER_ANNOTATION {
     // It is also the gffcompare reference for projections onto this species, and is
     // published under sources/<id>/annotation/.
     //
-    // The GFF3 is staged in a subdir (the MAYBE_GUNZIP trick) so ext.prefix can own
+    // The GFF3 is staged in a subdir (`stageAs: 'input/*'`) so ext.prefix can own
     // the full output name without colliding with the input's.
     input:
     tuple val(meta), path(gff3, stageAs: 'input/*'), path(id_map), path(fasta)

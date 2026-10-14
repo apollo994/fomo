@@ -4,7 +4,7 @@ process GFF_BY_SOURCE {
 
     container 'python:3.11'
 
-    // The input GFF3 is staged in a subdir (the MAYBE_GUNZIP trick) so the `*.gff3`
+    // The input GFF3 is staged in a subdir (`stageAs: 'input/*'`) so the `*.gff3`
     // output glob can never pick it up — the outputs are written to the task root and
     // their names are not known until the task runs.
     //

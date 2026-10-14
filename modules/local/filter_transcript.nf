@@ -22,18 +22,27 @@ process FILTER_TRANSCRIPT {
     script:
     def args = task.ext.args ?: ''            // --longest (params.longest_isoform)
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
+    // filter_transcript.sh reads its input twice (two awk passes), so a gzipped GFF3
+    // needs a real file — decompressed into node-local scratch (SLURM's per-job TMPDIR
+    // on the cluster), not the NFS work dir, and removed on exit (plans/26).
+    // Fallback order: $TMPDIR, /tmp, the work dir.
     """
     if [[ "${gff3}" == *.gz ]]; then
-        gunzip -c "${gff3}" > _input.gff
+        scratch=\$(mktemp -d "\${TMPDIR:-/tmp}/filter_transcript.XXXXXX" 2>/dev/null \\
+            || mktemp -d /tmp/filter_transcript.XXXXXX 2>/dev/null \\
+            || mktemp -d "\$PWD/filter_transcript.XXXXXX")
+        trap 'rm -rf "\$scratch"' EXIT
+        input="\$scratch/input.gff"
+        gzip -cd "${gff3}" > "\$input"
     else
-        ln -sf "${gff3}" _input.gff
+        input="${gff3}"
     fi
 
     filter_transcript.sh \\
         ${args} \\
         --counts ${prefix}_transcript_filter_mqc.tsv \\
         --sample ${meta.id}.${feature_type} \\
-        _input.gff ${feature_type} > ${prefix}.gff3
+        "\$input" ${feature_type} > ${prefix}.gff3
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":

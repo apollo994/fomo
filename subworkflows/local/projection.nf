@@ -1,4 +1,3 @@
-include { MAYBE_GUNZIP as GUNZIP_TARGET            } from '../../modules/local/maybe_gunzip'
 include { MERGE_FASTA as MERGE_SOURCE_FASTA        } from '../../modules/local/merge_fasta'
 include { MINIMAP2_INDEX                           } from '../../modules/nf-core/minimap2/index/main'
 include { MINIMAP2_ALIGN                           } from '../../modules/nf-core/minimap2/align/main'
@@ -20,9 +19,8 @@ workflow PROJECTION {
     main:
 
     // Build one .mmi index per target (ext.args = '-x splice' set in conf/modules.config).
-    // Fed the samplesheet FASTA directly, still gzipped: minimap2 gzopen's its input,
-    // so indexing does NOT wait on GUNZIP_TARGET (which is only needed much later, for
-    // gffread — see below). Note the nf-core module names its output
+    // Fed the samplesheet FASTA directly, still gzipped: minimap2 gzopen's its input.
+    // Note the nf-core module names its output
     // ${fasta.baseName}.mmi and never reads task.ext.prefix, so the .mmi is named after
     // the assembly file rather than the species; nothing keys off that name.
     MINIMAP2_INDEX(ch_target.map { meta, fa, _gff3 -> tuple(meta, fa) })
@@ -130,18 +128,14 @@ workflow PROJECTION {
     // gffread would happily read the coordinates of target B out of target A's
     // sequence and hand TD2 nonsense to score.
     //
-    // This is the ONLY reason GUNZIP_TARGET still exists: gffread opens its `-g`
-    // genome through a random-access FASTA reader with no gzip or bgzf path, so it
-    // genuinely needs plain text. Do NOT "optimise" it away, and do not reach for a
-    // samtools-faidx-style shortcut either — faidx accepts bgzip but hard-errors on
-    // plain gzip, and while the committed test FASTAs are bgzip
-    // (bin/subsample_test_data.sh), the real Ensembl/NCBI assemblies are plain gzip.
-    // Such a shortcut passes -profile test and fails on the cluster.
-    GUNZIP_TARGET(
-        ch_target.map { meta, fa, _gff3 -> tuple(meta, fa) }
-    )
-
-    ch_target_fa = GUNZIP_TARGET.out.gunzip.map { meta, fa -> tuple(meta.id, fa) }
+    // The genome goes in still gzipped (plans/26): gffread's `-g` reader has no gzip
+    // path, so the FOMO-local branch of modules/nf-core/gffread decompresses it into
+    // node-local scratch inside the task. There is no GUNZIP_TARGET any more — its plain
+    // copy on NFS was read twice per gffread task. Do not reach for a samtools-faidx
+    // shortcut either: faidx accepts bgzip but hard-errors on the plain gzip real
+    // Ensembl/NCBI assemblies use (the committed test FASTAs are bgzip, so such a
+    // shortcut passes -profile test and fails on the cluster).
+    ch_target_fa = ch_target.map { meta, fa, _gff3 -> tuple(meta.id, fa) }
 
     ch_lnc_extract = ch_proj.lnc
         .map { meta, gff -> tuple(meta.target_id, meta, gff) }

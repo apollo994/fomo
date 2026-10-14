@@ -4,10 +4,9 @@ include { RELOCATE_LOCI                      } from '../../modules/local/relocat
 include { RENAME_FASTA_HEADERS               } from '../../modules/local/rename_fasta_headers'
 include { TD2_NONCODING                      } from './td2_noncoding'
 include { FILTER_ANNOTATION                  } from '../../modules/local/filter_annotation'
-include { MAYBE_GUNZIP as GUNZIP_FASTA       } from '../../modules/local/maybe_gunzip'
 include { GFFREAD as EXTRACT_SEQUENCES       } from '../../modules/nf-core/gffread/main'
 include { GFFREAD as EXTRACT_DECOY_SEQUENCES } from '../../modules/nf-core/gffread/main'
-include { SAMTOOLS_FAIDX                     } from '../../modules/nf-core/samtools/faidx/main'
+include { FASTA_SIZES                        } from '../../modules/local/fasta_sizes'
 include { BEDTOOLS_COMPLEMENT                } from '../../modules/nf-core/bedtools/complement/main'
 include { GFF_STATS                          } from '../../modules/local/gff_stats'
 include { GFF_STATS_TO_MQC                   } from '../../modules/local/gff_stats_to_mqc'
@@ -27,18 +26,19 @@ workflow PREPROCESSING {
     main:
 
     // ── Source path ──────────────────────────────────────────────────────────
-    // Decompress each source FASTA once. This survives for one reason only:
-    // gffread (EXTRACT_SEQUENCES / EXTRACT_DECOY_SEQUENCES) opens its `-g` genome
-    // through a random-access FASTA reader with no gzip or bgzf path. SAMTOOLS_FAIDX
-    // is NOT an excuse to drop it either — faidx accepts bgzip but hard-errors on
-    // plain gzip, and the real Ensembl/NCBI assemblies are plain gzip even though the
-    // committed test FASTAs are bgzip (bin/subsample_test_data.sh), so a faidx
-    // shortcut would pass -profile test and fail on the cluster.
-    // Contrast the GFF3 side, which needs no gunzip at all: FILTER_TRANSCRIPT
-    // decompresses inline and gff-feature-stats reads .gff3.gz natively.
-    GUNZIP_FASTA(
-        ch_sources.map { meta, fasta, gff3 -> tuple(meta, fasta) }
-    )
+    // The source FASTA stays as the samplesheet gives it (normally plain gzip) — there
+    // is no GUNZIP task (plans/26). gffread's `-g` reader has no gzip path, so each
+    // gffread task (EXTRACT_SEQUENCES / EXTRACT_DECOY_SEQUENCES) decompresses its genome
+    // into node-local scratch itself (FOMO-local branch of modules/nf-core/gffread):
+    // a shared plain copy on NFS was read twice per task and stalled large assemblies.
+    // The decoy chain's chromosome sizes come from FASTA_SIZES, one streaming pass.
+    // Do NOT reach for samtools faidx on the .gz: it accepts bgzip but hard-errors on
+    // plain gzip, and while the committed test FASTAs are bgzip
+    // (bin/subsample_test_data.sh), the real Ensembl/NCBI assemblies are plain gzip —
+    // such a shortcut passes -profile test and fails on the cluster.
+    // The GFF3 side reads .gz too: FILTER_TRANSCRIPT and GFF_TO_GENE_BED decompress
+    // inline (to local scratch / a pipe), gff-feature-stats natively.
+    ch_source_fasta = ch_sources.map { meta, fasta, _gff3 -> tuple(meta.id, fasta) }
 
     // Filter each source GFF3 per enabled feature_type (lnc_RNA [, mRNA]): spliced
     // transcripts only and, with --longest_isoform (ext.args), one per gene — the
@@ -52,13 +52,10 @@ workflow PREPROCESSING {
 
     FILTER_TRANSCRIPT(ch_filter_input)
 
-    // Join filtered GFFs with their decompressed FASTA by species id
+    // Join filtered GFFs with their (still compressed) source FASTA by species id
     FILTER_TRANSCRIPT.out.gff3
         .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-        .combine(
-            GUNZIP_FASTA.out.gunzip.map { meta, fa -> tuple(meta.id, fa) },
-            by: 0
-        )
+        .combine(ch_source_fasta, by: 0)
         .multiMap { id, meta, gff3, fa ->
             gff:   tuple(meta, gff3)
             fasta: fa
@@ -70,7 +67,7 @@ workflow PREPROCESSING {
     // ── Decoy track (opt-in: --include_decoy) ────────────────────────────────
     // Decoys are the false-positive baseline: source loci relocated into that
     // source's own intergenic space, so anything that still projects onto the
-    // target is a false positive. The intergenic machinery (faidx → gene BED →
+    // target is a false positive. The intergenic machinery (sizes → gene BED →
     // complement) exists only to feed RELOCATE_LOCI, so the whole branch is
     // gated together. One decoy track is built per enabled feature_type.
     //
@@ -85,10 +82,9 @@ workflow PREPROCESSING {
     // intergenic as "outside lncRNA genes" and let lncRNA decoys land inside real
     // mRNA loci.
     if (params.include_decoy) {
-        // Index each decompressed source FASTA to get chromosome sizes
-        SAMTOOLS_FAIDX(
-            GUNZIP_FASTA.out.gunzip.map { meta, fa -> tuple(meta, fa, []) },
-            true
+        // Chromosome sizes of each source genome, streamed from the .gz (plans/26)
+        FASTA_SIZES(
+            ch_sources.map { meta, fasta, _gff3 -> tuple(meta, fasta) }
         )
 
         // Extract gene-level features from each source GFF3 → BED, sorted in the
@@ -97,7 +93,7 @@ workflow PREPROCESSING {
         ch_sources
             .map { meta, fasta, gff3 -> tuple(meta.id, meta, gff3) }
             .combine(
-                SAMTOOLS_FAIDX.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
+                FASTA_SIZES.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
                 by: 0
             )
             .map { id, meta, gff3, sizes -> tuple(meta, gff3, sizes) }
@@ -109,7 +105,7 @@ workflow PREPROCESSING {
         GFF_TO_GENE_BED.out.bed
             .map { meta, bed -> tuple(meta.id, meta, bed) }
             .combine(
-                SAMTOOLS_FAIDX.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
+                FASTA_SIZES.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
                 by: 0
             )
             .multiMap { id, meta, bed, sizes ->
@@ -135,10 +131,7 @@ workflow PREPROCESSING {
         // Extract spliced decoy sequences from each source FASTA
         RELOCATE_LOCI.out.gff3
             .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-            .combine(
-                GUNZIP_FASTA.out.gunzip.map { meta, fa -> tuple(meta.id, fa) },
-                by: 0
-            )
+            .combine(ch_source_fasta, by: 0)
             .multiMap { id, meta, gff3, fa ->
                 gff:   tuple(meta, gff3)
                 fasta: fa

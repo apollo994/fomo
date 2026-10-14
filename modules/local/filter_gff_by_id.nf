@@ -4,7 +4,7 @@ process FILTER_GFF_BY_ID {
 
     container 'python:3.11'
 
-    // The GFF3 is staged in a subdir (the MAYBE_GUNZIP trick) so ext.prefix can own
+    // The GFF3 is staged in a subdir (`stageAs: 'input/*'`) so ext.prefix can own
     // the full output name — including the case where output and input would
     // otherwise be called the same thing.
     input:

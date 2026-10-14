@@ -134,7 +134,7 @@ instruments are opt-in:
 With **S** sources (`role` ∈ {source, both}), **T** targets (`role` ∈ {target, both}),
 **T_g** ≤ T of them benchmarked (the `both` rows — plans/22), F enabled feature types (1, or 2 with
 `--include_mrna`) and D = 2 with `--include_decoy` else 1: `F·S` `FILTER_TRANSCRIPT`,
-`F·D` `MERGE_SOURCE_FASTA`, `S` `GUNZIP_FASTA`, `T` `GUNZIP_TARGET`,
+`F·D` `MERGE_SOURCE_FASTA`, `S` `FASTA_SIZES` (decoy only),
 `T` `MINIMAP2_INDEX`, **`F·D·T`** minimap2 alignments / `BAM_TO_GFF` /
 `FILTER_ALLMODELS` / `SPLIT_GFF_BY_SOURCE` (each split emitting S files, S−1 for a `both`
 target — no self-projection), `T` projected-lncRNA TD2 passes,
@@ -159,15 +159,23 @@ for that stage in a single SLURM job, looping over every source internally with
 `xargs -P ${task.cpus}`. This is the fix for the Nextflow-head OOMs the old S·T/S·T_g task
 counts caused on an all-vs-all run of any real size; see `plans/18_per_target_batching.md`.
 
-**There is no gunzip on the GFF3 side at all, and that is deliberate** (plans/17). Every
-GFF3 consumer reads `.gz`: `FILTER_TRANSCRIPT` and `GFF_TO_GENE_BED` decompress inline,
-and `gff-feature-stats` reads `.gff3.gz` natively — so the samplesheet GFF3 goes straight
-into `PREPROCESSING`, and into `BENCHMARKING` for the target's `kind: 'raw'` stats. The two surviving
-`MAYBE_GUNZIP` aliases are **FASTA-only and exist solely for gffread**, whose `-g` genome
-reader has no gzip or bgzf path. `MINIMAP2_INDEX` is fed the gzipped assembly directly
-(minimap2 gzopen's its input), so `GUNZIP_TARGET` is off the critical path and feeds only
-`EXTRACT_PROJECTED_LNC`. **Do not swap either one for a `samtools faidx` shortcut**: faidx
-accepts bgzip but hard-errors on plain gzip, and while the committed test FASTAs are bgzip
+**There is no gunzip task anywhere, and that is deliberate** (plans/17, plans/26). Inputs
+stay as the samplesheet gives them (normally plain gzip) and are never written out
+uncompressed to the NFS work dir. Every GFF3 consumer reads `.gz`: `GFF_TO_GENE_BED` streams
+it through a pipe, `FILTER_TRANSCRIPT` (two awk passes, so it needs a real file) decompresses
+it into node-local scratch, and `gff-feature-stats` and `bin/curate_models.py` read `.gz`
+natively. On the FASTA side `MINIMAP2_INDEX` gzopen's the assembly, and **gffread** — whose
+`-g` reader has no gzip or bgzf path — gets it through a **FOMO-local branch of
+`modules/nf-core/gffread`** that decompresses (or copies) the genome into a private
+`mktemp -d` under `${TMPDIR:-/tmp}` and runs gffread there. On the cluster `TMPDIR` is
+SLURM's per-job `/tmp/$SLURM_JOB_ID` on node-local NVMe (task prolog; job-container tmpfs,
+cleaned at job end). The old shared plain copy (`GUNZIP_FASTA`/`GUNZIP_TARGET`) was read
+**twice per gffread task** over NFS (a `.fai` scan, then extraction) — ~600 GB per run on the
+15-cephalopod set, which stalled `EXTRACT_*` into time-limit kills. The decoy chain's
+chromosome sizes come from `FASTA_SIZES` (one `gzip -cd | awk` pass; byte-identical to
+`cut -f1,2` of a `.fai`). **Do not reintroduce a gunzip task, and do not swap `FASTA_SIZES`
+or the gffread staging for a `samtools faidx` shortcut**: faidx accepts bgzip but
+hard-errors on plain gzip, and while the committed test FASTAs are bgzip
 (`bin/subsample_test_data.sh`), the real Ensembl/NCBI assemblies are plain gzip — so such a
 change passes `-profile test` and fails on the cluster.
 
@@ -216,7 +224,7 @@ exactly one output, so a `both` row could never reach both channels.
 | `RUN_SUMMARY` | digest the pipeline-wide `mqc_files` union (curation tables included) + a samplesheet-derived roles CSV into run-level tables/plots, then **one MULTIQC for the whole run**. One task per run, no target dimension | `report`, `tables` |
 
 \* `Channel.empty()` without `--include_decoy` — the whole intergenic/relocation branch
-(`SAMTOOLS_FAIDX` → `GFF_TO_GENE_BED` → `BEDTOOLS_COMPLEMENT` → `RELOCATE_LOCI` →
+(`FASTA_SIZES` → `GFF_TO_GENE_BED` → `BEDTOOLS_COMPLEMENT` → `RELOCATE_LOCI` →
 `EXTRACT_DECOY_SEQUENCES`) is skipped by an `if (params.include_decoy)` guard in
 `preprocessing.nf`.
 
