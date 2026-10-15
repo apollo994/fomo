@@ -31,6 +31,21 @@ def pairById(left, right) {
     return pairBy(left, right, { meta -> meta.id })
 }
 
+// [target, [files]] for every target: an item whose meta has a target_id goes to that target, the
+// others to every target. Items are flattened first: combine spreads a list across the tuple.
+def routeByTarget(ch_items, ch_target_ids) {
+    def routed = ch_items.branch { meta, _p ->
+        scoped: meta.target_id != null
+        shared: true
+    }
+    return routed.shared
+        .flatMap { _meta, p -> [p].flatten() }
+        .combine(ch_target_ids)
+        .map { p, tid -> tuple(tid, p) }
+        .mix(routed.scoped.flatMap { meta, p -> [p].flatten().collect { f -> tuple(meta.target_id, f) } })
+        .groupTuple()
+}
+
 // Software versions as MultiQC's `*_mqc_versions.yml` ({process: {tool: version}}), from the
 // [process, tool, version] items of the versions topic plus the workflow's own versions.
 def softwareVersionsYaml(ch_versions) {

@@ -25,6 +25,7 @@ workflow RUN_SUMMARY {
             tuple(
                 // No target_id: the report belongs to the run (static publishDir path).
                 [id: 'run_summary'],
+                [],
                 files,
                 [
                     file(params.multiqc_run_summary_main_config,     checkIfExists: true),

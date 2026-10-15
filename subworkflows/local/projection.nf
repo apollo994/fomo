@@ -2,9 +2,8 @@ include { MERGE_FASTA as MERGE_SOURCE_FASTA        } from '../../modules/local/m
 include { MINIMAP2_INDEX                           } from '../../modules/local/minimap2_index'
 include { MINIMAP2_ALIGN                           } from '../../modules/local/minimap2_align'
 include { SAMTOOLS_STATS                           } from '../../modules/local/samtools_stats'
-include { SAMTOOLS_TO_MQC                          } from '../../modules/local/samtools_to_mqc'
 include { BAM_TO_GFF                               } from '../../modules/local/bam_to_gff'
-include { GFF_STATS_PROJECTED_BATCH                } from '../../modules/local/gff_stats_projected_batch'
+include { GFF_STATS as GFF_STATS_PROJECTED         } from '../../modules/local/gff_stats'
 include { EXTRACT_TRANSCRIPTS as EXTRACT_PROJECTED_LNC } from '../../modules/local/extract_transcripts'
 include { TD2_NONCODING     as TD2_NONCODING_PROJ  } from './td2_noncoding'
 include { FILTER_GFF_BY_ID  as FILTER_ALLMODELS    } from '../../modules/local/filter_gff_by_id'
@@ -45,11 +44,8 @@ workflow PROJECTION {
             }
     )
 
+    // One alignment row per (target, track): the merged BAM has no per-source breakdown.
     SAMTOOLS_STATS(MINIMAP2_ALIGN.out.bam)
-
-    // A curated column set for the report; the native samtools section keeps its mapped-%
-    // chart. One row per (target, gene type): the merged BAM has no per-source breakdown.
-    SAMTOOLS_TO_MQC(SAMTOOLS_STATS.out.stats)
 
     BAM_TO_GFF(MINIMAP2_ALIGN.out.bam.map { meta, bam, _csi -> tuple(meta, bam) })
 
@@ -94,22 +90,17 @@ workflow PROJECTION {
             tuple(meta, ([raw_gff] + [split_gffs].flatten()).findAll { gff -> gff }, manifest)
         }
 
-    GFF_STATS_PROJECTED_BATCH(
+    GFF_STATS_PROJECTED(
         ch_projected_batch.map { meta, gffs, manifest -> tuple(meta + [kind: 'projected'], gffs, manifest) }
     )
 
-    ch_mqc_files = GFF_STATS_PROJECTED_BATCH.out.tsv
-        .mix(SAMTOOLS_STATS.out.stats)
-        .mix(SAMTOOLS_TO_MQC.out.tsv)
-        .mix(TD2_NONCODING_PROJ.out.mqc)
-
-    ch_data = GFF_STATS_PROJECTED_BATCH.out.data
+    ch_data = GFF_STATS_PROJECTED.out.data
         .mix(SAMTOOLS_STATS.out.data)
         .mix(TD2_NONCODING_PROJ.out.data)
 
     emit:
     allmodels_raw = ch_allmodels_raw     // [ meta(id = target_id, track), *.gff3 ] × F·D·T
     gff3          = ch_projected_batch   // [ meta, List<gff3>, manifest ] × F·D·T: allModels + every source
-    mqc_files     = ch_mqc_files         // [ meta, path | List<path> ]
+    mqc           = SAMTOOLS_STATS.out.stats   // [ meta, *.stats ]: MultiQC's native samtools module
     data          = ch_data              // [ meta, *.data.json | List ]
 }

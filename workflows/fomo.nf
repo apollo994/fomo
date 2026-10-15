@@ -54,11 +54,12 @@ workflow FOMO {
 
     CURATION(PROJECTION.out.allmodels_raw, ch_targets)
 
-    // The MultiQC inputs of the per-target reports, and the data records of the run summary.
-    ch_all_mqc = PREPROCESSING.out.mqc_files
-        .mix(PROJECTION.out.mqc_files)
-        .mix(BENCHMARKING.out.mqc_files)
-        .mix(CURATION.out.mqc_files)
+    // Every data record of the run (both reports read them), and the native MultiQC inputs.
+    ch_all_data = PREPROCESSING.out.data
+        .mix(PROJECTION.out.data)
+        .mix(BENCHMARKING.out.data)
+        .mix(CURATION.out.data)
+    ch_native_mqc = PROJECTION.out.mqc.mix(BENCHMARKING.out.mqc)
 
     ch_target_ids = ch_targets.map { meta, _fasta, _gff3 -> meta.id }
 
@@ -66,23 +67,13 @@ workflow FOMO {
     // tasks only: a consumer that also emits versions would wait on itself.
     ch_versions = softwareVersionsYaml(channel.topic('versions'))
 
-    REPORTING(
-        ch_all_mqc,
-        BENCHMARKING.out.stats,
-        ch_target_ids,
-        ch_versions
-    )
+    REPORTING(ch_all_data, ch_native_mqc, ch_target_ids, ch_versions)
 
-    // Species roles are the one fact no stats file carries; the sorted CSV keeps the task cacheable.
+    // Species roles are the one fact no record carries; the sorted CSV keeps the task cacheable.
     ch_roles = channel.fromList(rows)
         .map { meta, _fasta, gff3 -> "${meta.id},${meta.role},${gff3 ? 'yes' : 'no'}" }
         .collectFile(name: 'species_roles.csv', newLine: true, sort: true,
                      seed: 'species,role,has_gff3')
-
-    ch_all_data = PREPROCESSING.out.data
-        .mix(PROJECTION.out.data)
-        .mix(BENCHMARKING.out.data)
-        .mix(CURATION.out.data)
 
     RUN_SUMMARY(ch_all_data, ch_roles, ch_versions)
 }

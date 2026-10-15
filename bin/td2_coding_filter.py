@@ -18,9 +18,8 @@ Outputs (--prefix P):
                          (informational), the name verbatim for --stage projected (FILTER_ALLMODELS
                          drops by the source-qualified id; a bare id could name another source's
                          transcript)
-  P_td2_coding_mqc.tsv   one MultiQC row: n_in / n_coding / n_kept / pct_coding
-  P.td2_coding.data.json the same counts as a `td2_coding` data record (with --identity; the
-                         record's identity gets stage = --stage)
+  P.td2_coding.data.json n_in / n_coding / n_kept as a `td2_coding` data record (with --identity;
+                         the record's identity gets stage = --stage)
 """
 
 import argparse
@@ -45,9 +44,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--pep', required=True, help='TD2.Predict .pep file')
     p.add_argument('--psauron-min', type=float, default=0.5, help='minimum psauron_score of a coding ORF (0.5)')
     p.add_argument('--prefix', required=True, help='output path prefix')
-    p.add_argument('--sample', required=True, help='row name of the MultiQC table')
     p.add_argument('--stage', required=True, choices=['input', 'projected'], help='pipeline stage')
-    p.add_argument('--feature', default='lncRNA', help='feature label of the MultiQC row')
     p.add_argument('--identity', help='identity of the data record (JSON object); without it no record')
     return p.parse_args()
 
@@ -108,12 +105,6 @@ def main() -> int:
     with fomo_io.open_text(f'{args.prefix}.coding_ids.txt', 'wt') as out:
         out.writelines(c + '\n' for c in drop_ids)
 
-    # Routed by the *_td2_coding_mqc.tsv pattern of assets/multiqc/sections.yml; no `# id:` header,
-    # which would render the section twice.
-    with fomo_io.open_text(f'{args.prefix}_td2_coding_mqc.tsv', 'wt') as out:
-        out.write('Sample\tstage\tfeature\tn_in\tn_coding\tn_kept\tpct_coding\n')
-        out.write(f'{args.sample}\t{args.stage}\t{args.feature}\t{n_in}\t{n_coding}\t{n_kept}\t{pct:.2f}\n')
-
     if args.identity:
         identity = fomo_stats.identity_arg(args.identity) | {'stage': args.stage}
         data = {'n_in': n_in, 'n_coding': n_coding, 'n_kept': n_kept, 'psauron_min': args.psauron_min}
@@ -121,7 +112,7 @@ def main() -> int:
             f'{args.prefix}.td2_coding.data.json', fomo_stats.make_record('td2_coding', identity, data)
         )
 
-    log.info(f'{args.sample} ({args.stage}) n_in={n_in} coding={n_coding} kept={n_kept} ({pct:.1f}% coding)')
+    log.info(f'{args.prefix} ({args.stage}) n_in={n_in} coding={n_coding} kept={n_kept} ({pct:.1f}% coding)')
     return 0
 
 

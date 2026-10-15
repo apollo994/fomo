@@ -1,55 +1,33 @@
-include { GFFCOMPARE_TO_SCATTER } from '../../modules/local/gffcompare_to_scatter'
-include { MULTIQC               } from '../../modules/local/multiqc'
+include { MULTIQC       } from '../../modules/local/multiqc'
+include { routeByTarget } from './fomo_utils'
 
-// One MultiQC report per target. Files with meta.target_id belong to that target's report;
-// the others (source-side stats) are broadcast into every report.
+// One MultiQC report per target. MULTIQC renders its custom content from the records; native
+// tool files feed MultiQC's own modules. A record or file whose meta has a target_id belongs to
+// that target's report; the others (source side) go to every report.
 workflow REPORTING {
     take:
-    ch_mqc_files        // [ meta, path | List<path> ]: *_mqc.tsv and native tool stats
-    ch_gffcompare_stats // [ meta(target_id), *.gffcompare.stats ]: every source and allModels
-    ch_target_ids       // String: one id per target
-    ch_versions         // path: the software versions YAML, shared by every report
+    ch_records      // [ meta, *.data.json | List ]: every data record of the run
+    ch_native       // [ meta, path | List ]: native MultiQC inputs (samtools and gffcompare .stats)
+    ch_target_ids   // String: one id per target
+    ch_versions     // path: the software versions YAML, shared by every report
 
     main:
 
-    // The accuracy scatter replaces MultiQC's native gffcompare plot (removed in main.yml):
-    // one point per model of the target.
-    GFFCOMPARE_TO_SCATTER(
-        ch_gffcompare_stats
-            .map { meta, stats -> tuple(meta.target_id, stats) }
-            .groupTuple()
-            .map { tid, stats -> tuple([id: tid, target_id: tid], stats) }
-    )
+    ch_native_all = ch_native.mix(ch_versions.map { yml -> tuple([:], yml) })
 
-    ch_mqc_files
-        .branch { meta, _p ->
-            scoped: meta.target_id != null
-            shared: true
+    ch_mqc_input = routeByTarget(ch_records, ch_target_ids)
+        .join(routeByTarget(ch_native_all, ch_target_ids), remainder: true)
+        .map { tid, records, tool_files ->
+            tuple(
+                [id: tid, target_id: tid],
+                records ?: [],
+                tool_files ?: [],
+                [
+                    file(params.multiqc_main_config,     checkIfExists: true),
+                    file(params.multiqc_sections_config, checkIfExists: true)
+                ]
+            )
         }
-        .set { ch_mqc }
-
-    // One file per item before combine: an adapter may emit a list of files, and combine
-    // spreads a list across the tuple.
-    ch_by_target = ch_mqc.shared
-        .flatMap { _meta, p -> [p].flatten() }
-        .mix(ch_versions)
-        .combine(ch_target_ids)
-        .map { p, tid -> tuple(tid, p) }
-        .mix(ch_mqc.scoped.flatMap { meta, p ->
-            [p].flatten().collect { f -> tuple(meta.target_id, f) } })
-        .mix(GFFCOMPARE_TO_SCATTER.out.json.map { meta, p -> tuple(meta.target_id, p) })
-        .groupTuple()
-
-    ch_mqc_input = ch_by_target.map { tid, files ->
-        tuple(
-            [id: tid, target_id: tid],
-            files,
-            [
-                file(params.multiqc_main_config,     checkIfExists: true),
-                file(params.multiqc_sections_config, checkIfExists: true)
-            ]
-        )
-    }
 
     MULTIQC(ch_mqc_input)
 }

@@ -23,7 +23,8 @@ FASTA = '>t1|lnc_RNA|S desc\nACGT\nACGT\n>t2|lnc_RNA|S\nAAAA\n>t3|lnc_RNA|S\nCCC
 
 def run(tmp_path, fasta, pep, stage='input'):
     prefix = tmp_path / 'x'
-    args = ['--fasta', fasta, '--pep', pep, '--prefix', prefix, '--sample', 'S', '--stage', stage]
+    identity = '{"species": "S", "side": "source", "track": "lnc_RNA"}'
+    args = ['--fasta', fasta, '--pep', pep, '--prefix', prefix, '--stage', stage, '--identity', identity]
     r = run_script('td2_coding_filter.py', *args)
     assert r.returncode == 0, r.stderr
     return r, prefix
@@ -46,8 +47,11 @@ def test_cli(tmp_path, stage, coding_ids):
     assert kept == '>t2|lnc_RNA|S\nAAAA\n>t4|lnc_RNA|S\nGGGG\n', 'kept records verbatim, in order'
     ids = (tmp_path / 'x.coding_ids.txt').read_text().split()
     assert ids == coding_ids, 'input stage strips to the bare tid, projected keeps the id'
-    mqc = (tmp_path / 'x_td2_coding_mqc.tsv').read_text().splitlines()
-    assert mqc[1] == f'S\t{stage}\tlncRNA\t4\t2\t2\t50.00', 'hits outside the FASTA ignored'
+    record = json.loads((tmp_path / 'x.td2_coding.data.json').read_text())
+    assert record['identity']['stage'] == stage
+    assert record['data'] == {'n_in': 4, 'n_coding': 2, 'n_kept': 2, 'psauron_min': 0.5}, (
+        'hits outside the FASTA ignored'
+    )
 
 
 def test_empty_pep_keeps_everything(tmp_path):
@@ -66,7 +70,7 @@ def test_malformed_score_warns_and_is_not_coding(tmp_path):
 
 def test_record(tmp_path):
     fa, pep = write(tmp_path / 'in.fa', FASTA), write(tmp_path / 'p.pep', PEP)
-    args = ['--fasta', fa, '--pep', pep, '--prefix', tmp_path / 'x', '--sample', 'S', '--stage', 'projected']
+    args = ['--fasta', fa, '--pep', pep, '--prefix', tmp_path / 'x', '--stage', 'projected']
     identity = '{"species": "T", "side": "target", "target": "T", "track": "lnc_RNA"}'
     run_script('td2_coding_filter.py', *args, '--identity', identity, check=True)
     record = json.loads((tmp_path / 'x.td2_coding.data.json').read_text())

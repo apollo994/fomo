@@ -1,6 +1,5 @@
 include { GFFCOMPARE_BATCH                         } from '../../modules/local/gffcompare_batch'
 include { GFF_STATS         as GFF_STATS_TARGET    } from '../../modules/local/gff_stats'
-include { GFF_STATS_TO_MQC  as GFF_STATS_TARGET_TO_MQC } from '../../modules/local/gff_stats_to_mqc'
 include { pairBy                                   } from './fomo_utils'
 
 workflow BENCHMARKING {
@@ -19,10 +18,11 @@ workflow BENCHMARKING {
     // report do not count as misses.
     ch_target_refs = ch_annotation.filter { meta, _gff -> meta.role in ['target', 'both'] }
 
-    // Every target with a samplesheet gff3 gets its raw annotation stats.
+    // A pure target's samplesheet gff3 gets its own raw stats; a 'both' species' annotation is
+    // measured on the source side (the same file). target_id routes them to that target's report.
     ch_target_gff = ch_target
-        .filter { _meta, _fa, gff3 -> gff3 }
-        .map    { meta,  _fa, gff3 -> tuple(meta, gff3) }
+        .filter { meta, _fa, gff3 -> meta.role == 'target' && gff3 }
+        .map    { meta, _fa, gff3 -> tuple(meta + [kind: 'raw', target_id: meta.id], gff3, []) }
 
     // Pair each target's batch with the reference of the same target and feature type. The
     // key must include target_id: on feature_type alone a projection would also be compared
@@ -36,23 +36,9 @@ workflow BENCHMARKING {
         )
     )
 
-    // One item per stats file; consumers read the target from meta and the source from the
-    // file name.
-    ch_stats_persource = GFFCOMPARE_BATCH.out.stats.transpose()
-
-    // target_id (== the species) routes these rows to that target's report only.
-    ch_target_stats_gff = ch_target_gff
-        .map  { m, g -> tuple(m + [kind: 'raw',      target_id: m.id], g) }
-        .mix(ch_target_refs.map { m, g -> tuple(m + [kind: 'filtered', target_id: m.id], g) })
-
-    GFF_STATS_TARGET(ch_target_stats_gff)
-    GFF_STATS_TARGET_TO_MQC(GFF_STATS_TARGET.out.json)
-
-    ch_mqc_files = ch_stats_persource
-        .mix(GFF_STATS_TARGET_TO_MQC.out.tsv)
+    GFF_STATS_TARGET(ch_target_gff)
 
     emit:
-    stats     = ch_stats_persource   // [ meta(target_id, feature_type, decoy), *.gffcompare.stats ]
-    mqc_files = ch_mqc_files         // [ meta, path ]
-    data      = GFFCOMPARE_BATCH.out.data.mix(GFF_STATS_TARGET.out.data)   // [ meta, *.data.json | List ]
+    mqc  = GFFCOMPARE_BATCH.out.stats                                // [ meta(target_id), List<*.gffcompare.stats> ]: MultiQC's native gffcompare module
+    data = GFFCOMPARE_BATCH.out.data.mix(GFF_STATS_TARGET.out.data)  // [ meta, *.data.json | List ]
 }

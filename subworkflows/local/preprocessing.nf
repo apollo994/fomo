@@ -9,10 +9,8 @@ include { EXTRACT_TRANSCRIPTS as EXTRACT_DECOY_SEQUENCES } from '../../modules/l
 include { FASTA_SIZES                        } from '../../modules/local/fasta_sizes'
 include { BEDTOOLS_COMPLEMENT                } from '../../modules/local/bedtools_complement'
 include { GFF_STATS                          } from '../../modules/local/gff_stats'
-include { GFF_STATS_TO_MQC                   } from '../../modules/local/gff_stats_to_mqc'
 include { SEQKIT_STATS                       } from '../../modules/local/seqkit_stats'
 include { withTrack; pairById                } from './fomo_utils'
-include { SEQKIT_TO_MQC                      } from '../../modules/local/seqkit_to_mqc'
 
 // Per source and target-independent: S tasks per step, never S·T.
 workflow PREPROCESSING {
@@ -111,16 +109,9 @@ workflow PREPROCESSING {
         .mix(ch_filtered_gff3.map       { m, g -> tuple(m + [kind: 'filtered'], g) })
         .mix(RELOCATE_LOCI.out.gff3.map { m, g -> tuple(m + [kind: 'decoy'],    g) })
 
-    GFF_STATS(ch_stats_gff)
-    GFF_STATS_TO_MQC(GFF_STATS.out.json)
+    GFF_STATS(ch_stats_gff.map { meta, gff3 -> tuple(meta, gff3, []) })
 
     SEQKIT_STATS(ch_renamed_final)
-    SEQKIT_TO_MQC(SEQKIT_STATS.out.stats)
-
-    ch_mqc_files = GFF_STATS_TO_MQC.out.tsv
-        .mix(SEQKIT_TO_MQC.out.mqc)
-        .mix(TD2_NONCODING.out.mqc)
-        .mix(FILTER_TRANSCRIPT.out.mqc)
 
     ch_data = FILTER_TRANSCRIPT.out.data
         .mix(GFF_STATS.out.data)
@@ -132,6 +123,5 @@ workflow PREPROCESSING {
     spliced_fasta       = ch_final_fasta                                        // [ meta, fasta ] × F·S
     filtered_gff3       = ch_filtered_gff3                                      // [ meta, gff3  ] × F·S
     decoy_spliced_fasta = ch_renamed_final.filter { meta, _fa -> meta.decoy }   // [ meta, fasta ] × F·S
-    mqc_files           = ch_mqc_files                                          // [ meta, path  ]
     data                = ch_data                                               // [ meta, *.data.json ]
 }

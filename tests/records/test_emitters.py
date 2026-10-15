@@ -1,5 +1,5 @@
-"""bin/samtools_stats_record.sh and bin/seqkit_stats_record.sh: records carry the values of the
-alignment and SeqKit tables, read from captured tool outputs of a V2 run."""
+"""bin/samtools_stats_record.sh and bin/seqkit_stats_record.sh: records carry the tool values, read
+from captured tool outputs of a V2 run."""
 
 import json
 from pathlib import Path
@@ -18,16 +18,30 @@ def record(script, path):
     return json.loads(r.stdout)
 
 
+SN_KEYS = {
+    'raw_total_sequences': 'raw total sequences',
+    'reads_mapped': 'reads mapped',
+    'non_primary_alignments': 'non-primary alignments',
+    'error_rate': 'error rate',
+    'average_quality': 'average quality',
+    'average_length': 'average length',
+}
+
+
 @pytest.mark.parametrize('stats', sorted(FIXTURES.glob('*.stats')), ids=lambda p: p.name)
-def test_alignment_record_matches_the_adapter(stats, tmp_path):
+def test_alignment_record_carries_the_sn_fields(stats):
     rec = record('samtools_stats_record.sh', stats)
     assert rec['schema'] == 'fomo-data/1' and rec['section'] == 'alignment'
     assert rec['identity'] == json.loads(IDENTITY)
-    out = tmp_path / 'a_samtools_align_mqc.tsv'
-    run_script('samtools_to_mqc.py', '--input', stats, '--name', 'x', '--output', out, check=True)
-    header, row = (line.split('\t') for line in out.read_text().splitlines())
-    for key, value in zip(header[1:], row[1:], strict=True):
-        assert rec['data'][key] == pytest.approx(float(value)), key
+    sn = {}
+    for line in stats.read_text().splitlines():
+        if line.startswith('SN\t'):
+            _, key, value = line.split('\t')[:3]
+            sn[key.rstrip(':')] = float(value.split('#')[0])
+    for key, sn_key in SN_KEYS.items():
+        assert rec['data'][key] == pytest.approx(sn[sn_key]), key
+    mapped = 100 * sn['reads mapped'] / sn['raw total sequences']
+    assert rec['data']['reads_mapped_percent'] == pytest.approx(round(mapped, 2))
 
 
 @pytest.mark.parametrize('tsv', sorted(FIXTURES.glob('*.tsv')), ids=lambda p: p.name)

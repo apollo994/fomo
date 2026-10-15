@@ -3,10 +3,11 @@ process MULTIQC {
     label 'process_single'
     label 'img_multiqc'
 
-    // No versions output: the input waits on the versions topic, so emitting to it would never
-    // let the topic close. The report shows its MultiQC version.
+    // `records` are rendered into custom content first (none for the run summary, whose inputs are
+    // custom content already). No versions output: the input waits on the versions topic, so
+    // emitting to it would never let the topic close. The report shows its MultiQC version.
     input:
-    tuple val(meta), path(multiqc_files, stageAs: '?/*'), path(multiqc_config, stageAs: '?/*')
+    tuple val(meta), path(records, stageAs: 'records/*'), path(multiqc_files, stageAs: '?/*'), path(multiqc_config, stageAs: '?/*')
 
     output:
     tuple val(meta), path("*.html"), emit: report
@@ -17,7 +18,9 @@ process MULTIQC {
     def args   = task.ext.args ?: ''
     def prefix = task.ext.prefix ? "--filename ${task.ext.prefix}.html" : ''
     def config = [multiqc_config].flatten().collect { cfg -> "--config ${cfg}" }.join(' ')
+    def render = records ? "render_mqc.py --records records --target ${meta.target_id} --out ." : ''
     """
+    ${render}
     multiqc --force ${args} ${config} ${prefix} .
     """
 

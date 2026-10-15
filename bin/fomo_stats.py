@@ -13,11 +13,9 @@ directory, so a `__file__`-relative insert finds the siblings on every executor.
 """
 
 import json
-import os
 import re
 import sys
 from pathlib import Path
-from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fomo_io  # noqa: E402
@@ -86,48 +84,9 @@ def identity_arg(text: str) -> dict:
 # Feature levels, in the order gffcompare reports them.
 LEVELS = ["Base", "Exon", "Intron", "Intron_chain", "Transcript", "Locus"]
 
-# Pseudo-source ids of aggregate models (every source pooled). They use the per-source
+# Pseudo-source ids of aggregate models (every source pooled), which per-source tables skip.
 # `from_<id>` filename convention, so per-source tables must skip them.
 AGGREGATE_IDS = ("allModels_raw",)
-
-# <target>.from_<source>.<feature_type>[.decoy], after the .gffcompare.stats suffix
-# is stripped. Species names contain '_' and digits, hence the non-greedy captures
-# anchored on the literal '.from_' and the feature-type alternation.
-FNAME_RE = re.compile(r"^(?P<target>.+?)\.from_(?P<source>.+?)\.(?P<ft>lnc_RNA|mRNA)(?P<decoy>\.decoy)?$")
-
-
-class Identity(NamedTuple):
-    """Which model a gffcompare stats file describes."""
-
-    target: str
-    source: str  # a real species, or one of AGGREGATE_IDS
-    feature_type: str  # 'lnc_RNA' | 'mRNA'
-    decoy: bool
-
-
-def parse_identity(stats_path: str) -> Identity | None:
-    """Derive the Identity from a gffcompare stats filename, or None if it does
-    not match the grammar."""
-    base = os.path.basename(stats_path)
-    base = re.sub(r"\.gffcompare\.stats$", "", base)
-    base = re.sub(r"\.stats$", "", base)  # tolerate either suffix
-    base = re.sub(r"\.gffcompare$", "", base)
-    m = FNAME_RE.match(base)
-    if not m:
-        return None
-    return Identity(
-        target=m.group("target"),
-        source=m.group("source"),
-        feature_type=m.group("ft"),
-        decoy=bool(m.group("decoy")),
-    )
-
-
-def feature_class(ft: str, decoy: bool) -> str:
-    """Presentation label for a (feature_type, decoy) pair."""
-    if decoy:
-        return "decoy"
-    return "lncRNA" if ft == "lnc_RNA" else "mRNA"
 
 
 def parse_accuracy(stats_path: str) -> dict[str, tuple[float, float]]:
@@ -178,12 +137,6 @@ def parse_gffcompare_stats(stats_path: str) -> dict:
                 counts[key], counts[f'{key}_total'] = int(m.group(3)), int(m.group(4))
     levels = {level: {'sn': sn, 'pr': pr} for level, (sn, pr) in parse_accuracy(stats_path).items()}
     return {'levels': levels, 'counts': counts}
-
-
-def transcript_sn_pr(stats_path: str) -> tuple[float, float] | None:
-    """(sensitivity, precision) from the Transcript-level row, or None if the file
-    has no parseable one. Transcript level is the ranking level throughout FOMO."""
-    return parse_accuracy(stats_path).get("Transcript")
 
 
 def f1(sn: float, pr: float) -> float:

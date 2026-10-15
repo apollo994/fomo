@@ -24,6 +24,5 @@ workflow CURATION {
     CURATE_MODELS(pairBy(ch_models, ch_refs, { meta -> meta.target_id }))
 
     emit:
-    mqc_files = CURATE_MODELS.out.mqc   // [ meta(target_id), [ 3 × *_mqc.tsv ] ]: that target's report only
-    data      = CURATE_MODELS.out.data  // [ meta(target_id), *.curation.data.json ]
+    data = CURATE_MODELS.out.data   // [ meta(target_id), *.curation.data.json ]
 }

@@ -13,12 +13,17 @@ from conftest import run_script, write
 
 
 def filter_gff(tmp_path, src, ttype, *opts):
-    """-> (CompletedProcess, output lines, funnel lines)."""
-    counts, dest = tmp_path / 'counts.tsv', tmp_path / 'out.gff3'
-    args = ['--gff', src, '--feature-type', ttype, *opts, '--counts', counts, '--sample', 'S', '--output', dest]
+    """-> (CompletedProcess, output lines, funnel lines as 'S<TAB>type<TAB>counts...')."""
+    record, dest = tmp_path / 'r.data.json', tmp_path / 'out.gff3'
+    identity = json.dumps({'species': 'S', 'side': 'source', 'track': ttype})
+    args = ['--gff', src, '--feature-type', ttype, *opts, '--record', record, '--identity', identity, '--output', dest]
     r = run_script('filter_transcript.py', *args)
     out = dest.read_text() if dest.exists() else ''
-    funnel = counts.read_text().splitlines() if counts.exists() else []
+    funnel = []
+    if record.exists():
+        data = json.loads(record.read_text())['data']
+        keys = ['n_transcripts', 'n_stranded', 'n_spliced', 'n_selected']
+        funnel = ['Sample\tfeature\t' + '\t'.join(keys), '\t'.join(['S', ttype] + [str(data[k]) for k in keys])]
     return r, out.splitlines(), funnel
 
 
