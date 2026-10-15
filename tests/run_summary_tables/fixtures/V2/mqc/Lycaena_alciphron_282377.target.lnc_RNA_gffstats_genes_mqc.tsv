@@ -1,0 +1,2 @@
+Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
+Lycaena_alciphron_282377.2_lncRNA_target.non_coding	target	filtered	non_coding	59	7836.73	313	58082	1	lncrna

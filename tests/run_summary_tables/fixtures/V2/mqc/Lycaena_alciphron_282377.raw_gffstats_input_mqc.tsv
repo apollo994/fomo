@@ -1,0 +1,6 @@
+Sample	role	kind	transcript_type	n_genes	n_transcripts	n_exons	mean_exon_length	max_exon_length	n_introns	mean_intron_length	min_intron_length	max_intron_length	mean_transcript_length	min_transcript_length	max_transcript_length	mean_spliced_length	min_spliced_length	max_spliced_length	n_cds	mean_cds_length	top_biotype
+Lycaena_alciphron_282377.1_raw.mRNA	source	raw	mRNA	913	1418	11721	232.73	10894	10303	2099	27	120460	17174.81	168	224567	1923.73	168	26925	11569	209.57	protein_coding
+Lycaena_alciphron_282377.1_raw.lnc_RNA	source	raw	lnc_RNA	62	67	152	175.53	808	85	5447.21	21	57798	7308.87	313	58082	398.22	204	1092	NA	NA	lncRNA
+Lycaena_alciphron_282377.1_raw.tRNA	source	raw	tRNA	48	48	48	75.46	92	NA	NA	NA	NA	75.46	71	92	NA	NA	NA	NA	NA	tRNA
+Lycaena_alciphron_282377.1_raw.snRNA	source	raw	snRNA	14	14	14	141.71	193	NA	NA	NA	NA	141.71	105	193	NA	NA	NA	NA	NA	snRNA
+Lycaena_alciphron_282377.1_raw.rRNA	source	raw	rRNA	1	1	1	119	119	NA	NA	NA	NA	119	119	119	NA	NA	NA	NA	NA	rRNA

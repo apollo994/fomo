@@ -1,0 +1,2 @@
+Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
+Lycaena_thersamon_265360.2_lncRNA.non_coding	source	filtered	non_coding	74	4771.68	299	41297	1	lncrna

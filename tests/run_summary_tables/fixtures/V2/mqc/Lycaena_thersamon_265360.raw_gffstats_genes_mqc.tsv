@@ -1,0 +1,3 @@
+Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
+Lycaena_thersamon_265360.1_raw.coding	source	raw	coding	889	14640.36	329	325258	1	protein_coding
+Lycaena_thersamon_265360.1_raw.non_coding	source	raw	non_coding	141	2610.17	71	41297	3	lncrna

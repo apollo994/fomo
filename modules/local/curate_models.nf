@@ -58,8 +58,7 @@ process CURATE_MODELS {
     stub:
     prefix = task.ext.prefix ?: "${meta.target_id}.curated.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     """
-    echo | gzip > ${prefix}.gff3.gz
-    ${ref ? "echo | gzip > ${prefix}.merged.gff3.gz" : ''}
+    python3 -c "import gzip, sys; [gzip.open(p, 'wt').close() for p in sys.argv[1:]]" ${prefix}.gff3.gz ${ref ? "${prefix}.merged.gff3.gz" : ''}
     touch ${prefix}.curation.tsv ${prefix}.curation.json
     for t in observed discarded novel; do touch ${prefix}_curation_\${t}_mqc.tsv; done
     """

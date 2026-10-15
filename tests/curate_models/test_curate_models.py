@@ -1,36 +1,43 @@
-#!/usr/bin/env python3
-"""Fixture tests for bin/curate_models.py (plans/21, phase A; output format plans/25). Needs gffcompare and gffread on PATH.
+"""pytest suite for bin/curate_models.py: fixture models covering support, ranking, reference filter,
+location classes, reference tags, output format, merged output and ID stability.
+Needs gffcompare and gffread on PATH (dev/environment.yml)."""
 
-    python3 tests/curate_models/test_curate_models.py        # exits 1 on the first failed check
-"""
 import gzip
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
-import tempfile
+from types import SimpleNamespace
+
+import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.join(HERE, '..', '..', 'bin', 'curate_models.py')
+BIN = os.path.join(HERE, '..', '..', 'bin')
+SCRIPT = os.path.join(BIN, 'curate_models.py')
 TARGET = 'Tgt_1'
-FAILS = []
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not (shutil.which('gffcompare') and shutil.which('gffread')), reason='needs gffcompare and gffread on PATH'
+    ),
+]
 
 
-def check(cond, msg):
-    print(('ok    ' if cond else 'FAIL  ') + msg)
-    if not cond:
-        FAILS.append(msg)
-
-
-# ------------------------------------------------------------------ fixtures
 def model(tid, sp, chrom, strand, exons, de=0.1):
     tid = f'{tid}|{sp}'
     s, e = exons[0][0], exons[-1][1]
-    rows = [f'{chrom}\tfomo\tgene\t{s}\t{e}\t1\t{strand}\t.\tID=gene-{tid};source={sp};gene_class=lncRNA',
-            f'{chrom}\tfomo\ttranscript\t{s}\t{e}\t1\t{strand}\t.\tID={tid};Parent=gene-{tid};source={sp};gene_class=lncRNA;AS=100;de={de}']
-    rows += [f'{chrom}\tfomo\texon\t{a}\t{b}\t1\t{strand}\t.\tID={tid}.exon{i};Parent={tid}' for i, (a, b) in enumerate(exons, 1)]
+    rows = [
+        f'{chrom}\tfomo\tgene\t{s}\t{e}\t1\t{strand}\t.\tID=gene-{tid};source={sp};gene_class=lncRNA',
+        f'{chrom}\tfomo\ttranscript\t{s}\t{e}\t1\t{strand}\t.\tID={tid};Parent=gene-{tid};source={sp};gene_class=lncRNA;AS=100;de={de}',
+    ]
+    rows += [
+        f'{chrom}\tfomo\texon\t{a}\t{b}\t1\t{strand}\t.\tID={tid}.exon{i};Parent={tid}'
+        for i, (a, b) in enumerate(exons, 1)
+    ]
     return rows
 
 
@@ -96,31 +103,38 @@ M += model('c17f', 'C', 'chr1', '+', [(10050, 10100), (10200, 10350)])
 M += model('d17f', 'D', 'chr1', '+', [(10050, 10100), (10200, 10350)])
 M += model('e17f', 'E', 'chr1', '+', [(10050, 10100), (10200, 10350)])
 # 18 ref_location classes on chr5 (reference transcripts in REF / REF_GTF)
-LOC = {'a18so|A': 'sense_span_overlap', 'a18ai|A': 'antisense_intronic', 'a18dv|A': 'divergent',
-       'a18dm|A': 'divergent', 'a18far|A': 'intergenic', 'a18cv|A': 'intergenic',
-       'a6|A': 'antisense_exonic', 'a7|A': 'intronic'}
-for sp in ('A', 'B'):
-    lo = sp.lower()
-    M += model(f'{lo}18so', sp, 'chr5', '+', [(1400, 1450), (1600, 1650)])          # straddles ref span 1500-1750 (+)
-    M += model(f'{lo}18ai', sp, 'chr5', '-', [(3600, 3650), (3700, 3750)])          # inside ref (+) intron 3550-3800
-    M += model(f'{lo}18dv', sp, 'chr5', '+', [(5000, 5100), (5200, 5300)])          # ref (-) ends 4800: 5' ends 200 bp apart
-    M += model(f'{lo}18far', sp, 'chr5', '+', [(8000, 8100), (8200, 8300)])        # ref (-) ends 6990: 1010 bp > 1000
-    M += model(f'{lo}18cv', sp, 'chr5', '+', [(13000, 13100), (13200, 13300)])      # ref (-) downstream: tail-to-tail
-    M += model(f'{lo}18dm', sp, 'chr5', '-', [(20000, 20100), (20200, 20300)])      # ref (+) starts 20500: 200 bp
-# 19 (plans/22) nearest reference gene tag on chr6; chr7 has no reference at all
-TAG = {  # rep -> its gene's (ref_location, ref_gene_id, ref_gene_name, ref_gene_biotype, orientation, distance)
-    'a61|A': ('intergenic', 'G1', 'GENEONE', 'protein_coding', 'sense', '700'),      # gene Name + gene_biotype
-    'a62|A': ('intergenic', 'G2', 'REFSEQSYM', 'lnc_RNA', 'antisense', '400'),       # RefSeq gene=; biotype from type
-    'a63|A': ('intergenic', 'G2', 'REFSEQSYM', 'lnc_RNA', 'sense', '1700'),          # tie 1700 vs G3 (+): sense wins
-    'a64|A': ('intronic', 'G3', None, 'lncRNA', 'sense', '0'),                       # exons parented by the gene; no name
-    'a71|A': ('intergenic', None, None, None, None, None),                           # seqid without reference: no ref_* keys
+LOC = {
+    'a18so|A': 'sense_span_overlap',
+    'a18ai|A': 'antisense_intronic',
+    'a18dv|A': 'divergent',
+    'a18dm|A': 'divergent',
+    'a18far|A': 'intergenic',
+    'a18cv|A': 'intergenic',
+    'a6|A': 'antisense_exonic',
+    'a7|A': 'intronic',
 }
 for sp in ('A', 'B'):
     lo = sp.lower()
-    M += model(f'{lo}61', sp, 'chr6', '+', [(2000, 2100), (2200, 2300)])       # G1 (+) ends 1300 -> 700
-    M += model(f'{lo}62', sp, 'chr6', '+', [(4300, 4400), (4500, 4600)])       # G2 (-) starts 5000 -> 400; G1 3000
-    M += model(f'{lo}63', sp, 'chr6', '-', [(7000, 7100), (7200, 7300)])       # G2 (-) ends 5300 / G3 (+) starts 9000
-    M += model(f'{lo}64', sp, 'chr6', '+', [(9120, 9130), (9160, 9180)])       # inside G3's intron 9101-9199
+    M += model(f'{lo}18so', sp, 'chr5', '+', [(1400, 1450), (1600, 1650)])  # straddles ref span 1500-1750 (+)
+    M += model(f'{lo}18ai', sp, 'chr5', '-', [(3600, 3650), (3700, 3750)])  # inside ref (+) intron 3550-3800
+    M += model(f'{lo}18dv', sp, 'chr5', '+', [(5000, 5100), (5200, 5300)])  # ref (-) ends 4800: 5' ends 200 bp apart
+    M += model(f'{lo}18far', sp, 'chr5', '+', [(8000, 8100), (8200, 8300)])  # ref (-) ends 6990: 1010 bp > 1000
+    M += model(f'{lo}18cv', sp, 'chr5', '+', [(13000, 13100), (13200, 13300)])  # ref (-) downstream: tail-to-tail
+    M += model(f'{lo}18dm', sp, 'chr5', '-', [(20000, 20100), (20200, 20300)])  # ref (+) starts 20500: 200 bp
+# 19 (plans/22) nearest reference gene tag on chr6; chr7 has no reference at all
+TAG = {  # rep -> its gene's (ref_location, ref_gene_id, ref_gene_name, ref_gene_biotype, orientation, distance)
+    'a61|A': ('intergenic', 'G1', 'GENEONE', 'protein_coding', 'sense', '700'),  # gene Name + gene_biotype
+    'a62|A': ('intergenic', 'G2', 'REFSEQSYM', 'lnc_RNA', 'antisense', '400'),  # RefSeq gene=; biotype from type
+    'a63|A': ('intergenic', 'G2', 'REFSEQSYM', 'lnc_RNA', 'sense', '1700'),  # tie 1700 vs G3 (+): sense wins
+    'a64|A': ('intronic', 'G3', None, 'lncRNA', 'sense', '0'),  # exons parented by the gene; no name
+    'a71|A': ('intergenic', None, None, None, None, None),  # seqid without reference: no ref_* keys
+}
+for sp in ('A', 'B'):
+    lo = sp.lower()
+    M += model(f'{lo}61', sp, 'chr6', '+', [(2000, 2100), (2200, 2300)])  # G1 (+) ends 1300 -> 700
+    M += model(f'{lo}62', sp, 'chr6', '+', [(4300, 4400), (4500, 4600)])  # G2 (-) starts 5000 -> 400; G1 3000
+    M += model(f'{lo}63', sp, 'chr6', '-', [(7000, 7100), (7200, 7300)])  # G2 (-) ends 5300 / G3 (+) starts 9000
+    M += model(f'{lo}64', sp, 'chr6', '+', [(9120, 9130), (9160, 9180)])  # inside G3's intron 9101-9199
     M += model(f'{lo}71', sp, 'chr7', '+', [(100, 200), (300, 400)])
 # 20 within a chain the longest model is the representative, even with a higher de
 M += model('a20', 'A', 'chr1', '+', [(12000, 12100), (12200, 12500)], de=0.3)
@@ -207,28 +221,62 @@ chr6\tRefSeq\texon\t9000\t9100\t.\t+\t.\tID=exon-g3-1;Parent=G3
 chr6\tRefSeq\texon\t9200\t9300\t.\t+\t.\tID=exon-g3-2;Parent=G3
 """
 
-REF_GTF = '\n'.join(
-    '\t'.join([c, 'ens', 'exon', s, e, '.', st, '.', f'gene_id "{t}"; transcript_id "{t}"; transcript_biotype "{bt}";'])
-    for c, s, e, st, t, bt in [
-        ('chr2', '700', '750', '+', 'trna', 'tRNA'), ('chr2', '1050', '1080', '+', 'm0', 'protein_coding'),
-        ('chr2', '1900', '1950', '+', 'l7', 'lncRNA'), ('chr2', '2500', '2600', '+', 'l7', 'lncRNA'),
-        ('chr2', '3050', '3060', '+', 'm1', 'protein_coding'), ('chr2', '3250', '3260', '+', 'as1', 'antisense'),
-        ('chr2', '4050', '4060', '+', 'cds', 'protein_coding'), ('chr2', '5050', '5060', '+', 'misc', 'misc_RNA'),
-        ('chr2', '6050', '6060', '+', 'mir', 'miRNA'), ('chr3', '5000', '6000', '+', 'c3', 'protein_coding'),
-        ('chr4', '1550', '1560', '+', 'c4b', 'protein_coding'),
-        ('chr5', '1500', '1550', '+', 'so', 'lncRNA'), ('chr5', '1700', '1750', '+', 'so', 'lncRNA'),
-        ('chr5', '3500', '3550', '+', 'ai', 'protein_coding'), ('chr5', '3800', '3850', '+', 'ai', 'protein_coding'),
-        ('chr5', '4500', '4600', '-', 'dv', 'protein_coding'), ('chr5', '4700', '4800', '-', 'dv', 'protein_coding'),
-        ('chr5', '6500', '6600', '-', 'far', 'lncRNA'), ('chr5', '6800', '6990', '-', 'far', 'lncRNA'),
-        ('chr5', '13500', '13600', '-', 'cv', 'protein_coding'), ('chr5', '13700', '13800', '-', 'cv', 'protein_coding'),
-        ('chr5', '20500', '20600', '+', 'dm', 'protein_coding'), ('chr5', '20700', '20800', '+', 'dm', 'protein_coding')]) + '\n' + \
-    ''.join('\t'.join([c, 'ens', 'exon', s, e, '.', st, '.', att]) + '\n' for c, s, e, st, att in [
-        ('chr6', '1000', '1100', '+', 'gene_id "G1"; transcript_id "t1"; gene_name "GENEONE"; gene_biotype "protein_coding";'),
-        ('chr6', '1200', '1300', '+', 'gene_id "G1"; transcript_id "t1"; gene_name "GENEONE"; gene_biotype "protein_coding";'),
-        ('chr6', '5000', '5100', '-', 'gene_id "G2"; transcript_id "t2"; gene_name "REFSEQSYM";'),
-        ('chr6', '5200', '5300', '-', 'gene_id "G2"; transcript_id "t2"; gene_name "REFSEQSYM";'),
-        ('chr6', '9000', '9100', '+', 'gene_id "G3"; transcript_id "t3"; gene_type "lncRNA";'),
-        ('chr6', '9200', '9300', '+', 'gene_id "G3"; transcript_id "t3"; gene_type "lncRNA";')])
+REF_GTF = (
+    '\n'.join(
+        '\t'.join(
+            [c, 'ens', 'exon', s, e, '.', st, '.', f'gene_id "{t}"; transcript_id "{t}"; transcript_biotype "{bt}";']
+        )
+        for c, s, e, st, t, bt in [
+            ('chr2', '700', '750', '+', 'trna', 'tRNA'),
+            ('chr2', '1050', '1080', '+', 'm0', 'protein_coding'),
+            ('chr2', '1900', '1950', '+', 'l7', 'lncRNA'),
+            ('chr2', '2500', '2600', '+', 'l7', 'lncRNA'),
+            ('chr2', '3050', '3060', '+', 'm1', 'protein_coding'),
+            ('chr2', '3250', '3260', '+', 'as1', 'antisense'),
+            ('chr2', '4050', '4060', '+', 'cds', 'protein_coding'),
+            ('chr2', '5050', '5060', '+', 'misc', 'misc_RNA'),
+            ('chr2', '6050', '6060', '+', 'mir', 'miRNA'),
+            ('chr3', '5000', '6000', '+', 'c3', 'protein_coding'),
+            ('chr4', '1550', '1560', '+', 'c4b', 'protein_coding'),
+            ('chr5', '1500', '1550', '+', 'so', 'lncRNA'),
+            ('chr5', '1700', '1750', '+', 'so', 'lncRNA'),
+            ('chr5', '3500', '3550', '+', 'ai', 'protein_coding'),
+            ('chr5', '3800', '3850', '+', 'ai', 'protein_coding'),
+            ('chr5', '4500', '4600', '-', 'dv', 'protein_coding'),
+            ('chr5', '4700', '4800', '-', 'dv', 'protein_coding'),
+            ('chr5', '6500', '6600', '-', 'far', 'lncRNA'),
+            ('chr5', '6800', '6990', '-', 'far', 'lncRNA'),
+            ('chr5', '13500', '13600', '-', 'cv', 'protein_coding'),
+            ('chr5', '13700', '13800', '-', 'cv', 'protein_coding'),
+            ('chr5', '20500', '20600', '+', 'dm', 'protein_coding'),
+            ('chr5', '20700', '20800', '+', 'dm', 'protein_coding'),
+        ]
+    )
+    + '\n'
+    + ''.join(
+        '\t'.join([c, 'ens', 'exon', s, e, '.', st, '.', att]) + '\n'
+        for c, s, e, st, att in [
+            (
+                'chr6',
+                '1000',
+                '1100',
+                '+',
+                'gene_id "G1"; transcript_id "t1"; gene_name "GENEONE"; gene_biotype "protein_coding";',
+            ),
+            (
+                'chr6',
+                '1200',
+                '1300',
+                '+',
+                'gene_id "G1"; transcript_id "t1"; gene_name "GENEONE"; gene_biotype "protein_coding";',
+            ),
+            ('chr6', '5000', '5100', '-', 'gene_id "G2"; transcript_id "t2"; gene_name "REFSEQSYM";'),
+            ('chr6', '5200', '5300', '-', 'gene_id "G2"; transcript_id "t2"; gene_name "REFSEQSYM";'),
+            ('chr6', '9000', '9100', '+', 'gene_id "G3"; transcript_id "t3"; gene_type "lncRNA";'),
+            ('chr6', '9200', '9300', '+', 'gene_id "G3"; transcript_id "t3"; gene_type "lncRNA";'),
+        ]
+    )
+)
 
 
 def run(tmp, name, gff_rows, extra, ref=None):
@@ -237,10 +285,7 @@ def run(tmp, name, gff_rows, extra, ref=None):
         o.write('##gff-version 3\n' + ''.join(r + '\n' for r in gff_rows))
     prefix = os.path.join(tmp, name, f'{TARGET}.curated.lnc_RNA')
     cmd = [sys.executable, SCRIPT, '--gff', gff, '--prefix', prefix] + extra + (['--ref', ref] if ref else [])
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stderr)
-    return r, prefix
+    return subprocess.run(cmd, capture_output=True, text=True), prefix
 
 
 def read_gff(path):
@@ -268,270 +313,488 @@ def gene_of(genes, tx, rid):
     return genes[t[1]['Parent']][1] if t else {}
 
 
-def main():
-    tmp = tempfile.mkdtemp(prefix='curate_test_')
-    ref = os.path.join(tmp, 'ref.gff3')
-    with open(ref, 'w') as o:
-        o.write(REF)
-    ref_gtf = os.path.join(tmp, 'ref.gtf')
-    with open(ref_gtf, 'w') as o:
-        o.write(REF_GTF)
+def read_text(path):
+    with gzip.open(path, 'rt') as fh:
+        return fh.read()
 
-    # ---- main run: GFF3 reference
+
+@pytest.fixture(scope='module')
+def tmp(tmp_path_factory):
+    return str(tmp_path_factory.mktemp('curate'))
+
+
+@pytest.fixture(scope='module')
+def ref(tmp):
+    path = os.path.join(tmp, 'ref.gff3')
+    with open(path, 'w') as o:
+        o.write(REF)
+    return path
+
+
+@pytest.fixture(scope='module')
+def ref_gtf(tmp):
+    path = os.path.join(tmp, 'ref.gtf')
+    with open(path, 'w') as o:
+        o.write(REF_GTF)
+    return path
+
+
+@pytest.fixture(scope='module')
+def main(tmp, ref):
+    """The main run: every fixture model, GFF3 reference."""
     r, pre = run(tmp, 'main', M, [], ref)
-    check(r.returncode == 0, 'main run exits 0')
+    assert r.returncode == 0, r.stderr
     genes, tx, exons = read_gff(pre + '.gff3.gz')
-    rep = set(tx)
-    G = lambda rid: gene_of(genes, tx, rid)
-    T = lambda rid: tx.get(rid, (None, {}))[1]
-    R = json.load(open(pre + '.curation.json'))
-    o, d, n = R['observed'], R['discarded_by_reference'], R['novel']
-    check('b1|B' in rep and 'a1|A' not in rep, '1  shared chain kept; equal length -> lowest de (b1)')
-    check(not any(x.startswith(('a2x', 'a2y')) for x in rep), '2  same-species duplicate chain is not supported')
-    check(T('a3|A').get('Parent') and T('a3|A').get('Parent') == T('c3|C').get('Parent'),
-          '3  chains sharing one SJ -> one gene with two transcripts (a3, c3)')
-    check(T('a3|A').get('ID', '').startswith('fomo_lncRNA_t1_') and T('c3|C').get('ID', '').startswith('fomo_lncRNA_t2_'),
-          '3  equal species -> more SJs is t1')
-    check(G('a3|A').get('n_chains') == '2' and G('a3|A').get('n_species') == '4', '3  gene reports n_chains=2, n_species=4')
-    check(T('a3|A').get('supporting_species') == 'A,B' and T('a3|A').get('supporting_transcripts') == 'a3|A,b3|B'
-          and T('c3|C').get('supporting_transcripts') == 'c3|C,d3|D',
-          '3  each transcript lists its own chain support')
-    check(len([x for x in rep if x[:3] in ('a4p', 'b4p', 'c4q', 'd4q')]) == 2
-          and T('a4p|A').get('Parent') != T('c4q|C').get('Parent'), '4  unsupported bridge does not merge two genes')
-    check(T('a8r2|A').get('ID', '').startswith('fomo_lncRNA_t1_') and T('a8r1|A').get('ID', '').startswith('fomo_lncRNA_t2_')
-          and T('a8r1|A').get('Parent') == T('a8r2|A').get('Parent'), '8  equal SJ count -> more supporting species is t1')
-    check('m_a|B' in rep and 'm_b|A' not in rep, '8b full tie -> smallest ID')
-    check(T('x%2Cy|B').get('supporting_transcripts') == 'x%2Cy|B,xy|C', '9  escaped comma in ID kept verbatim in supporting_transcripts')
-    check(o['single_exon'] == 2, '10 single-exon models counted and skipped')
-    check(o['self_excluded'] == 1 and not any(x.startswith(('t14', 'a14')) for x in rep), '14 self projection gives no support')
-    check(not any(x.startswith(('a5', 'b5')) for x in rep), '5  ref exon removes b5 -> chain loses support')
-    check(d.get('chains_lost_by_type:tRNA') == 1, '5  lost chain reported under tRNA')
-    check('a6|A' in rep or 'b6|B' in rep, '6  opposite-strand ref exon does not remove (same-strand rule)')
-    check(n.get('genes_location:antisense_exonic') == 2, '6  counted as antisense_exonic (with 22)')
-    check('a7|A' in rep or 'b7|B' in rep, '7  inside a ref intron is kept')
-    check(n.get('genes_location:intronic') == 2, '7  counted as intronic (with 19 a64)')
-    check(T('c17f|C').get('ID', '').startswith('fomo_lncRNA_t1_') and T('a17l|A').get('ID', '').startswith('fomo_lncRNA_t2_'),
-          '17 support first: F (1 SJ, 3 sp) is t1, L (3 SJs, 2 sp) is t2')
-    check(T('a17l|A').get('n_sj') == '3' and T('c17f|C').get('n_sj') == '1' and G('a17l|A').get('n_chains') == '2'
-          and G('a17l|A').get('n_species') == '5' and T('c17f|C').get('supporting_species') == 'C,D,E',
-          '17 transcripts report their own SJs / species; gene n_chains=2, n_species=5')
-    check('a20|A' in rep and 'b20|B' not in rep, '20 longest model is the representative despite a higher de')
-    check(T('a21q|A').get('ID', '').startswith('fomo_lncRNA_t1_') and T('a21p|A').get('ID', '').startswith('fomo_lncRNA_t2_'),
-          '21 equal species and SJs -> the longer chain is t1')
-    g22 = G('a22u|A')
-    check(T('a22u|A').get('ID', '').startswith('fomo_lncRNA_t1_') and T('d22v|D').get('Parent') == T('a22u|A').get('Parent'),
-          '22 U (3 sp) is t1, V in the same gene')
-    check(g22.get('ref_location') == 'antisense_exonic' and g22.get('ref_gene_id') == 'gene-c4b',
-          "22 gene location is computed on the footprint (t2's antisense exon), not on t1")
-    gf = genes.get(T('a22u|A').get('Parent'), ([None] * 9,))[0]
-    check(gf[3] == '1000' and gf[4] == '1600', '22 gene span covers all its transcripts')
+    with open(pre + '.curation.json') as fh:
+        report = json.load(fh)
+    return SimpleNamespace(
+        pre=pre,
+        genes=genes,
+        tx=tx,
+        exons=exons,
+        rep=set(tx),
+        o=report['observed'],
+        d=report['discarded_by_reference'],
+        n=report['novel'],
+        G=lambda rid: gene_of(genes, tx, rid),
+        T=lambda rid: tx.get(rid, (None, {}))[1],
+    )
+
+
+@pytest.fixture(scope='module')
+def cm():
+    sys.path.insert(0, BIN)
+    import curate_models
+
+    return curate_models
+
+
+EXPECTED_REPRESENTATIVES = (
+    {
+        'b1|B',
+        'a3|A',
+        'c3|C',
+        'a4p|A',
+        'c4q|C',
+        'a8r1|A',
+        'a8r2|A',
+        'm_a|B',
+        'x%2Cy|B',
+        'a6|A',
+        'a7|A',
+        'a15|A',
+        'a17l|A',
+        'c17f|C',
+        'a20|A',
+        'a21p|A',
+        'a21q|A',
+        'd22v|D',
+    }
+    | set(LOC)
+    | set(TAG)
+)
+
+
+def is_tn(attrs, n):
+    return attrs.get('ID', '').startswith(f'fomo_lncRNA_t{n}_')
+
+
+def test_chain_support(main):
+    rep, tx_of, o = main.rep, main.T, main.o
+    assert 'b1|B' in rep and 'a1|A' not in rep, '1  shared chain kept; equal length -> lowest de (b1)'
+    assert not any(x.startswith(('a2x', 'a2y')) for x in rep), '2  same-species duplicate chain is not supported'
+    assert tx_of('a3|A').get('Parent') and tx_of('a3|A').get('Parent') == tx_of('c3|C').get('Parent'), (
+        '3  chains sharing one SJ -> one gene with two transcripts (a3, c3)'
+    )
+    assert len([x for x in rep if x[:3] in ('a4p', 'b4p', 'c4q', 'd4q')]) == 2 and tx_of('a4p|A').get(
+        'Parent'
+    ) != tx_of('c4q|C').get('Parent'), '4  unsupported bridge does not merge two genes'
+    assert tx_of('x%2Cy|B').get('supporting_transcripts') == 'x%2Cy|B,xy|C', (
+        '9  escaped comma in ID kept verbatim in supporting_transcripts'
+    )
+    assert o['single_exon'] == 2, '10 single-exon models counted and skipped'
+    assert o['self_excluded'] == 1 and not any(x.startswith(('t14', 'a14')) for x in rep), (
+        '14 self projection gives no support'
+    )
+
+
+def test_transcript_ranking(main):
+    tx_of, gene_attrs = main.T, main.G
+    assert is_tn(tx_of('a3|A'), 1) and is_tn(tx_of('c3|C'), 2), '3  equal species -> more SJs is t1'
+    assert gene_attrs('a3|A').get('n_chains') == '2' and gene_attrs('a3|A').get('n_species') == '4', (
+        '3  gene reports n_chains=2, n_species=4'
+    )
+    assert (
+        tx_of('a3|A').get('supporting_species') == 'A,B'
+        and tx_of('a3|A').get('supporting_transcripts') == 'a3|A,b3|B'
+        and tx_of('c3|C').get('supporting_transcripts') == 'c3|C,d3|D'
+    ), '3  each transcript lists its own chain support'
+    assert (
+        is_tn(tx_of('a8r2|A'), 1)
+        and is_tn(tx_of('a8r1|A'), 2)
+        and tx_of('a8r1|A').get('Parent') == tx_of('a8r2|A').get('Parent')
+    ), '8  equal SJ count -> more supporting species is t1'
+    assert 'm_a|B' in main.rep and 'm_b|A' not in main.rep, '8b full tie -> smallest ID'
+    assert is_tn(tx_of('c17f|C'), 1) and is_tn(tx_of('a17l|A'), 2), (
+        '17 support first: F (1 SJ, 3 sp) is t1, L (3 SJs, 2 sp) is t2'
+    )
+    assert (
+        tx_of('a17l|A').get('n_sj') == '3'
+        and tx_of('c17f|C').get('n_sj') == '1'
+        and gene_attrs('a17l|A').get('n_chains') == '2'
+        and gene_attrs('a17l|A').get('n_species') == '5'
+        and tx_of('c17f|C').get('supporting_species') == 'C,D,E'
+    ), '17 transcripts report their own SJs / species; gene n_chains=2, n_species=5'
+    assert 'a20|A' in main.rep and 'b20|B' not in main.rep, '20 longest model is the representative despite a higher de'
+    assert is_tn(tx_of('a21q|A'), 1) and is_tn(tx_of('a21p|A'), 2), '21 equal species and SJs -> the longer chain is t1'
+    assert is_tn(tx_of('a22u|A'), 1) and tx_of('d22v|D').get('Parent') == tx_of('a22u|A').get('Parent'), (
+        '22 U (3 sp) is t1, V in the same gene'
+    )
+    g22 = gene_attrs('a22u|A')
+    assert g22.get('ref_location') == 'antisense_exonic' and g22.get('ref_gene_id') == 'gene-c4b', (
+        "22 gene location is computed on the footprint (t2's antisense exon), not on t1"
+    )
+    gf = main.genes.get(tx_of('a22u|A').get('Parent'), ([None] * 9,))[0]
+    assert gf[3] == '1000' and gf[4] == '1600', '22 gene span covers all its transcripts'
+
+
+def test_reference_filter(main):
+    rep, d, n = main.rep, main.d, main.n
+    assert not any(x.startswith(('a5', 'b5')) for x in rep), '5  ref exon removes b5 -> chain loses support'
+    assert d.get('chains_lost_by_type:tRNA') == 1, '5  lost chain reported under tRNA'
+    assert 'a6|A' in rep or 'b6|B' in rep, '6  opposite-strand ref exon does not remove (same-strand rule)'
+    assert n.get('genes_location:antisense_exonic') == 2, '6  counted as antisense_exonic (with 22)'
+    assert 'a7|A' in rep or 'b7|B' in rep, '7  inside a ref intron is kept'
+    assert n.get('genes_location:intronic') == 2, '7  counted as intronic (with 19 a64)'
+    assert d.get('chains_lost_by_type:mRNA') == 2 and d.get('chains_lost_by_type:antisense_RNA') == 1, (
+        '16 mRNA + antisense_RNA chain counted once per type (mRNA also from the CDS-only model)'
+    )
+    assert d.get('chains_lost_by_primary_type:mRNA') == 2 and 'chains_lost_by_primary_type:antisense_RNA' not in d, (
+        '16 primary type: mRNA wins over antisense_RNA'
+    )
+    assert d.get('chains_lost_by_type:transcript:misc_RNA') == 1, (
+        '16 RefSeq misc_RNA transcript labelled transcript:misc_RNA'
+    )
+    assert d.get('chains_lost_by_type:miRNA') == 1, '16 childless miRNA counted by its span'
+    tot_primary = sum(v for k, v in d.items() if k.startswith('chains_lost_by_primary_type:'))
+    assert tot_primary == d['supported_chains_lost'], '16 primary-type counts add up to supported_chains_lost'
+
+
+def test_ref_location_and_tags(main):
+    gene_attrs, genes, tx, n = main.G, main.genes, main.tx, main.n
     for rid, want in LOC.items():
-        check(G(rid).get('ref_location') == want, f"18 {rid} ref_location={want} (got {G(rid).get('ref_location')})")
-    check(not any(k.startswith('ref_') for _, a in tx.values() for k in a), '18 ref_* attributes only on gene rows')
-    far = G('a18far|A')
-    check(far.get('ref_distance') == '1010' and far.get('ref_gene_id') == 'rna-far'
-          and far.get('ref_gene_biotype') == 'lnc_RNA' and far.get('ref_gene_orientation') == 'antisense',
-          '18 intergenic just beyond --divergent-dist: nearest rna-far (lnc_RNA, antisense), ref_distance=1010')
-    for rid, (lc, gid, nm, bio, ori, dist) in TAG.items():
-        a = G(rid)
-        got = tuple(a.get(k) for k in ('ref_location', 'ref_gene_id', 'ref_gene_name', 'ref_gene_biotype',
-                                       'ref_gene_orientation', 'ref_distance'))
-        check(got == (lc, gid, nm, bio, ori, dist), f'19 {rid} tag {got}')
-    check(not any('ref_nearest' in a for _, a in genes.values()), '19 ref_nearest no longer written')
-    check(not any(v == '.' for _, a in list(genes.values()) + list(tx.values()) for v in a.values()),
-          "19 no attribute is written as '.'")
-    inter = [int(a['ref_distance']) for _, a in genes.values() if a.get('ref_location') == 'intergenic' and 'ref_distance' in a]
-    check(n.get('intergenic_distance_n') == len(inter) and n.get('intergenic_distance_min') == min(inter)
-          and n.get('intergenic_distance_max') == max(inter), f"19 intergenic distance stats ({n.get('intergenic_distance_n')} genes)")
-    dv = G('a18dv|A')
-    check(dv.get('ref_distance') == '200', '18 divergent: ref_distance=200')
-    check(dv.get('ref_gene_id') == 'rna-dv' and dv.get('ref_gene_orientation') == 'antisense',
-          '18 divergent: tagged with its head-to-head partner rna-dv (antisense)')
-    check(all(a.get('ref_distance') == '0' for _, a in genes.values() if a.get('ref_location') in
-              ('antisense_exonic', 'intronic', 'sense_span_overlap', 'antisense_intronic')), '18 overlapping classes have ref_distance=0')
+        assert gene_attrs(rid).get('ref_location') == want, (
+            f"18 {rid} ref_location={want} (got {gene_attrs(rid).get('ref_location')})"
+        )
+    assert not any(k.startswith('ref_') for _, a in tx.values() for k in a), '18 ref_* attributes only on gene rows'
+    far = gene_attrs('a18far|A')
+    assert (
+        far.get('ref_distance') == '1010'
+        and far.get('ref_gene_id') == 'rna-far'
+        and far.get('ref_gene_biotype') == 'lnc_RNA'
+        and far.get('ref_gene_orientation') == 'antisense'
+    ), '18 intergenic just beyond --divergent-dist: nearest rna-far (lnc_RNA, antisense), ref_distance=1010'
+    for rid, want in TAG.items():
+        a = gene_attrs(rid)
+        got = tuple(
+            a.get(k)
+            for k in (
+                'ref_location',
+                'ref_gene_id',
+                'ref_gene_name',
+                'ref_gene_biotype',
+                'ref_gene_orientation',
+                'ref_distance',
+            )
+        )
+        assert got == want, f'19 {rid} tag {got}'
+    assert not any('ref_nearest' in a for _, a in genes.values()), '19 ref_nearest is not written'
+    assert not any(v == '.' for _, a in list(genes.values()) + list(tx.values()) for v in a.values()), (
+        "19 no attribute is written as '.'"
+    )
+    inter = [
+        int(a['ref_distance'])
+        for _, a in genes.values()
+        if a.get('ref_location') == 'intergenic' and 'ref_distance' in a
+    ]
+    assert (
+        n.get('intergenic_distance_n') == len(inter)
+        and n.get('intergenic_distance_min') == min(inter)
+        and n.get('intergenic_distance_max') == max(inter)
+    ), '19 intergenic distance stats'
+    dv = gene_attrs('a18dv|A')
+    assert dv.get('ref_distance') == '200', '18 divergent: ref_distance=200'
+    assert dv.get('ref_gene_id') == 'rna-dv' and dv.get('ref_gene_orientation') == 'antisense', (
+        '18 divergent: tagged with its head-to-head partner rna-dv (antisense)'
+    )
+    assert all(
+        a.get('ref_distance') == '0'
+        for _, a in genes.values()
+        if a.get('ref_location') in ('antisense_exonic', 'intronic', 'sense_span_overlap', 'antisense_intronic')
+    ), '18 overlapping classes have ref_distance=0'
     loc_tot = sum(v for k, v in n.items() if k.startswith('genes_location:'))
     nloc = {k.split(':', 1)[1]: v for k, v in n.items() if k.startswith('genes_location:')}
-    check(loc_tot == n['genes'] and len(nloc) == 7 and nloc['no_reference'] == 0 and nloc['divergent'] == 2,
-          f'18 all 7 genes_location classes written, sum to genes ({nloc})')
-    check(d.get('chains_lost_by_type:mRNA') == 2 and d.get('chains_lost_by_type:antisense_RNA') == 1,
-          '16 mRNA + antisense_RNA chain counted once per type (mRNA also from the CDS-only model)')
-    check(d.get('chains_lost_by_primary_type:mRNA') == 2 and 'chains_lost_by_primary_type:antisense_RNA' not in d,
-          '16 primary type: mRNA wins over antisense_RNA')
-    check(d.get('chains_lost_by_type:transcript:misc_RNA') == 1, '16 RefSeq misc_RNA transcript labelled transcript:misc_RNA')
-    check(d.get('chains_lost_by_type:miRNA') == 1, '16 childless miRNA counted by its span')
-    tot_primary = sum(v for k, v in d.items() if k.startswith('chains_lost_by_primary_type:'))
-    check(tot_primary == d['supported_chains_lost'], '16 primary-type counts add up to supported_chains_lost')
-    exp_tx = {'b1|B', 'a3|A', 'c3|C', 'a4p|A', 'c4q|C', 'a8r1|A', 'a8r2|A', 'm_a|B', 'x%2Cy|B', 'a6|A', 'a7|A', 'a15|A',
-              'a17l|A', 'c17f|C', 'a20|A', 'a21p|A', 'a21q|A', 'd22v|D'} | set(LOC) | set(TAG)
-    check(rep == exp_tx, f'expected representatives exactly ({sorted(rep ^ exp_tx)})')
-    check(n['genes'] == len(genes) and n['transcripts'] == len(tx) == len(exp_tx)
-          and n['genes'] == len(exp_tx) - 5, f"report: {n['genes']} genes, {n['transcripts']} transcripts")
+    assert loc_tot == n['genes'] and len(nloc) == 7 and nloc['no_reference'] == 0 and nloc['divergent'] == 2, (
+        f'18 all 7 genes_location classes written, sum to genes ({nloc})'
+    )
 
-    # plans/25 format
-    check(all(a.get('biotype') == 'lncRNA' for _, a in list(genes.values()) + list(tx.values())),
-          'biotype=lncRNA on genes and transcripts')
-    check(all(f[2] == 'lnc_RNA' and f[5] == '.' for f, _ in tx.values()) and all(f[5] == '.' for f, _ in genes.values()),
-          'transcripts typed lnc_RNA; column 6 is . everywhere')
-    check(all(set(a) == {'ID', 'Parent', 'biotype', 'representative_transcript', 'supporting_transcripts',
-                         'supporting_species', 'n_sj'} for _, a in tx.values()), 'transcript attributes exactly the plans/25 set')
-    check(all(a['ID'] == f"fomo_lncRNA_g_{a['ID'][-12:]}" and len(a['ID']) == len('fomo_lncRNA_g_') + 12 for _, a in genes.values())
-          and all(a['ID'] == f"fomo_lncRNA_t{a['ID'].split('_t')[1].split('_')[0]}_{a['Parent'][-12:]}" for _, a in tx.values()),
-          'IDs fomo_lncRNA_g_<H> / fomo_lncRNA_t<n>_<H>, transcripts share their gene hash')
+
+def test_expected_representatives_and_report(main):
+    assert main.rep == EXPECTED_REPRESENTATIVES, f'{sorted(main.rep ^ EXPECTED_REPRESENTATIVES)}'
+    n = main.n
+    assert (
+        n['genes'] == len(main.genes)
+        and n['transcripts'] == len(main.tx) == len(EXPECTED_REPRESENTATIVES)
+        and n['genes'] == len(EXPECTED_REPRESENTATIVES) - 5
+    )
+
+
+def test_output_format(main):
+    genes, tx, exons, tx_of = main.genes, main.tx, main.exons, main.T
+    assert all(a.get('biotype') == 'lncRNA' for _, a in list(genes.values()) + list(tx.values())), (
+        'biotype=lncRNA on genes and transcripts'
+    )
+    assert all(f[2] == 'lnc_RNA' and f[5] == '.' for f, _ in tx.values()) and all(
+        f[5] == '.' for f, _ in genes.values()
+    ), 'transcripts typed lnc_RNA; column 6 is . everywhere'
+    assert all(
+        set(a)
+        == {
+            'ID',
+            'Parent',
+            'biotype',
+            'representative_transcript',
+            'supporting_transcripts',
+            'supporting_species',
+            'n_sj',
+        }
+        for _, a in tx.values()
+    ), 'transcript attributes exactly the set'
+    assert all(
+        a['ID'] == f"fomo_lncRNA_g_{a['ID'][-12:]}" and len(a['ID']) == len('fomo_lncRNA_g_') + 12
+        for _, a in genes.values()
+    ), 'gene IDs fomo_lncRNA_g_<H>'
+    assert all(
+        a['ID'] == f"fomo_lncRNA_t{a['ID'].split('_t')[1].split('_')[0]}_{a['Parent'][-12:]}" for _, a in tx.values()
+    ), 'transcript IDs fomo_lncRNA_t<n>_<H> share their gene hash'
     for f, a in tx.values():
-        m = [(ef, ea) for ef, ea in exons if ea['Parent'] == a['ID']]
-        nums = [int(re.search(r'_t\d+e(\d+)_', ea['ID']).group(1)) for _, ea in m]
-        want = list(range(1, len(m) + 1)) if f[6] == '+' else list(range(len(m), 0, -1))
-        if nums != want or [int(ef[3]) for ef, _ in m] != sorted(int(ef[3]) for ef, _ in m):
-            check(False, f"exon numbering of {a['ID']}: {nums}")
-            break
-    else:
-        check(True, "exons in genomic order, numbered 5'->3' (rightmost is e1 on '-')")
-    me = [ea['ID'] for _, ea in exons if ea['Parent'] == T('m_a|B').get('ID')]
-    check(me and me[0].startswith('fomo_lncRNA_t1e2_') and me[1].startswith('fomo_lncRNA_t1e1_'), "8b '-' strand: rows t1e2, t1e1")
+        rows = [(ef, ea) for ef, ea in exons if ea['Parent'] == a['ID']]
+        nums = [int(re.search(r'_t\d+e(\d+)_', ea['ID']).group(1)) for _, ea in rows]
+        want = list(range(1, len(rows) + 1)) if f[6] == '+' else list(range(len(rows), 0, -1))
+        assert nums == want, f"exon numbering of {a['ID']}: {nums}"
+        assert [int(ef[3]) for ef, _ in rows] == sorted(int(ef[3]) for ef, _ in rows), f"exon order of {a['ID']}"
+    me = [ea['ID'] for _, ea in exons if ea['Parent'] == tx_of('m_a|B').get('ID')]
+    assert me and me[0].startswith('fomo_lncRNA_t1e2_') and me[1].startswith('fomo_lncRNA_t1e1_'), (
+        "8b '-' strand: rows t1e2, t1e1"
+    )
     ids = list(genes) + [a['ID'] for _, a in tx.values()] + [a['ID'] for _, a in exons]
-    check(len(ids) == len(set(ids)), f'every ID unique ({len(ids)})')
+    assert len(ids) == len(set(ids)), 'every ID unique'
+
+
+def test_gffread_reads_curated(main, tmp):
     plain = os.path.join(tmp, 'curated_plain.gff3')
-    open(plain, 'w').write(gzip.open(pre + '.gff3.gz', 'rt').read())
+    with open(plain, 'w') as o:
+        o.write(read_text(main.pre + '.gff3.gz'))
     g = subprocess.run(['gffread', '-E', '-T', '-o', '-', plain], capture_output=True, text=True)
     gtx = {ln.split('transcript_id "')[1].split('"')[0] for ln in g.stdout.splitlines() if 'transcript_id' in ln}
-    check(g.returncode == 0 and gtx == {a['ID'] for _, a in tx.values()}, 'gffread reads one transcript per chain (lnc_RNA rows)')
+    assert g.returncode == 0 and gtx == {a['ID'] for _, a in main.tx.values()}, 'one transcript per chain'
 
-    # merged file
-    merged = pre + '.merged.gff3.gz'
-    check(os.path.exists(merged), '15 merged file written')
-    lines = gzip.open(merged, 'rt').read().splitlines()
+
+def test_merged_file(main):
+    merged = main.pre + '.merged.gff3.gz'
+    assert os.path.exists(merged), '15 merged file written'
+    lines = read_text(merged).splitlines()
     feat = [ln.split('\t') for ln in lines if ln and ln[0] != '#']
     ids = [kv[3:] for f in feat for kv in f[8].split(';') if kv.startswith('ID=')]
-    check(len(ids) == len(set(ids)), '15 merged IDs unique')
+    assert len(ids) == len(set(ids)), '15 merged IDs unique'
     order = [f[0] for f in feat]
     blocks = [c for i, c in enumerate(order) if i == 0 or c != order[i - 1]]
-    check(len(blocks) == len(set(blocks)), f'15 merged seqids contiguous ({blocks})')
-    check(blocks == ['chr2', 'chr3', 'chr4', 'chr5', 'chr6', 'chr1', 'chr7'],
-          f'15 curated chr2/3/4/5/6 genes inside their seqid block, chr1/chr7 appended ({blocks})')
+    assert len(blocks) == len(set(blocks)), f'15 merged seqids contiguous ({blocks})'
+    assert blocks == ['chr2', 'chr3', 'chr4', 'chr5', 'chr6', 'chr1', 'chr7'], (
+        f'15 curated chr2/3/4/5/6 genes inside their seqid block, chr1/chr7 appended ({blocks})'
+    )
     ref_lines = [ln for ln in REF.splitlines() if ln]
-    check([ln for ln in lines if '\tfomo\t' not in ln and not ln.startswith('# curate_models')] == ref_lines,
-          '15 reference lines verbatim and in order')
-    r2 = subprocess.run(['gffread', '-E', '-o', os.devnull, '/dev/stdin'], input='\n'.join(lines) + '\n', capture_output=True, text=True)
-    check(r2.returncode == 0, '15 gffread accepts merged')
+    assert [ln for ln in lines if '\tfomo\t' not in ln and not ln.startswith('# curate_models')] == ref_lines, (
+        '15 reference lines verbatim and in order'
+    )
+    r2 = subprocess.run(
+        ['gffread', '-E', '-o', os.devnull, '/dev/stdin'], input='\n'.join(lines) + '\n', capture_output=True, text=True
+    )
+    assert r2.returncode == 0, '15 gffread accepts merged'
 
-    # 15 a reference without a ##gff-version line: the merged file gets one, then the reference verbatim
+
+def test_merged_without_gff_version_header(tmp):
     ref_nh = os.path.join(tmp, 'ref_noheader.gff3')
-    open(ref_nh, 'w').write(REF.split('\n', 1)[1])
-    r, pre_nh = run(tmp, 'noheader', M, [], ref_nh)
-    lines_nh = gzip.open(pre_nh + '.merged.gff3.gz', 'rt').read().splitlines()
-    check(r.returncode == 0 and lines_nh[0] == '##gff-version 3' and lines_nh[1].startswith('# curate_models')
-          and [ln for ln in lines_nh[2:] if '\tfomo\t' not in ln] == ref_lines[1:],
-          '15 reference without ##gff-version: header added, reference lines verbatim')
+    with open(ref_nh, 'w') as o:
+        o.write(REF.split('\n', 1)[1])
+    r, pre = run(tmp, 'noheader', M, [], ref_nh)
+    lines = read_text(pre + '.merged.gff3.gz').splitlines()
+    ref_lines = [ln for ln in REF.splitlines() if ln]
+    assert (
+        r.returncode == 0
+        and lines[0] == '##gff-version 3'
+        and lines[1].startswith('# curate_models')
+        and [ln for ln in lines[2:] if '\tfomo\t' not in ln] == ref_lines[1:]
+    ), '15 reference without ##gff-version: header added, reference lines verbatim'
 
-    # 12 no reference
-    r, pre2 = run(tmp, 'noref', M, [])
-    check(r.returncode == 0 and not os.path.exists(pre2 + '.merged.gff3.gz'), '12 no reference -> no merged file')
-    g2, tx2, _ = read_gff(pre2 + '.gff3.gz')
-    check(set(tx2) == exp_tx | {'b5|B', 'a16|A', 'a16c|A', 'a16m|A', 'a16r|A'},
-          f'12 without reference every supported chain is kept ({len(tx2)})')
-    check(all(a.get('ref_location') == 'no_reference' and not any(k.startswith('ref_') and k != 'ref_location' for k in a)
-              for _, a in g2.values()), '12 without reference: ref_location=no_reference, no other ref_* key')
-    n2 = json.load(open(pre2 + '.curation.json'))['novel']
-    check(n2.get('genes_location:no_reference') == n2['genes'] and n2.get('genes_location:intergenic') == 0,
-          '12 every location class written; all genes no_reference')
-    # 14 keep-self
-    r, pre3 = run(tmp, 'keepself', M, ['--keep-self'])
-    _, tx3, _ = read_gff(pre3 + '.gff3.gz')
-    check(any(x in ('t14|Tgt_1', 'a14|A') for x in tx3), '14 --keep-self lets the target support')
-    # 13 GTF reference: same curated set as the GFF3 reference
-    r, pre4 = run(tmp, 'gtf', M, [], ref_gtf)
-    check(r.returncode == 0, '13 GTF reference run exits 0')
-    g4, tx4, _ = read_gff(pre4 + '.gff3.gz')
-    check(set(tx4) == exp_tx, '13 GTF reference gives the same curated set')
-    G4 = lambda rid: gene_of(g4, tx4, rid)
-    check(all(G4(k).get('ref_location') == v for k, v in LOC.items()), '13 GTF reference gives the same ref_location classes')
-    check(G4('a61|A').get('ref_gene_name') == 'GENEONE' and G4('a61|A').get('ref_gene_biotype') == 'protein_coding'
-          and G4('a62|A').get('ref_gene_name') == 'REFSEQSYM' and G4('a64|A').get('ref_gene_biotype') == 'lncRNA'
-          and G4('a64|A').get('ref_gene_id') == 'G3' and 'ref_gene_id' not in G4('a71|A'),
-          '19 GTF reference: gene_name / gene_biotype / gene_type and gene_id tags')
-    check(set(g4) == set(genes), '13 IDs do not depend on the reference format')
-    # the consistency guard exits 1 on a tag that contradicts its class
-    sys.path.insert(0, os.path.dirname(SCRIPT))
-    import curate_models as cm
-    for loc, bad in (('intronic', dict(gene='g', name='.', biotype='.', orientation='sense', distance=5)),
-                     ('antisense_exonic', dict(gene='g', name='.', biotype='.', orientation='sense', distance=0)),
-                     ('divergent', dict(gene='g', name='.', biotype='.', orientation='antisense', distance=5000))):
-        try:
-            cm.check_location(loc, bad, 1000, 'x')
-            check(False, f'19 guard rejects {loc} {bad}')
-        except SystemExit as ex:
-            check(ex.code == 1, f'19 guard rejects {loc} with {bad["orientation"]} / distance {bad["distance"]}')
-    # 11 empty input
-    r, pre5 = run(tmp, 'empty', [], [], ref)
-    check(r.returncode == 0, '11 empty input exits 0')
-    g5, _, _ = read_gff(pre5 + '.gff3.gz')
-    m5 = [ln for ln in gzip.open(pre5 + '.merged.gff3.gz', 'rt').read().splitlines() if not ln.startswith('# curate_models')]
-    check(not g5 and m5 == ref_lines, '11 empty input -> no genes, merged == reference')
-    # decoy / mRNA tag from --track: biotype + ID prefix; decoys keep their real track's feature type
-    r, pre6 = run(tmp, 'decoy', M[:10], ['--track', 'lnc_RNA.decoy'])
+
+def test_no_reference(tmp):
+    r, pre = run(tmp, 'noref', M, [])
+    assert r.returncode == 0 and not os.path.exists(pre + '.merged.gff3.gz'), '12 no reference -> no merged file'
+    genes, tx, _ = read_gff(pre + '.gff3.gz')
+    assert set(tx) == EXPECTED_REPRESENTATIVES | {'b5|B', 'a16|A', 'a16c|A', 'a16m|A', 'a16r|A'}, (
+        '12 without reference every supported chain is kept'
+    )
+    assert all(
+        a.get('ref_location') == 'no_reference' and not any(k.startswith('ref_') and k != 'ref_location' for k in a)
+        for _, a in genes.values()
+    ), '12 without reference: ref_location=no_reference, no other ref_* key'
+    with open(pre + '.curation.json') as fh:
+        novel = json.load(fh)['novel']
+    assert novel.get('genes_location:no_reference') == novel['genes'] and novel.get('genes_location:intergenic') == 0, (
+        '12 every location class written; all genes no_reference'
+    )
+
+
+def test_keep_self(tmp):
+    _, pre = run(tmp, 'keepself', M, ['--keep-self'])
+    _, tx, _ = read_gff(pre + '.gff3.gz')
+    assert any(x in ('t14|Tgt_1', 'a14|A') for x in tx), '14 --keep-self lets the target support'
+
+
+def test_gtf_reference(tmp, ref_gtf, main):
+    r, pre = run(tmp, 'gtf', M, [], ref_gtf)
+    assert r.returncode == 0, '13 GTF reference run exits 0'
+    genes, tx, _ = read_gff(pre + '.gff3.gz')
+    assert set(tx) == EXPECTED_REPRESENTATIVES, '13 GTF reference gives the same curated set'
+
+    def g(rid):
+        return gene_of(genes, tx, rid)
+
+    assert all(g(k).get('ref_location') == v for k, v in LOC.items()), (
+        '13 GTF reference gives the same ref_location classes'
+    )
+    assert (
+        g('a61|A').get('ref_gene_name') == 'GENEONE'
+        and g('a61|A').get('ref_gene_biotype') == 'protein_coding'
+        and g('a62|A').get('ref_gene_name') == 'REFSEQSYM'
+        and g('a64|A').get('ref_gene_biotype') == 'lncRNA'
+        and g('a64|A').get('ref_gene_id') == 'G3'
+        and 'ref_gene_id' not in g('a71|A')
+    ), '19 GTF reference: gene_name / gene_biotype / gene_type and gene_id tags'
+    assert set(genes) == set(main.genes), '13 IDs do not depend on the reference format'
+
+
+@pytest.mark.parametrize(
+    'loc, bad',
+    [
+        ('intronic', dict(gene='g', name='.', biotype='.', orientation='sense', distance=5)),
+        ('antisense_exonic', dict(gene='g', name='.', biotype='.', orientation='sense', distance=0)),
+        ('divergent', dict(gene='g', name='.', biotype='.', orientation='antisense', distance=5000)),
+    ],
+)
+def test_location_guard_rejects_contradictions(cm, loc, bad):
+    with pytest.raises(SystemExit) as ex:
+        cm.check_location(loc, bad, 1000, 'x')
+    assert ex.value.code == 1
+
+
+def test_empty_input(tmp, ref):
+    r, pre = run(tmp, 'empty', [], [], ref)
+    assert r.returncode == 0, '11 empty input exits 0'
+    genes, _, _ = read_gff(pre + '.gff3.gz')
+    merged = [ln for ln in read_text(pre + '.merged.gff3.gz').splitlines() if not ln.startswith('# curate_models')]
+    assert not genes and merged == [ln for ln in REF.splitlines() if ln], (
+        '11 empty input -> no genes, merged == reference'
+    )
+
+
+def test_track_tags(tmp):
+    _, pre6 = run(tmp, 'decoy', M[:10], ['--track', 'lnc_RNA.decoy'])
     g6, tx6, _ = read_gff(pre6 + '.gff3.gz')
-    check(g6 and all(a['biotype'] == 'decoy_lncRNA' and a['ID'].startswith('fomo_decoy_lncRNA_g_') for _, a in g6.values())
-          and all(f[2] == 'lnc_RNA' for f, _ in tx6.values()), 'decoy: biotype decoy_lncRNA, IDs fomo_decoy_lncRNA_*, type lnc_RNA')
-    r, pre7 = run(tmp, 'mrna', M[:10], ['--track', 'mRNA'])
+    assert (
+        g6
+        and all(a['biotype'] == 'decoy_lncRNA' and a['ID'].startswith('fomo_decoy_lncRNA_g_') for _, a in g6.values())
+        and all(f[2] == 'lnc_RNA' for f, _ in tx6.values())
+    ), 'decoy: biotype decoy_lncRNA, IDs fomo_decoy_lncRNA_*, type lnc_RNA'
+    _, pre7 = run(tmp, 'mrna', M[:10], ['--track', 'mRNA'])
     g7, tx7, _ = read_gff(pre7 + '.gff3.gz')
-    check(g7 and all(a['biotype'] == 'mRNA' and a['ID'].startswith('fomo_mRNA_g_') for _, a in g7.values())
-          and all(f[2] == 'mRNA' for f, _ in tx7.values()), 'mRNA: biotype mRNA, IDs fomo_mRNA_*, type mRNA')
-    check(set(g6).isdisjoint(g7) and {k[-12:] for k in g6}.isdisjoint(k[-12:] for k in g7),
-          'the same chains in two tracks get different hashes')
-    # ID clash with the reference; --id-prefix is the way out
-    clash = REF + f'chr4\tRefSeq\tgene\t300\t400\t.\t+\t.\tID={sorted(genes)[0]}\n'
+    assert (
+        g7
+        and all(a['biotype'] == 'mRNA' and a['ID'].startswith('fomo_mRNA_g_') for _, a in g7.values())
+        and all(f[2] == 'mRNA' for f, _ in tx7.values())
+    ), 'mRNA: biotype mRNA, IDs fomo_mRNA_*, type mRNA'
+    assert set(g6).isdisjoint(g7) and {k[-12:] for k in g6}.isdisjoint(k[-12:] for k in g7), (
+        'the same chains in two tracks get different hashes'
+    )
+
+
+def test_id_clash_with_reference(tmp, main):
     ref_c = os.path.join(tmp, 'ref_clash.gff3')
-    open(ref_c, 'w').write(clash)
+    with open(ref_c, 'w') as o:
+        o.write(REF + f'chr4\tRefSeq\tgene\t300\t400\t.\t+\t.\tID={sorted(main.genes)[0]}\n')
     r, _ = run(tmp, 'clash', M, [], ref_c)
-    check(r.returncode == 1 and 'already used in the reference' in r.stderr, 'curated ID clashing with the reference exits 1')
-    r, pre_c = run(tmp, 'clash2', M, ['--id-prefix', 'X'], ref_c)
-    gc, _, _ = read_gff(pre_c + '.gff3.gz')
-    check(r.returncode == 0 and all(k.startswith('X_g_') for k in gc), '--id-prefix X avoids the clash')
-    # structural errors
-    dup = M[:6] + [M[1]]
-    r, _ = run(tmp, 'dup', dup, [])
-    check(r.returncode == 1 and 'duplicate transcript ID' in r.stderr, 'duplicate transcript ID exits 1')
-    # determinism
-    r, pre8 = run(tmp, 'main2', M, [], ref)
-    same = all(gzip.open(pre + s, 'rb').read() == gzip.open(pre8 + s, 'rb').read() for s in ('.gff3.gz', '.merged.gff3.gz'))
-    check(same, 'rerun gives byte-identical GFF3 content')
-    # stability: IDs depend on the chains, not on the input order or on the supporting sources
+    assert r.returncode == 1 and 'already used in the reference' in r.stderr, (
+        'curated ID clashing with the reference exits 1'
+    )
+    r, pre = run(tmp, 'clash2', M, ['--id-prefix', 'X'], ref_c)
+    genes, _, _ = read_gff(pre + '.gff3.gz')
+    assert r.returncode == 0 and all(k.startswith('X_g_') for k in genes), '--id-prefix X avoids the clash'
+
+
+def test_duplicate_transcript_id_exits_1(tmp):
+    r, _ = run(tmp, 'dup', M[:6] + [M[1]], [])
+    assert r.returncode == 1 and 'duplicate transcript ID' in r.stderr
+
+
+def test_rerun_is_byte_identical(tmp, ref, main):
+    _, pre = run(tmp, 'main2', M, [], ref)
+    for suffix in ('.gff3.gz', '.merged.gff3.gz'):
+        assert read_text(main.pre + suffix) == read_text(pre + suffix), suffix
+
+
+def test_ids_stable_across_input_order(tmp, ref, main):
     models = []
     for ln in M:
         if '\tgene\t' in ln:
             models.append([])
         models[-1].append(ln)
     shuffled = [ln for m in reversed(models) for ln in m]
-    r, pre9 = run(tmp, 'shuffled', shuffled, [], ref)
-    g9, tx9, _ = read_gff(pre9 + '.gff3.gz')
-    check(r.returncode == 0 and {k: a['ID'] for k, (_, a) in tx9.items()} == {k: a['ID'] for k, (_, a) in tx.items()},
-          'stability: reversed input order -> the same IDs for the same transcripts')
-    extra = model('f1', 'F', 'chr1', '+', [(120, 200), (300, 400), (500, 610)]) + \
-        model('a90', 'A', 'chr8', '+', [(100, 200), (300, 400)]) + model('b90', 'B', 'chr8', '+', [(100, 200), (300, 400)])
-    r, pre10 = run(tmp, 'moresources', M + extra, [], ref)
-    g10, tx10, _ = read_gff(pre10 + '.gff3.gz')
-    check(r.returncode == 0 and set(genes) < set(g10) and T('b1|B')['ID'] == tx10['b1|B'][1]['ID']
-          and 'F' in tx10['b1|B'][1]['supporting_species'],
-          'stability: an extra source supporting an existing chain, and a new gene elsewhere, leave existing IDs unchanged')
-    # hash collision exits 1
+    r, pre = run(tmp, 'shuffled', shuffled, [], ref)
+    _, tx, _ = read_gff(pre + '.gff3.gz')
+    assert r.returncode == 0 and {k: a['ID'] for k, (_, a) in tx.items()} == {
+        k: a['ID'] for k, (_, a) in main.tx.items()
+    }
+
+
+def test_ids_stable_with_more_sources(tmp, ref, main):
+    extra = (
+        model('f1', 'F', 'chr1', '+', [(120, 200), (300, 400), (500, 610)])
+        + model('a90', 'A', 'chr8', '+', [(100, 200), (300, 400)])
+        + model('b90', 'B', 'chr8', '+', [(100, 200), (300, 400)])
+    )
+    r, pre = run(tmp, 'moresources', M + extra, [], ref)
+    genes, tx, _ = read_gff(pre + '.gff3.gz')
+    assert (
+        r.returncode == 0
+        and set(main.genes) < set(genes)
+        and main.T('b1|B')['ID'] == tx['b1|B'][1]['ID']
+        and 'F' in tx['b1|B'][1]['supporting_species']
+    )
+
+
+def test_gene_hash_collision_exits_1(tmp, cm, monkeypatch):
+    gff = os.path.join(tmp, f'{TARGET}.allModels.lnc_RNA.raw.gff3')
+    with open(gff, 'w') as o:
+        o.write('##gff-version 3\n' + ''.join(r + '\n' for r in M))
     buf = io.StringIO()
-    old_hash, old_argv, old_err = cm.gene_hash, sys.argv, sys.stderr
-    cm.gene_hash = lambda *a, **k: 'deadbeef0000'
-    sys.argv = ['curate_models.py', '--gff', os.path.join(tmp, f'{TARGET}.allModels.lnc_RNA.raw.gff3'),
-                '--prefix', os.path.join(tmp, 'collision', 'c'), '--skip-gffread']
-    sys.stderr = buf
-    try:
+    monkeypatch.setattr(cm, 'gene_hash', lambda *a, **k: 'deadbeef0000')
+    monkeypatch.setattr(
+        sys,
+        'argv',
+        ['curate_models.py', '--gff', gff, '--prefix', os.path.join(tmp, 'collision', 'c'), '--skip-gffread'],
+    )
+    monkeypatch.setattr(sys, 'stderr', buf)
+    with pytest.raises(SystemExit) as ex:
         cm.main()
-        code = 0
-    except SystemExit as ex:
-        code = ex.code
-    finally:
-        cm.gene_hash, sys.argv, sys.stderr = old_hash, old_argv, old_err
-    check(code == 1 and 'gene hash collision deadbeef0000' in buf.getvalue(), 'gene hash collision exits 1 naming both genes')
-
-    print(f'\n{len(FAILS)} failed' if FAILS else '\nall checks passed')
-    sys.exit(1 if FAILS else 0)
-
-
-if __name__ == '__main__':
-    main()
+    assert ex.value.code == 1 and 'gene hash collision deadbeef0000' in buf.getvalue()

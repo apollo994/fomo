@@ -1,0 +1,2 @@
+Sample	n_models	self_excluded	single_exon	multi_exon_models	species	chains	supported_chains	supported_chains_2sp	supported_chains_3sp	supported_chains_4sp	supported_chains_ge5sp	models_in_supported_chains	genes
+Lycaena_hippothoe_580924.mRNA	1673	0	0	1673	2	1261	410	410	0	0	0	820	410

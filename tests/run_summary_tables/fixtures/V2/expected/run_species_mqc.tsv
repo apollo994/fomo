@@ -1,0 +1,4 @@
+Sample	role	has_gff3	is_source	is_target	benchmarked	input_genes_total	input_lncRNA_transcripts_raw	spliced_kept	td2_coding_dropped	lncRNA_donated
+Lycaena_alciphron_282377	both	yes	yes	yes	yes	1038	67	62	3	59
+Lycaena_hippothoe_580924	target	yes	no	yes	no	1053	68	NA	NA	NA
+Lycaena_thersamon_265360	source	yes	yes	no	no	1030	85	77	3	74

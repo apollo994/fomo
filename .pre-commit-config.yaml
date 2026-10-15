@@ -1,0 +1,28 @@
+# Local hooks only: the tools come from dev/environment.yml (conda env fomo-dev), so the hooks run
+# offline and with the same versions as CI.
+exclude: '^(assets/test_data/|ablation/|plans/27_refactor_original/|tests/.*/fixtures/|tests/golden/.*\.tsv$|bin/gff-feature-stats$)'
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: ruff check
+        language: system
+        types: [python]
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        types: [shell]
+      - id: nextflow-lint
+        name: nextflow lint
+        entry: nextflow lint -o concise main.nf workflows subworkflows modules conf nextflow.config
+        language: system
+        files: '\.(nf|config)$'
+        pass_filenames: false
+      - id: trailing-whitespace
+        name: no trailing whitespace
+        entry: '[ \t]+$'
+        language: pygrep
+        types: [text]
+        exclude: '\.(md|tsv)$'

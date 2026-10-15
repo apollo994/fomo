@@ -1,0 +1,2 @@
+Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
+Lycaena_thersamon_265360.4_mRNA.coding	source	filtered	coding	864	15029.30	329	325258	1	protein_coding

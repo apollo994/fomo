@@ -1,0 +1,39 @@
+# Tooling only: FOMO is a Nextflow pipeline, its Python lives in bin/ (run as scripts, stdlib only).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "integration: needs external tools (gffcompare, gffread, samtools)",
+    "slow: takes more than a few seconds",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["ablation", "plans", "work", "results"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "C90", "N", "UP", "SIM", "PLR0912", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.per-file-ignores]
+# Lint debt recorded when the safety net was built (plans/27a). Each later subplan removes its
+# entries; none may be added.
+"bin/curate_models.py" = ["B905", "C901", "E501", "E731", "E741", "N806", "PLR0912", "PLR0915", "UP032"]
+"bin/curation_to_mqc.py" = ["SIM115"]
+"bin/filter_gff_by_id.py" = ["C901", "PLR0912", "PLR0915", "UP006", "UP007", "UP035"]
+"bin/fomo_stats.py" = ["UP006", "UP007", "UP035"]
+"bin/gff_by_source.py" = ["C901", "PLR0912", "SIM115", "UP006", "UP035"]
+"bin/gffcompare_accuracy_mqc.py" = ["UP006", "UP035"]
+"bin/gff_stats_to_mqc.py" = ["UP006", "UP007", "UP015", "UP035", "UP038"]
+"bin/relocate_loci.py" = ["B905", "C901", "E501", "UP006", "UP007", "UP015", "UP035"]
+"bin/run_summary_tables.py" = ["C901", "N806", "SIM108", "UP006", "UP007", "UP035"]
+"bin/samtools_to_mqc.py" = ["UP006", "UP015", "UP035"]
+"bin/td2_coding_filter.py" = ["SIM108", "UP006", "UP035"]
+
+[tool.ruff.format]
+quote-style = "preserve"

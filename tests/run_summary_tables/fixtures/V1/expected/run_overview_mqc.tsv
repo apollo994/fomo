@@ -1,0 +1,13 @@
+Metric	Value
+Species in samplesheet	3
+… role source (donor only)	1
+… role target (projected onto, not a donor)	1
+… role both (donor and target)	1
+Sources (S)	2
+Targets (T)	2
+Targets with a reference annotation (curation)	2
+Targets benchmarked (role both)	1
+Source × target pairs (no self-projection)	3
+Feature types transferred	lnc_RNA
+Decoy track (--include_decoy)	no
+PSAURON cutoff (--td2_psauron_min)	0.50

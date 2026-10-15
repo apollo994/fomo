@@ -44,11 +44,11 @@ workflow REPORTING {
     // and the downstream closure is called with three arguments. Equally, do NOT
     // .collect() the shared files into one list and combine THAT in — same spread.
     ch_by_target = ch_mqc.shared
-        .flatMap { _meta, p -> p instanceof List ? p : [p] }
+        .flatMap { _meta, p -> [p].flatten() }
         .combine(ch_target_ids)
         .map { p, tid -> tuple(tid, p) }
         .mix(ch_mqc.scoped.flatMap { meta, p ->
-            (p instanceof List ? p : [p]).collect { f -> tuple(meta.target_id, f) } })
+            [p].flatten().collect { f -> tuple(meta.target_id, f) } })
         .mix(GFFCOMPARE_TO_SCATTER.out.json.map { meta, p -> tuple(meta.target_id, p) })
         .groupTuple()
 

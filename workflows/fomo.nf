@@ -41,7 +41,7 @@ workflow FOMO {
     def rows = samplesheetToList(params.input, "${projectDir}/assets/schema_input.json")
 
     def dups = rows.collect { meta, _fa, _gff -> meta.id }
-                   .countBy { it }.findAll { _id, n -> n > 1 }.keySet()
+                   .countBy { id -> id }.findAll { _id, n -> n > 1 }.keySet()
     if (dups) {
         error("Duplicate species in samplesheet: ${dups.join(', ')}. " +
               "The species id keys every join in the pipeline and must be unique — " +
@@ -54,7 +54,7 @@ workflow FOMO {
         error("Samplesheet has no row with role 'source' or 'both' — no annotation to transfer.")
     }
 
-    ch_input   = Channel.fromList(rows)
+    ch_input   = channel.fromList(rows)
     ch_sources = ch_input.filter { meta, _fasta, _gff3 -> meta.role in ['source', 'both'] }
     ch_targets = ch_input.filter { meta, _fasta, _gff3 -> meta.role in ['target', 'both'] }
 
@@ -122,7 +122,7 @@ workflow FOMO {
     // Species roles are the one fact no stat file carries, so they are passed as a
     // small CSV built from the samplesheet rows read above. `seed` is written first,
     // `sort` makes the body deterministic (and therefore the task cacheable).
-    ch_roles = Channel.fromList(rows)
+    ch_roles = channel.fromList(rows)
         .map { meta, _fasta, gff3 -> "${meta.id},${meta.role},${gff3 ? 'yes' : 'no'}" }
         .collectFile(name: 'species_roles.csv', newLine: true, sort: true,
                      seed: 'species,role,has_gff3')

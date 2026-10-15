@@ -51,7 +51,7 @@ workflow PROJECTION {
             tuple([id: gtype, feature_type: meta.feature_type, decoy: meta.decoy, gtype: gtype], fa)
         }
         .groupTuple()
-        .map { meta, fas -> tuple(meta, fas.sort { it.name }) }   // deterministic concat order
+        .map { meta, fas -> tuple(meta, fas.sort { fa -> fa.name }) }   // deterministic concat order
 
     MERGE_SOURCE_FASTA(ch_merged)
 
@@ -196,13 +196,13 @@ workflow PROJECTION {
     // otherwise make the target vanish from GFF_STATS_PROJECTED_BATCH and (via the `gff3`
     // emit) benchmarking entirely, rather than surfacing an honest "0 models" result.
     ch_split_list = SPLIT_GFF_BY_SOURCE.out.gff3
-        .map { meta, gffs -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gffs instanceof List ? gffs : [gffs]) }
+        .map { meta, gffs -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", [gffs].flatten()) }
 
     ch_projected_batch = ch_allmodels_raw
         .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", meta, gff) }
         .join(ch_split_list, remainder: true)
         .map { _key, meta, rawGff, splitGffs ->
-            tuple(meta, ([rawGff] + (splitGffs ?: [])).findAll { it })
+            tuple(meta, ([rawGff] + (splitGffs ?: [])).findAll { gff -> gff })
         }
 
     // ── Statistics on projected models ───────────────────────────────────────

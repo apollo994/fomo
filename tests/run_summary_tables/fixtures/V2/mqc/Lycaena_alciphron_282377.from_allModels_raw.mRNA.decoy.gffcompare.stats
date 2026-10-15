@@ -1,0 +1,30 @@
+# gffcompare v0.12.6 | Command line was:
+#gffcompare -M --no-merge -r Lycaena_alciphron_282377.mRNA.filtered.gff3 -o Lycaena_alciphron_282377.from_allModels_raw.mRNA.decoy.gffcompare Lycaena_alciphron_282377.from_allModels_raw.mRNA.decoy.projected.gff3
+#
+
+#= Summary for dataset: Lycaena_alciphron_282377.from_allModels_raw.mRNA.decoy.projected.gff3 
+#     Query mRNAs :     755 in     721 loci  (755 multi-exon transcripts)
+#            (27 multi-transcript loci, ~1.0 transcripts per locus)
+# Reference mRNAs :     887 in     885 loci  (887 multi-exon)
+# Super-loci w/ reference transcripts:       22
+#-----------------| Sensitivity | Precision  |
+        Base level:     0.3     |     0.5    |
+        Exon level:     0.0     |     0.0    |
+      Intron level:     0.0     |     0.0    |
+Intron chain level:     0.0     |     0.0    |
+  Transcript level:     0.0     |     0.0    |
+       Locus level:     0.0     |     0.0    |
+
+     Matching intron chains:       0
+       Matching transcripts:       0
+              Matching loci:       0
+
+          Missed exons:    6995/7028	( 99.5%)
+           Novel exons:    4374/4409	( 99.2%)
+        Missed introns:    6074/6141	( 98.9%)
+         Novel introns:    3621/3654	( 99.1%)
+           Missed loci:     863/885	( 97.5%)
+            Novel loci:     698/721	( 96.8%)
+
+ Total union super-loci across all input datasets: 720 
+755 out of 755 consensus transcripts written in Lycaena_alciphron_282377.from_allModels_raw.mRNA.decoy.gffcompare.annotated.gtf (0 discarded as redundant)

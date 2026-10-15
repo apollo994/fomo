@@ -1,0 +1,2 @@
+Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
+Lycaena_alciphron_282377.4_mRNA_target.coding	target	filtered	coding	887	15421.51	453	224567	1	protein_coding

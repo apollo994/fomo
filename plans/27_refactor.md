@@ -1,6 +1,6 @@
 # 27 — Codebase refactor: reduce complexity (master plan)
 
-## Status: planned (2026-10-15) — not started
+## Status: in progress (started 2026-10-15)
 
 ## How to run it
 
@@ -189,7 +189,7 @@ that a U-decision explicitly allows, and none of U5's changes touches a delivera
 
 | id | file | title | depends on | review items | est. | status |
 |:---|:---|:---|:---|:---|---:|:---|
-| 27a | [27a_safety_net.md](27a_safety_net.md) | Golden baseline, pytest, nf-test, lint, CI | — | T1–T3, R4 | 3 d | not started |
+| 27a | [27a_safety_net.md](27a_safety_net.md) | Golden baseline, pytest, nf-test, lint, CI | — | T1–T3, R4 | 3 d | done (2026-10-15) |
 | 27b | [27b_delete_and_fix.md](27b_delete_and_fix.md) | Delete dead code, fix latent bugs, comment sweep | 27a | §2, R1–R3, V1–V4 | 2 d | not started |
 | 27c | [27c_local_modules.md](27c_local_modules.md) | All modules local, containers, versions, no conda | 27b | C1–C5, D4 (filters) | 3 d | not started |
 | 27d | [27d_config_structure.md](27d_config_structure.md) | Config layout, selectors, resources, pipeline_info | 27c | P5, P6, R7, C4 | 1.5 d | not started |
@@ -341,6 +341,7 @@ by two files (a filename, a label, a section id) gets a consistency test.
 | date | subplan | event | CPU-h used (cumulative) |
 |:---|:---|:---|---:|
 | 2026-10-15 | — | plan written; decisions U1–U8 recorded | 0 |
+| 2026-10-15 | 27a | done: golden baseline (deterministic, V4 = V1), 81 pytest, stub matrix S1–S3, lint clean, CI written; 4 deviations | 1.5 |
 
 ## 11. Outcome
 

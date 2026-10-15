@@ -1,0 +1,3 @@
+Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
+Lycaena_hippothoe_580924.1_raw_target.coding	target	raw	coding	920	14621.36	445	303790	1	protein_coding
+Lycaena_hippothoe_580924.1_raw_target.non_coding	target	raw	non_coding	133	1918.02	71	37341	3	lncrna

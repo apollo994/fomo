@@ -1,0 +1,5 @@
+Sample	role	kind	transcript_type	n_genes	n_transcripts	n_exons	mean_exon_length	max_exon_length	n_introns	mean_intron_length	min_intron_length	max_intron_length	mean_transcript_length	min_transcript_length	max_transcript_length	mean_spliced_length	min_spliced_length	max_spliced_length	n_cds	mean_cds_length	top_biotype
+Lycaena_thersamon_265360.1_raw.mRNA	source	raw	mRNA	889	1414	11169	231.14	5836	9755	2027.98	27	132876	15816.55	329	325064	1825.76	252	14493	11024	209.71	protein_coding
+Lycaena_thersamon_265360.1_raw.lnc_RNA	source	raw	lnc_RNA	77	85	197	173.10	1187	112	4175.06	24	40924	5902.44	299	41297	401.18	203	1407	NA	NA	lncRNA
+Lycaena_thersamon_265360.1_raw.tRNA	source	raw	tRNA	49	49	49	75.59	92	NA	NA	NA	NA	75.59	71	92	NA	NA	NA	NA	NA	tRNA
+Lycaena_thersamon_265360.1_raw.snRNA	source	raw	snRNA	15	15	15	153.60	193	NA	NA	NA	NA	153.60	109	193	NA	NA	NA	NA	NA	snRNA

@@ -1,0 +1,2 @@
+Sample	role	kind	transcript_type	n_genes	n_transcripts	n_exons	mean_exon_length	max_exon_length	n_introns	mean_intron_length	min_intron_length	max_intron_length	mean_transcript_length	min_transcript_length	max_transcript_length	mean_spliced_length	min_spliced_length	max_spliced_length	n_cds	mean_cds_length	top_biotype
+Lycaena_alciphron_282377.from_Lycaena_thersamon_265360.4_decoy_mRNA.transcript	projection	projected	transcript	755	755	4410	202.74	3260	3655	13382.80	38	482644	65971.16	334	1816412	1184.25	121	9001	NA	NA	biotype_missing

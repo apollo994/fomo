@@ -1,0 +1,19 @@
+{
+  "id": "run_aggregate_accuracy_plot",
+  "section_name": "allModels vs best single donor \u2014 lncRNA F1 per target",
+  "description": "lncRNA transcript-level F1 per target for the best single donor and for allModels (every source pooled, raw), side by side: does pooling every donor beat the best single one?",
+  "plot_type": "bargraph",
+  "pconfig": {
+    "id": "run_aggregate_accuracy_bargraph",
+    "title": "FOMO: aggregate model accuracy (lncRNA, transcript level)",
+    "ylab": "F1",
+    "stacking": null,
+    "cpswitch": false
+  },
+  "data": {
+    "Lycaena_alciphron_282377": {
+      "best_single_source": 28.55,
+      "allModels_raw": 28.55
+    }
+  }
+}

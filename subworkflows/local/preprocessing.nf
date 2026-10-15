@@ -56,7 +56,7 @@ workflow PREPROCESSING {
     FILTER_TRANSCRIPT.out.gff3
         .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
         .combine(ch_source_fasta, by: 0)
-        .multiMap { id, meta, gff3, fa ->
+        .multiMap { _id, meta, gff3, fa ->
             gff:   tuple(meta, gff3)
             fasta: fa
         }
@@ -91,12 +91,12 @@ workflow PREPROCESSING {
         // chromosome order of the FASTA-derived sizes file (required so bedtools
         // complement downstream accepts the input).
         ch_sources
-            .map { meta, fasta, gff3 -> tuple(meta.id, meta, gff3) }
+            .map { meta, _fasta, gff3 -> tuple(meta.id, meta, gff3) }
             .combine(
                 FASTA_SIZES.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
                 by: 0
             )
-            .map { id, meta, gff3, sizes -> tuple(meta, gff3, sizes) }
+            .map { _id, meta, gff3, sizes -> tuple(meta, gff3, sizes) }
             .set { ch_gff_to_bed }
 
         GFF_TO_GENE_BED(ch_gff_to_bed)
@@ -108,7 +108,7 @@ workflow PREPROCESSING {
                 FASTA_SIZES.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
                 by: 0
             )
-            .multiMap { id, meta, bed, sizes ->
+            .multiMap { _id, meta, bed, sizes ->
                 bed:   tuple(meta, bed)
                 sizes: sizes
             }
@@ -123,7 +123,7 @@ workflow PREPROCESSING {
                 BEDTOOLS_COMPLEMENT.out.bed.map { meta, bed -> tuple(meta.id, bed) },
                 by: 0
             )
-            .map { id, meta, gff3, bed -> tuple(meta + [decoy: true], gff3, bed) }
+            .map { _id, meta, gff3, bed -> tuple(meta + [decoy: true], gff3, bed) }
             .set { ch_relocate }
 
         RELOCATE_LOCI(ch_relocate)
@@ -132,7 +132,7 @@ workflow PREPROCESSING {
         RELOCATE_LOCI.out.gff3
             .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
             .combine(ch_source_fasta, by: 0)
-            .multiMap { id, meta, gff3, fa ->
+            .multiMap { _id, meta, gff3, fa ->
                 gff:   tuple(meta, gff3)
                 fasta: fa
             }
@@ -145,9 +145,9 @@ workflow PREPROCESSING {
         ch_intergenic_bed  = BEDTOOLS_COMPLEMENT.out.bed
     }
     else {
-        ch_decoy_gff3      = Channel.empty()
-        ch_decoy_fasta_raw = Channel.empty()
-        ch_intergenic_bed  = Channel.empty()
+        ch_decoy_gff3      = channel.empty()
+        ch_decoy_fasta_raw = channel.empty()
+        ch_intergenic_bed  = channel.empty()
     }
 
     // ── Rename FASTA headers ─────────────────────────────────────────────────
@@ -245,6 +245,6 @@ workflow PREPROCESSING {
     filtered_gff3       = ch_filtered_gff3                                     // [ meta, gff3  ] × F·N — describes spliced_fasta exactly; the benchmarking reference
     intergenic_bed      = ch_intergenic_bed                                    // [ meta, bed   ] × N   (0 without --include_decoy)
     decoy_gff3          = ch_decoy_gff3                                        // [ meta, gff3  ] × F·N (0 without --include_decoy)
-    decoy_spliced_fasta = ch_renamed_final.filter { meta, fa -> meta.decoy }   // [ meta, fasta ] × F·N (0 without --include_decoy)
+    decoy_spliced_fasta = ch_renamed_final.filter { meta, _fa -> meta.decoy }   // [ meta, fasta ] × F·N (0 without --include_decoy)
     mqc_files           = ch_mqc_files                                         // [ meta, path  ]
 }

@@ -1,0 +1,32 @@
+{
+  "id": "run_accuracy_heatmap_sn",
+  "section_name": "Accuracy Sensitivity \u2014 every source against every target",
+  "description": "Sensitivity \u2014 how much of the target's real annotation the projection recovered. lncRNA transcript-level gffcompare accuracy for each source \u2192 target projection. A blank cell means that pair was not benchmarked \u2014 the target is not benchmarked (only role `both` targets are). The diagonal is always blank: a species is never projected onto itself (plans/23).",
+  "plot_type": "heatmap",
+  "xcats": [
+    "Lycaena_alciphron_282377",
+    "Lycaena_hippothoe_580924"
+  ],
+  "ycats": [
+    "Lycaena_alciphron_282377",
+    "Lycaena_thersamon_265360"
+  ],
+  "pconfig": {
+    "id": "run_accuracy_heatmap_sn_plot",
+    "title": "FOMO: source \u00d7 target lncRNA Sensitivity",
+    "xlab": "target",
+    "ylab": "source",
+    "min": 0,
+    "max": 100
+  },
+  "data": [
+    [
+      null,
+      null
+    ],
+    [
+      28.8,
+      null
+    ]
+  ]
+}

@@ -31,7 +31,7 @@ workflow RUN_SUMMARY {
     // files by suffix out of the staged directory, so no per-suffix channel
     // splitting is needed here.
     ch_files = ch_all_mqc
-        .flatMap { _meta, p -> p instanceof List ? p : [p] }
+        .flatMap { _meta, p -> [p].flatten() }
         .collect()
 
     RUN_SUMMARY_TABLES(ch_files, ch_roles)

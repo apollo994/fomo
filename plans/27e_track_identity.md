@@ -60,7 +60,9 @@ hand-written key/strip patterns.
 - [ ] **C1. Replace the nine re-key → combine → strip patterns with `pairById`** or with id-keyed
   channels: `preprocessing.nf` (6), `projection.nf` (1), `benchmarking.nf` (1),
   `curation.nf` (1). Build `FASTA_SIZES` pairing once.
-- [ ] **C2. One gating mechanism for optional branches (P10).**
+- [ ] **C2. One gating mechanism for optional branches (P10).** (updated by D27a-4: the V1 log
+  shows the warning for the `if`-gated decoy processes with fully qualified selectors. Re-check
+  it after 27d's `.*:NAME$` selectors.)
   - Test whether a `withName` selector whose process is included but never invoked (because of
     an `if`) raises Nextflow's "no process matches selector" warning.
   - If it does not, gate curation with `if (params.curate)` in `fomo.nf`, like the decoy branch,

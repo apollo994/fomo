@@ -1,0 +1,28 @@
+{
+  "id": "run_source_funnel_plot",
+  "section_name": "Source lncRNA \u2014 what survived filtering",
+  "description": "Per source species: lncRNA transcripts donated (kept) and the four reasons the rest were dropped \u2014 no consistent strand (\"?\" or trans-spliced across both strands; almost always zero), single-exon (FOMO transfers spliced models only), not the longest spliced isoform of its gene (one transcript per gene; zero with --longest_isoform false) and coding potential (a complete ORF with PSAURON score at or above the cutoff). Bars sum to the raw lncRNA count.",
+  "plot_type": "bargraph",
+  "pconfig": {
+    "id": "run_source_funnel_bargraph",
+    "title": "FOMO: source lncRNA filtering funnel",
+    "ylab": "transcripts",
+    "cpswitch_counts_label": "Transcripts"
+  },
+  "data": {
+    "Lycaena_alciphron_282377": {
+      "kept": 59.0,
+      "dropped_unstranded": 0.0,
+      "dropped_single_exon": 0.0,
+      "dropped_non_longest": 5.0,
+      "dropped_coding": 3.0
+    },
+    "Lycaena_thersamon_265360": {
+      "kept": 74.0,
+      "dropped_unstranded": 0.0,
+      "dropped_single_exon": 0.0,
+      "dropped_non_longest": 8.0,
+      "dropped_coding": 3.0
+    }
+  }
+}

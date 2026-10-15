@@ -14,7 +14,7 @@ process GFF_BY_SOURCE {
     tuple val(meta), path(gff3, stageAs: 'input/*')
 
     // A single source yields a bare Path rather than a List; projection.nf normalises
-    // both shapes (`gffs instanceof List ? gffs : [gffs]`).
+    // both shapes (`[gffs].flatten()`).
     //
     // optional: true — a target onto which NOTHING projected from ANY
     // source (allModels.raw.gff3 has zero records — a real outcome, not a broken run;
@@ -40,8 +40,10 @@ process GFF_BY_SOURCE {
     """
 
     stub:
-    def prefix = task.ext.prefix ?: "${meta.id}"
+    def args = task.ext.args ?: ''
+    def template = args =~ /--name-template\s+'([^']+)'/
+    def name = template.find() ? template.group(1).replace('{source}', 'stub') : "${meta.id}.gff3"
     """
-    touch ${prefix}.gff3
+    touch ${name}
     """
 }
