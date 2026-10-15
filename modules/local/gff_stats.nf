@@ -11,18 +11,24 @@ process GFF_STATS {
 
     output:
     tuple val(meta), path("*.stats.json"), emit: json
+    tuple val(meta), path("*.gffstats.data.json"), emit: data
     tuple val("${task.process}"), val('gff-feature-stats'), eval("gff-feature-stats -V | sed 's/gff-feature-stats //'"), topic: versions, emit: versions_gff_feature_stats
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.kind}"
-    // A feature-less GFF yields empty stats and exit 0.
+    // A feature-less GFF yields empty stats and exit 0. The record wraps the JSON verbatim.
     """
     gff-feature-stats ${gff} ${prefix}.stats.json
+
+    printf '{"schema":"fomo-data/1","section":"gffstats","identity":%s,"data":' '${task.ext.identity}' > ${prefix}.gffstats.data.json
+    cat ${prefix}.stats.json >> ${prefix}.gffstats.data.json
+    printf '}\\n' >> ${prefix}.gffstats.data.json
     """
 
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.kind}"
     """
     echo '{"gene_category_stats":{},"transcript_type_stats":{}}' > ${prefix}.stats.json
+    echo '{}' > ${prefix}.gffstats.data.json
     """
 }

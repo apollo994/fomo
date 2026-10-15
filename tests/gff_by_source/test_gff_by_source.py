@@ -87,3 +87,34 @@ def test_template_needs_placeholder(tmp_path):
     src = write(tmp_path / 'in.gff3', gff(*model('t1', 'A')))
     r = run_script('gff_by_source.py', '--gff', src, '--outdir', tmp_path / 'out', '--name-template', 'x.gff3')
     assert r.returncode != 0
+
+
+def test_manifest_lists_every_output_and_the_aggregate(tmp_path):
+    rows = model('t1', 'B') + model('t2', 'A', start=900)
+    src = write(tmp_path / 'T.allModels.lnc_RNA.raw.gff3', gff(*rows))
+    out, manifest = tmp_path / 'out', tmp_path / 'm.tsv'
+    args = ['--gff', src, '--outdir', out, '--name-template', TEMPLATE, '--manifest', manifest]
+    run_script('gff_by_source.py', *args, '--aggregate-id', 'allModels_raw', check=True)
+    lines = [ln.split('\t') for ln in manifest.read_text().splitlines()]
+    assert lines[0] == ['file', 'source']
+    assert lines[1] == ['T.allModels.lnc_RNA.raw.gff3', 'allModels_raw']
+    assert lines[2:] == [[TEMPLATE.replace('{source}', s), s] for s in ('A', 'B')]
+    assert all((out / f).exists() for f, _ in lines[2:])
+
+
+def test_manifest_of_an_empty_input_is_header_only(tmp_path):
+    src = write(tmp_path / 'in.gff3', '##gff-version 3\n')
+    manifest = tmp_path / 'm.tsv'
+    run_script(
+        'gff_by_source.py',
+        '--gff',
+        src,
+        '--outdir',
+        tmp_path / 'o',
+        '--name-template',
+        TEMPLATE,
+        '--manifest',
+        manifest,
+        check=True,
+    )
+    assert manifest.read_text() == 'file\tsource\n'

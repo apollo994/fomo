@@ -8,6 +8,7 @@ process SAMTOOLS_STATS {
 
     output:
     tuple val(meta), path("*.stats"), emit: stats
+    tuple val(meta), path("*.alignment.data.json"), emit: data
     tuple val("${task.process}"), val('samtools'), eval("samtools version | sed '1!d;s/.* //'"), topic: versions, emit: versions_samtools
 
     script:
@@ -15,11 +16,12 @@ process SAMTOOLS_STATS {
     def prefix = task.ext.prefix ?: "${meta.id}"
     """
     samtools stats ${args} --threads ${task.cpus} ${bam} > ${prefix}.stats
+    samtools_stats_record.sh '${task.ext.identity}' ${prefix}.stats > ${prefix}.alignment.data.json
     """
 
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}"
     """
-    touch ${prefix}.stats
+    touch ${prefix}.stats ${prefix}.alignment.data.json
     """
 }

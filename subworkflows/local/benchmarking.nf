@@ -6,7 +6,7 @@ include { pairBy                                   } from './fomo_utils'
 workflow BENCHMARKING {
     take:
     ch_target          // [ meta(role:'target'|'both'), fasta[.gz], gff3[.gz]|[] ] × T
-    ch_projected_gff3  // [ meta(target_id, feature_type, decoy), List<gff3> ] × F·D·T:
+    ch_projected_gff3  // [ meta(target_id, track), List<gff3>, manifest ] × F·D·T:
                        // every source's projected GFF3 + the allModels aggregate
     ch_annotation      // [ meta(id, role, feature_type, decoy:false), filtered.gff3 ] × F·S:
                        // each source's filtered annotation (PREPROCESSING.out.filtered_gff3)
@@ -54,4 +54,5 @@ workflow BENCHMARKING {
     emit:
     stats     = ch_stats_persource   // [ meta(target_id, feature_type, decoy), *.gffcompare.stats ]
     mqc_files = ch_mqc_files         // [ meta, path ]
+    data      = GFFCOMPARE_BATCH.out.data.mix(GFF_STATS_TARGET.out.data)   // [ meta, *.data.json | List ]
 }

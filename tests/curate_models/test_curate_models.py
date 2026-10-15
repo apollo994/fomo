@@ -797,3 +797,16 @@ def test_gene_hash_collision_exits_1(tmp, cm, monkeypatch):
     with pytest.raises(SystemExit) as ex:
         cm.fomo_io.run(cm.main)
     assert ex.value.code == 1 and 'gene hash collision deadbeef0000' in buf.getvalue()
+
+
+def test_curation_record(tmp, ref):
+    identity = '{"species": "T", "side": "target", "target": "T", "track": "lnc_RNA"}'
+    r, pre = run(tmp, 'record', M, ['--identity', identity], ref)
+    assert r.returncode == 0, r.stderr
+    with open(pre + '.curation.data.json') as fh:
+        record = json.load(fh)
+    with open(pre + '.curation.json') as fh:
+        report = json.load(fh)
+    assert record['section'] == 'curation' and record['identity'] == json.loads(identity)
+    tables = {k: report[k] for k in ('observed', 'discarded_by_reference', 'novel')}
+    assert record['data'] == tables | {'has_reference': True}

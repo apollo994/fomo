@@ -1,59 +1,47 @@
 process GFF_STATS_PROJECTED_BATCH {
     tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
-    label 'process_batch'
+    label 'process_low'
     label 'img_python'
     label 'amd64_only'
 
-    // One task per (target, feature_type, decoy) over every source's projected GFF3 plus the
-    // allModels aggregate. Rationale: plans/18.
+    // One task per (target, track) over every manifest row: each source's projected GFF3 and the
+    // allModels aggregate. Each file's identity (its source) comes from the manifest.
     input:
-    tuple val(meta), path(gffs)   // every source's *.projected.gff3 + the *.raw.gff3 aggregate
+    tuple val(meta), path(gffs), path(manifest)
 
     output:
     tuple val(meta), path("*_gffstats_projection_mqc.tsv"), emit: tsv
+    tuple val(meta), path("*.gffstats.data.json"), emit: data
     tuple val("${task.process}"), val('gff-feature-stats'), eval("gff-feature-stats -V | sed 's/gff-feature-stats //'"), topic: versions, emit: versions_gff_feature_stats
     tuple val("${task.process}"), val('python'), eval('python3 --version 2>&1 | sed "s/Python //"'), topic: versions, emit: versions_python
 
     script:
-    // The aggregate is linked under the per-source '<target>.from_<id>.<track>.projected.gff3'
-    // shape so one loop handles every file; the row name is '<target>.from_<id>.<order>_<label>',
-    // with <id> taken from the filename (ids never contain '.').
+    // Row name '<target>.from_<source>.<order>_<label>'; the record's identity is the task's
+    // plus the row's source.
     """
-    shopt -s nullglob
+    set -euo pipefail
+    identity='${task.ext.identity}'
 
-    for gff in *.raw.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.track}.projected.gff3"
-    done
-
-    run_one() {
-        set -euo pipefail
-        gff="\$1"
-        prefix="\${gff%.gff3}"
-        id="\${gff#*.from_}"
-        id="\${id%%.*}"
-        gff-feature-stats "\$gff" "\${prefix}.stats.json"
+    while IFS=\$'\\t' read -r file source; do
+        prefix="${meta.target_id}.from_\${source}.${meta.track}.projected"
+        gff-feature-stats "\$file" "\${prefix}.stats.json"
         gff_stats_to_mqc.py \\
             --input "\${prefix}.stats.json" \\
-            --name "${meta.target_id}.from_\${id}.${meta.order}_${meta.label}" \\
+            --name "${meta.target_id}.from_\${source}.${meta.order}_${meta.label}" \\
             --role projection \\
             --kind projected \\
             --output "\${prefix}_gffstats_projection_mqc.tsv"
-    }
-    export -f run_one
-
-    printf '%s\\0' *.projected.gff3 \\
-        | xargs -0 -P ${task.cpus} -I{} bash -c 'run_one "\$@"' _ {}
+        printf '{"schema":"fomo-data/1","section":"gffstats","identity":{"source":"%s",%s,"data":' "\$source" "\${identity:1}" > "\${prefix}.gffstats.data.json"
+        cat "\${prefix}.stats.json" >> "\${prefix}.gffstats.data.json"
+        printf '}\\n' >> "\${prefix}.gffstats.data.json"
+    done < <(tail -n +2 ${manifest})
     """
 
     stub:
     """
-    shopt -s nullglob
-    for gff in *.raw.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.track}.projected.gff3"
-    done
-    for gff in *.projected.gff3; do
-        prefix="\${gff%.gff3}"
-        touch "\${prefix}_gffstats_projection_mqc.tsv"
+    tail -n +2 ${manifest} | while IFS=\$'\\t' read -r _file source; do
+        prefix="${meta.target_id}.from_\${source}.${meta.track}.projected"
+        touch "\${prefix}_gffstats_projection_mqc.tsv" "\${prefix}.gffstats.data.json"
     done
     """
 }

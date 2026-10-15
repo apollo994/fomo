@@ -49,6 +49,7 @@ Output (--prefix P)
                       reference line (with --ref only)
   P.curation.tsv      report: table / metric / value (observed, discarded_by_reference, novel)
   P.curation.json     the same numbers
+  P.curation.data.json  the same numbers as a `curation` data record (with --identity)
 
 Rationale: plans/21, plans/25.
 """
@@ -868,6 +869,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--gffcompare', default='gffcompare')
     p.add_argument('--gffread', default='gffread')
     p.add_argument('--skip-gffread', action='store_true', help='do not validate outputs with gffread')
+    p.add_argument('--identity', help='identity of the curation data record (JSON object); without it no record')
     p.add_argument('--keep-tmp', action='store_true', help='keep the gffcompare work directory (<prefix>.gffcompare/)')
     p.add_argument(
         '--chains-tsv',
@@ -1186,6 +1188,10 @@ def main() -> int:
     }
     report = {'observed': observed, 'discarded_by_reference': discarded, 'novel': novel, 'params': params}
     write_report(args.prefix, report)
+    if args.identity:
+        data = {table: report[table] for table in REPORT_TABLES} | {'has_reference': bool(args.ref)}
+        record = fomo_stats.make_record('curation', fomo_stats.identity_arg(args.identity), data)
+        fomo_stats.write_records(args.prefix + '.curation.data.json', record)
     n_tx = sum(len(g.tx) for g in genes)
     log.info(
         f'supported chains {observed["supported_chains"]:,} -> {len(support.supported_post):,} after reference '

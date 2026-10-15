@@ -19,4 +19,5 @@ workflow TD2_NONCODING {
     kept_fasta = TD2_CODING_FILTER.out.kept_fasta   // [ meta, *.noncoding.fasta ]
     coding_ids = TD2_CODING_FILTER.out.coding_ids   // [ meta, *.coding_ids.txt  ]
     mqc        = TD2_CODING_FILTER.out.mqc          // [ meta, *_td2_coding_mqc.tsv ]
+    data       = TD2_CODING_FILTER.out.data         // [ meta, *.td2_coding.data.json ]
 }

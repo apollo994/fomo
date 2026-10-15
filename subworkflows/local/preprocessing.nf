@@ -122,10 +122,16 @@ workflow PREPROCESSING {
         .mix(TD2_NONCODING.out.mqc)
         .mix(FILTER_TRANSCRIPT.out.mqc)
 
+    ch_data = FILTER_TRANSCRIPT.out.data
+        .mix(GFF_STATS.out.data)
+        .mix(SEQKIT_STATS.out.data)
+        .mix(TD2_NONCODING.out.data)
+
     // S sources, F feature types; the decoy emit is empty without --include_decoy.
     emit:
     spliced_fasta       = ch_final_fasta                                        // [ meta, fasta ] × F·S
     filtered_gff3       = ch_filtered_gff3                                      // [ meta, gff3  ] × F·S
     decoy_spliced_fasta = ch_renamed_final.filter { meta, _fa -> meta.decoy }   // [ meta, fasta ] × F·S
     mqc_files           = ch_mqc_files                                          // [ meta, path  ]
+    data                = ch_data                                               // [ meta, *.data.json ]
 }

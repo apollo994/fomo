@@ -34,7 +34,9 @@ Then **compare the working plan with the frozen original** and validate every de
     12 h limit.
 - [ ] **B2. Snapshot the outputs and `compare.py` them with `tests/golden/realdata_B0.tsv`.**
   **Zero differences** is required. A difference is a stop condition (master §7c): investigate
-  it, never accept it silently.
+  it, never accept it silently. (updated by D27g-3: gffcompare's order of tied entries inside a
+  `.loci` line depends on the run directory, so this run may differ from B0 there alone; show it
+  by re-running gffcompare on one pair in both layouts before comparing `.loci` order-insensitively.)
 - [ ] **B3. Record CPU-h used** in master §10. The total must stay within the budget of stop
   condition (d).
 

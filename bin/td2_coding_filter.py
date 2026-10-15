@@ -19,6 +19,8 @@ Outputs (--prefix P):
                          drops by the source-qualified id; a bare id could name another source's
                          transcript)
   P_td2_coding_mqc.tsv   one MultiQC row: n_in / n_coding / n_kept / pct_coding
+  P.td2_coding.data.json the same counts as a `td2_coding` data record (with --identity; the
+                         record's identity gets stage = --stage)
 """
 
 import argparse
@@ -28,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fomo_io  # noqa: E402
+import fomo_stats  # noqa: E402
 
 PEP_HEADER_RE = re.compile(r'^>(\S+)')
 ORF_TYPE_RE = re.compile(r'ORF\s+type[:=]\s*(\S+)', re.IGNORECASE)
@@ -45,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--sample', required=True, help='row name of the MultiQC table')
     p.add_argument('--stage', required=True, choices=['input', 'projected'], help='pipeline stage')
     p.add_argument('--feature', default='lncRNA', help='feature label of the MultiQC row')
+    p.add_argument('--identity', help='identity of the data record (JSON object); without it no record')
     return p.parse_args()
 
 
@@ -109,6 +113,13 @@ def main() -> int:
     with fomo_io.open_text(f'{args.prefix}_td2_coding_mqc.tsv', 'wt') as out:
         out.write('Sample\tstage\tfeature\tn_in\tn_coding\tn_kept\tpct_coding\n')
         out.write(f'{args.sample}\t{args.stage}\t{args.feature}\t{n_in}\t{n_coding}\t{n_kept}\t{pct:.2f}\n')
+
+    if args.identity:
+        identity = fomo_stats.identity_arg(args.identity) | {'stage': args.stage}
+        data = {'n_in': n_in, 'n_coding': n_coding, 'n_kept': n_kept, 'psauron_min': args.psauron_min}
+        fomo_stats.write_records(
+            f'{args.prefix}.td2_coding.data.json', fomo_stats.make_record('td2_coding', identity, data)
+        )
 
     log.info(f'{args.sample} ({args.stage}) n_in={n_in} coding={n_coding} kept={n_kept} ({pct:.1f}% coding)')
     return 0

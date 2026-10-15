@@ -15,7 +15,10 @@ filename suffixes or `.from_` grammars. The code is split into cached record ind
 ## Steps
 
 - [ ] **A1. Extend the regression fixture from 27a** (`tests/run_summary_tables/fixtures/{V1,V2}/`)
-  with the records of the same runs (captured in 27g E1). The existing test (old inputs →
+  with the records of the same runs (captured in 27g E1). (updated by D27g-5: every produced
+  `*.data.json` of the V1/V2 gate runs is in `fomo_refactor/gate/27g/V{1,2}/work`, skip staged
+  symlinks; the curation record carries `has_reference`; source-side raw gffstats records have
+  no `track`.) The existing test (old inputs →
   golden outputs) keeps passing until A5.
 - [ ] **A2. Write the new input layer, `RecordIndex`.**
   - It loads every `*.data.json` once and builds the indexes: annotation stats by

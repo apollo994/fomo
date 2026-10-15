@@ -1,5 +1,7 @@
 """bin/td2_coding_filter.py: drop lncRNA records with a complete, PSAURON-confident ORF."""
 
+import json
+
 import pytest
 
 import td2_coding_filter as td2
@@ -60,3 +62,13 @@ def test_malformed_score_warns_and_is_not_coding(tmp_path):
     r, _ = run(tmp_path, fa, pep)
     assert 'no parseable psauron_score for t4|lnc_RNA|S' in r.stderr
     assert (tmp_path / 'x.noncoding.fasta').read_text() == FASTA
+
+
+def test_record(tmp_path):
+    fa, pep = write(tmp_path / 'in.fa', FASTA), write(tmp_path / 'p.pep', PEP)
+    args = ['--fasta', fa, '--pep', pep, '--prefix', tmp_path / 'x', '--sample', 'S', '--stage', 'projected']
+    identity = '{"species": "T", "side": "target", "target": "T", "track": "lnc_RNA"}'
+    run_script('td2_coding_filter.py', *args, '--identity', identity, check=True)
+    record = json.loads((tmp_path / 'x.td2_coding.data.json').read_text())
+    assert record['section'] == 'td2_coding' and record['identity']['stage'] == 'projected'
+    assert record['data'] == {'n_in': 4, 'n_coding': 2, 'n_kept': 2, 'psauron_min': 0.5}

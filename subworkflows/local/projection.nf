@@ -83,15 +83,19 @@ workflow PROJECTION {
     // Back to one GFF3 per source, by the `source=` attribute.
     SPLIT_GFF_BY_SOURCE(ch_allmodels_raw)
 
-    // One list per (target, gene type): the aggregate plus every source's file. A target onto
-    // which nothing projected has no split output; `remainder: true` keeps it, so it is
-    // reported with zero models instead of disappearing.
+    // One batch per (target, track): the aggregate plus every source's file, and the manifest
+    // that names each file's source (the aggregate is its first row). A target onto which nothing
+    // projected has no split GFF3; `remainder: true` keeps it, so it is reported with zero
+    // models instead of disappearing.
     ch_projected_batch = ch_allmodels_raw
         .join(SPLIT_GFF_BY_SOURCE.out.gff3, remainder: true)
-        .map { meta, raw_gff, split_gffs -> tuple(meta, ([raw_gff] + [split_gffs].flatten()).findAll { gff -> gff }) }
+        .join(SPLIT_GFF_BY_SOURCE.out.manifest)
+        .map { meta, raw_gff, split_gffs, manifest ->
+            tuple(meta, ([raw_gff] + [split_gffs].flatten()).findAll { gff -> gff }, manifest)
+        }
 
     GFF_STATS_PROJECTED_BATCH(
-        ch_projected_batch.map { meta, gffs -> tuple(meta + [kind: 'projected'], gffs) }
+        ch_projected_batch.map { meta, gffs, manifest -> tuple(meta + [kind: 'projected'], gffs, manifest) }
     )
 
     ch_mqc_files = GFF_STATS_PROJECTED_BATCH.out.tsv
@@ -99,8 +103,13 @@ workflow PROJECTION {
         .mix(SAMTOOLS_TO_MQC.out.tsv)
         .mix(TD2_NONCODING_PROJ.out.mqc)
 
+    ch_data = GFF_STATS_PROJECTED_BATCH.out.data
+        .mix(SAMTOOLS_STATS.out.data)
+        .mix(TD2_NONCODING_PROJ.out.data)
+
     emit:
     allmodels_raw = ch_allmodels_raw     // [ meta(id = target_id, track), *.gff3 ] × F·D·T
-    gff3          = ch_projected_batch   // [ meta, List<gff3> ] × F·D·T: allModels + every source
+    gff3          = ch_projected_batch   // [ meta, List<gff3>, manifest ] × F·D·T: allModels + every source
     mqc_files     = ch_mqc_files         // [ meta, path | List<path> ]
+    data          = ch_data              // [ meta, *.data.json | List ]
 }

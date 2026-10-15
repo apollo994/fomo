@@ -17,6 +17,8 @@ keeps its longest spliced one. A gene is the transcript's whole Parent value; a 
 Parent competes only with itself; ties go to the smallest transcript ID in byte order.
 Rationale: plans/20.
 
+--record FILE --identity JSON write the same counts as a `transcript_filter` data record.
+
 --counts FILE --sample NAME write a one-row funnel table (*_transcript_filter_mqc.tsv):
   n_transcripts  transcripts of the type
   n_stranded     of those, consistently stranded
@@ -35,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fomo_io  # noqa: E402
+import fomo_stats  # noqa: E402
 
 STRANDS = ('+', '-')
 FUNNEL = ('n_transcripts', 'n_stranded', 'n_spliced', 'n_selected')
@@ -117,10 +120,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--longest', action='store_true', help='keep the longest spliced transcript per gene')
     p.add_argument('--counts', help='funnel table to write (needs --sample)')
     p.add_argument('--sample', help='row name of the funnel table')
+    p.add_argument('--record', help='transcript_filter data record to write (needs --identity)')
+    p.add_argument('--identity', help='identity of the record (JSON object)')
     p.add_argument('--output', required=True, help='output GFF3')
     args = p.parse_args()
     if args.counts and not args.sample:
         p.error('--counts requires --sample')
+    if args.record and not args.identity:
+        p.error('--record requires --identity')
     return args
 
 
@@ -130,6 +137,9 @@ def main() -> int:
     selected, counts = select(s, args.longest)
     parents = {p for tid in selected for p in s.parent_of[tid].split(',') if p}
     write_selected(args.gff, args.output, selected, parents)
+    if args.record:
+        identity = fomo_stats.identity_arg(args.identity)
+        fomo_stats.write_records(args.record, fomo_stats.make_record('transcript_filter', identity, counts))
     if args.counts:
         with fomo_io.open_text(args.counts, 'wt') as out:
             out.write('\t'.join(('Sample', 'feature') + FUNNEL) + '\n')

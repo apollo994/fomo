@@ -16,6 +16,7 @@ process CURATE_MODELS {
     tuple val(meta), path("${prefix}.merged.gff3.gz")          , emit: merged, optional: true
     tuple val(meta), path("${prefix}.curation.{tsv,json}")     , emit: report
     tuple val(meta), path("${prefix}_curation_*_mqc.tsv")      , emit: mqc
+    tuple val(meta), path("${prefix}.curation.data.json")      , emit: data
     tuple val("${task.process}"), val('python'), eval('python3 --version | sed "s/Python //"'), topic: versions, emit: versions_python
     tuple val("${task.process}"), val('gffcompare'), eval('gffcompare --version 2>&1 | sed "s/gffcompare v//"'), topic: versions, emit: versions_gffcompare
     tuple val("${task.process}"), val('gffread'), eval('gffread --version 2>&1'), topic: versions, emit: versions_gffread
@@ -31,6 +32,7 @@ process CURATE_MODELS {
         --prefix ${prefix} \\
         --target ${meta.target_id} \\
         --track ${meta.track} \\
+        --identity '${task.ext.identity}' \\
         ${args}
 
     curation_to_mqc.py \\
@@ -43,7 +45,7 @@ process CURATE_MODELS {
     prefix = task.ext.prefix ?: "${meta.target_id}.curated.${meta.track}"
     """
     python3 -c "import gzip, sys; [gzip.open(p, 'wt').close() for p in sys.argv[1:]]" ${prefix}.gff3.gz ${ref ? "${prefix}.merged.gff3.gz" : ''}
-    touch ${prefix}.curation.tsv ${prefix}.curation.json
+    touch ${prefix}.curation.tsv ${prefix}.curation.json ${prefix}.curation.data.json
     for t in observed discarded novel; do touch ${prefix}_curation_\${t}_mqc.tsv; done
     """
 }

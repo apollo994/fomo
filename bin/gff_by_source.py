@@ -12,7 +12,12 @@ child features (exon, CDS, UTR) inherit it through `Parent`.
 Records keep their input order, so a coordinate-sorted input gives coordinate-sorted,
 seqid-grouped outputs (as gff-feature-stats requires). A duplicate transcript ID is an error:
 bam_to_gff.sh makes IDs unique (<tid>|<source>), and a duplicate would corrupt the split and make
-gffread and gffcompare misbehave. An input without records writes no file.
+gffread and gffcompare misbehave. An input without records writes no GFF3.
+
+  --manifest FILE [--aggregate-id ID]
+      A TSV `file<TAB>source` with one row per output, sorted by source; with --aggregate-id, a
+      first row names the input itself as that pseudo-source (e.g. allModels_raw). Downstream
+      tasks take each file's identity from it, never from the file name.
 """
 
 import argparse
@@ -34,6 +39,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--gff', required=True, help='input GFF3 (an allModels.raw.gff3)')
     p.add_argument('--outdir', required=True, help='directory to write the output GFF3s into')
     p.add_argument('--name-template', required=True, help='output file name with a literal {source} placeholder')
+    p.add_argument('--manifest', help='TSV of the outputs: file, source')
+    p.add_argument('--aggregate-id', help='pseudo-source of the input itself, as the first manifest row')
     args = p.parse_args()
     if '{source}' not in args.name_template:
         p.error('--name-template must contain the literal {source}')
@@ -85,9 +92,20 @@ def split_by_source(gff: str, outdir: str, template: str) -> collections.Counter
     return counts
 
 
+def write_manifest(path: str, gff: str, template: str, sources, aggregate_id: str | None) -> None:
+    with fomo_io.open_text(path, 'wt') as out:
+        out.write('file\tsource\n')
+        if aggregate_id:
+            out.write(f'{os.path.basename(gff)}\t{aggregate_id}\n')
+        for source in sorted(sources):
+            out.write(f"{template.replace('{source}', source)}\t{source}\n")
+
+
 def main() -> int:
     args = parse_args()
     counts = split_by_source(args.gff, args.outdir, args.name_template)
+    if args.manifest:
+        write_manifest(args.manifest, args.gff, args.name_template, counts, args.aggregate_id)
     if not counts:
         log.warning(f'{args.gff} contained no records — no output files written')
     for source in sorted(counts):

@@ -5,6 +5,7 @@ implementation this script replaced.
 """
 
 import gzip
+import json
 
 import pytest
 
@@ -196,3 +197,16 @@ def test_real_annotation_slice_is_stable(tmp_path, opts):
     n = [int(x) for x in funnel[1].split('\t')[2:]]
     assert n[0] >= n[1] >= n[2] >= n[3] > 0
     assert len(ids(out)) == n[3]
+
+
+def test_record_carries_the_funnel(tmp_path):
+    rows = (
+        gene('c', 'G1', '+') + tx('c', 'T1', 'G1', '+', [(1, 100), (200, 300)]) + tx('c', 'T2', 'G1', '+', [(1, 300)])
+    )
+    src = write(tmp_path / 'in.gff3', '\n'.join(rows) + '\n')
+    identity = '{"species": "S", "side": "source", "track": "lnc_RNA"}'
+    args = ['--gff', src, '--feature-type', 'lnc_RNA', '--output', tmp_path / 'o.gff3']
+    run_script('filter_transcript.py', *args, '--record', tmp_path / 'r.data.json', '--identity', identity, check=True)
+    record = json.loads((tmp_path / 'r.data.json').read_text())
+    assert record['section'] == 'transcript_filter'
+    assert record['data'] == {'n_transcripts': 2, 'n_stranded': 2, 'n_spliced': 1, 'n_selected': 1}

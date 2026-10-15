@@ -1,29 +1,87 @@
 #!/usr/bin/env python3
 """
-Shared helpers for the FOMO bin/ scripts that read gffcompare `.stats` files:
-the model-identity filename grammar, the aggregate pseudo-source ids, and the
-Sensitivity/Precision parser.
+Shared statistics helpers of the FOMO bin/ scripts: the data-record format (fomo-data/1), the
+gffcompare `.stats` parser, the model-identity filename grammar, and the curation constants.
 
-This is a MODULE, not a script — it is imported by `gffcompare_accuracy_mqc.py`
-and `run_summary_tables.py`, each of which does
+A module, not a script. Importers put bin/ on the import path first:
 
-    import sys
-    from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import fomo_stats
 
-Nextflow only puts `bin/` on PATH, not on Python's import path — but it stages
-(or bind-mounts) the whole directory, so a `__file__`-relative insert finds the
-siblings on every executor. Do not "simplify" that preamble to a bare import.
-
-The identity regex, AGGREGATE_IDS and the stats parser must agree with each other and
-with the pseudo-source id the Nextflow side writes (`allModels_raw`, linked by
-GFFCOMPARE_BATCH and GFF_STATS_PROJECTED_BATCH), so they live here once.
+Nextflow puts bin/ on PATH but not on Python's import path; it stages or mounts the whole
+directory, so a `__file__`-relative insert finds the siblings on every executor.
 """
 
+import json
 import os
 import re
+import sys
+from pathlib import Path
 from typing import NamedTuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fomo_io  # noqa: E402
+
+# ── data records ──────────────────────────────────────────────────────────────────
+# A record is {"schema", "section", "identity", "data"}: what was measured (identity keys drawn
+# from IDENTITY_KEYS) and the measurement. A *.data.json file holds one record or a list.
+SCHEMA = 'fomo-data/1'
+IDENTITY_KEYS = ('species', 'side', 'target', 'source', 'track', 'label', 'order', 'kind', 'stage')
+# section -> identity keys every record of it carries
+SECTIONS = {
+    'transcript_filter': ('species', 'side', 'track'),
+    'gffstats': ('species', 'side', 'kind'),
+    'td2_coding': ('species', 'side', 'track', 'stage'),
+    'alignment': ('target', 'side', 'track'),
+    'fasta_stats': ('species', 'side', 'track'),
+    'accuracy': ('target', 'source', 'side', 'track'),
+    'curation': ('target', 'side', 'track'),
+}
+
+
+def make_record(section: str, identity: dict, data) -> dict:
+    """A validated record: a known section, its required identity keys, no unknown key."""
+    if section not in SECTIONS:
+        fomo_io.die(f'unknown record section {section!r}')
+    unknown = sorted(set(identity) - set(IDENTITY_KEYS))
+    if unknown:
+        fomo_io.die(f'{section} record: unknown identity key(s) {unknown}')
+    missing = [k for k in SECTIONS[section] if identity.get(k) in (None, '')]
+    if missing:
+        fomo_io.die(f'{section} record: missing identity key(s) {missing} in {identity}')
+    return {'schema': SCHEMA, 'section': section, 'identity': dict(identity), 'data': data}
+
+
+def write_records(path, records) -> None:
+    """Write one record, or a list of records, as JSON."""
+    with fomo_io.open_text(str(path), 'wt') as out:
+        json.dump(records, out, indent=1, sort_keys=False)
+        out.write('\n')
+
+
+def read_records(directory) -> list[dict]:
+    """Every record of every *.data.json under directory, each validated."""
+    records = []
+    for path in sorted(Path(directory).rglob('*.data.json')):
+        with fomo_io.open_text(str(path)) as fh:
+            doc = json.load(fh)
+        for rec in doc if isinstance(doc, list) else [doc]:
+            if not isinstance(rec, dict) or rec.get('schema') != SCHEMA:
+                fomo_io.die(f'{path}: not a {SCHEMA} record')
+            records.append(make_record(rec.get('section'), rec.get('identity') or {}, rec.get('data')))
+    return records
+
+
+def identity_arg(text: str) -> dict:
+    """The --identity argument of the record-writing scripts: a JSON object."""
+    try:
+        identity = json.loads(text)
+    except json.JSONDecodeError as exc:
+        fomo_io.die(f'--identity is not JSON: {exc}')
+    if not isinstance(identity, dict):
+        fomo_io.die('--identity must be a JSON object')
+    return identity
+
 
 # Feature levels, in the order gffcompare reports them.
 LEVELS = ["Base", "Exon", "Intron", "Intron_chain", "Transcript", "Locus"]
@@ -92,6 +150,34 @@ def parse_accuracy(stats_path: str) -> dict[str, tuple[float, float]]:
                 continue
             out[level] = (sens, prec)
     return out
+
+
+GFFCOMPARE_COUNT_RE = re.compile(r'^#?\s*(Query mRNAs|Reference mRNAs)\s*:\s*(\d+)\s+in\s+(\d+)\s+loci')
+GFFCOMPARE_MATCH_RE = re.compile(r'^\s*Matching (intron chains|transcripts|loci):\s*(\d+)')
+GFFCOMPARE_MISSED_RE = re.compile(r'^\s*(Missed|Novel) (exons|introns|loci):\s*(\d+)/(\d+)')
+
+
+def parse_gffcompare_stats(stats_path: str) -> dict:
+    """The accuracy payload of a gffcompare `.stats` file: Sn/Pr per level, the query and
+    reference counts, the matching counts, and the missed/novel counts that are present."""
+    counts: dict = {}
+    with open(stats_path, encoding='utf-8') as fh:
+        for line in fh:
+            m = GFFCOMPARE_COUNT_RE.match(line)
+            if m:
+                key = 'query' if m.group(1).startswith('Query') else 'reference'
+                counts[f'{key}_mrnas'], counts[f'{key}_loci'] = int(m.group(2)), int(m.group(3))
+                continue
+            m = GFFCOMPARE_MATCH_RE.match(line)
+            if m:
+                counts['matching_' + m.group(1).replace(' ', '_')] = int(m.group(2))
+                continue
+            m = GFFCOMPARE_MISSED_RE.match(line)
+            if m:
+                key = f'{m.group(1).lower()}_{m.group(2)}'
+                counts[key], counts[f'{key}_total'] = int(m.group(3)), int(m.group(4))
+    levels = {level: {'sn': sn, 'pr': pr} for level, (sn, pr) in parse_accuracy(stats_path).items()}
+    return {'levels': levels, 'counts': counts}
 
 
 def transcript_sn_pr(stats_path: str) -> tuple[float, float] | None:

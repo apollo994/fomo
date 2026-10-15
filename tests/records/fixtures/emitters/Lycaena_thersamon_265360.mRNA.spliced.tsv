@@ -1,0 +1,2 @@
+file	format	type	num_seqs	sum_len	min_len	avg_len	max_len	Q1	Q2	Q3	sum_gap	N50	N50_num	Q20(%)	Q30(%)	AvgQual	GC(%)	sum_n
+Lycaena_thersamon_265360.mRNA.spliced.renamed.fasta	FASTA	DNA	864	1591068	252	1841.5	14493	878.0	1437.0	2248.5	0	2320	197	0.00	0.00	0.00	45.32	0

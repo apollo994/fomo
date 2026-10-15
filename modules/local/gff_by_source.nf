@@ -12,6 +12,7 @@ process GFF_BY_SOURCE {
     // projected onto the target) writes no file: the output is optional.
     output:
     tuple val(meta), path("*.gff3"), optional: true, emit: gff3
+    tuple val(meta), path("*.manifest.tsv")        , emit: manifest
     tuple val("${task.process}"), val('python'), eval('python3 --version 2>&1 | sed "s/Python //"'), topic: versions, emit: versions_python
 
     script:
@@ -20,6 +21,7 @@ process GFF_BY_SOURCE {
     gff_by_source.py \\
         --gff ${gff3} \\
         --outdir . \\
+        --manifest ${meta.target_id}.${meta.track}.manifest.tsv \\
         ${args}
     """
 
@@ -27,7 +29,11 @@ process GFF_BY_SOURCE {
     def args = task.ext.args ?: ''
     def template = args =~ /--name-template\s+'([^']+)'/
     def name = template.find() ? template.group(1).replace('{source}', 'stub') : "${meta.id}.gff3"
+    def aggregate = args =~ /--aggregate-id\s+(\S+)/
     """
     touch ${name}
+    printf 'file\\tsource\\n' > ${meta.target_id}.${meta.track}.manifest.tsv
+    ${aggregate.find() ? "printf '${gff3.name}\\t${aggregate.group(1)}\\n' >> ${meta.target_id}.${meta.track}.manifest.tsv" : ''}
+    printf '${name}\\tstub\\n' >> ${meta.target_id}.${meta.track}.manifest.tsv
     """
 }

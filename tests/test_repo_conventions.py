@@ -64,3 +64,11 @@ def test_bin_scripts_are_executable():
     for path in sorted((ROOT / 'bin').iterdir()):
         if path.is_file() and path.read_bytes()[:2] == b'#!':
             assert os.access(path, os.X_OK), f'{path.name} is not executable'
+
+
+def test_process_level_ext_follows_every_with_name():
+    """A process-level ext.* before a withName block would capture that block's ext.* settings."""
+    lines = (ROOT / 'conf/modules.config').read_text().splitlines()
+    last_with_name = max(i for i, line in enumerate(lines) if line.strip().startswith('withName:'))
+    process_ext = [i for i, line in enumerate(lines) if line.startswith('    ext.')]
+    assert process_ext and all(i > last_with_name for i in process_ext)
