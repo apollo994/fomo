@@ -1,5 +1,8 @@
 # Plan: FOMO Preprocessing — Decoy track (steps 02–04)
 
+> **Status:** Implemented (optional since 12) · **Date:** 2026-05-24
+> **Decision:** Decoys are source models moved into the source's own intergenic space (bedtools complement of the gene BED), chromosomes weighted by eligible intergenic length, marked `decoy=true` and extracted with gffread.
+
 ## Context
 
 Step 00 is done: per source × feature_type (`lnc_RNA`, `mRNA`) the pipeline emits a filtered GFF3 and a spliced FASTA. The next preprocessing chunk produces **decoy** spliced FASTAs — source transcripts randomly relocated into **each source's own** intergenic intervals — which the projection stage uses as a negative-control track. The decoy sequences are extracted from the source FASTA (not the target) because only source-derived sequences are aligned to the target during projection; decoys must mimic source lncRNA composition to serve as a meaningful FP control.

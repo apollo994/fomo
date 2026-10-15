@@ -1,5 +1,8 @@
 # 15c — Phase C: output layout, reporting, resources, docs
 
+> **Status:** Implemented · **Date:** 2026-09-22
+> **Decision:** Phase C of 15: the output tree is named for its content, and reporting and resources follow the single alignment.
+
 Sub-plan of [`15_single_mapping.md`](15_single_mapping.md). Requires Phase B
 ([`15b`](15b_single_mapping_aggregates.md)) checkpoint to have passed.
 

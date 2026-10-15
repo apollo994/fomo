@@ -1,5 +1,8 @@
 # 15a — Phase A: merge, align once, split back
 
+> **Status:** Implemented · **Date:** 2026-09-22
+> **Decision:** Phase A of 15: merge, align once and split back, with per-source outputs of the same shape as before.
+
 Sub-plan of [`15_single_mapping.md`](15_single_mapping.md). Read that first.
 
 ## Goal

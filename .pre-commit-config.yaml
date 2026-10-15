@@ -25,6 +25,18 @@ repos:
         language: system
         files: '\.(nf|config)$'
         pass_filenames: false
+      - id: comment-budget
+        name: comment budget
+        entry: python3 dev/code_metrics.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: doc-links
+        name: documentation links
+        entry: python3 dev/check_links.py
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: trailing-whitespace
         name: no trailing whitespace
         entry: '[ \t]+$'

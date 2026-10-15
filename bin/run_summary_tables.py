@@ -513,7 +513,7 @@ HEATMAP_NOTE = (
     'lncRNA transcript-level gffcompare accuracy for each source → target '
     'projection. A blank cell means that pair was not benchmarked — the target '
     'is not benchmarked (only role `both` targets are). The diagonal is always '
-    'blank: a species is never projected onto itself (plans/23).'
+    'blank: a species is never projected onto itself.'
 )
 
 

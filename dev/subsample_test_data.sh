@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# One-off script: subsample test data to the longest contig per species.
-# Replaces symlinks in assets/test_data/ with committed subsampled files.
-# Run once from the repo root: bash bin/subsample_test_data.sh
+# Rebuild the committed test data (assets/test_data/): for each test species, its longest contig
+# and that contig's annotation, cut from the full Ensembl download.
+#
+# Usage: dev/subsample_test_data.sh <annotation_downloads dir>
+#        (layout: <dir>/<species>/<assembly>/*.fna.gz and *.aliasMatch.gff3.gz)
 set -euo pipefail
+export LC_ALL=C
 
+if [[ $# -ne 1 ]]; then
+    echo "Usage: $(basename "$0") <annotation_downloads dir>" >&2
+    exit 1
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ANNO_DIR="$REPO_DIR/annotation_downloads"
+ANNO_DIR="$1"
 TEST_DATA_DIR="$REPO_DIR/assets/test_data"
 
 # "species:assembly" pairs
@@ -30,16 +37,12 @@ for pair in "${PAIRS[@]}"; do
     [[ -z "$fna_gz"  ]] && { echo "ERROR: no .fna.gz in $src_dir" >&2; exit 1; }
     [[ -z "$gff3_gz" ]] && { echo "ERROR: no .gff3.gz in $src_dir" >&2; exit 1; }
 
-    # Replace symlink with real directory
-    if [[ -L "$TEST_DATA_DIR/$species" ]]; then
-        rm "$TEST_DATA_DIR/$species"
-    fi
     mkdir -p "$dst_dir"
 
     out_fna="$dst_dir/${species}.fna.gz"
     out_gff3="$dst_dir/${species}.gff3.gz"
 
-    # Find the longest contig name (two-pass-free: accumulate lengths then pick max)
+    # The longest contig.
     echo "  Finding longest contig ..."
     LONGEST=$(gunzip -c "$fna_gz" | awk '
         /^>/ {
@@ -78,4 +81,4 @@ done
 
 echo ""
 echo "Subsampling complete."
-echo "Next: commit assets/test_data/, then run: nextflow run . -profile test,docker"
+echo "Next: commit assets/test_data/ and run the test profile."

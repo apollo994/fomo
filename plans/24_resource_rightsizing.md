@@ -1,5 +1,8 @@
 # Plan: CPU/memory right-sizing — no CPU escalation on retry, smaller batch and minimap2 requests
 
+> **Status:** Implemented; partially superseded by 27 · **Date:** 2026-10-08
+> **Decision:** CPUs no longer grow on retry, and the batch and minimap2 tasks request less.
+
 **Status: implemented** (`conf/base.config`, `conf/crg.config`). Not yet validated on a
 full cluster run — see **Verification**.
 

@@ -1,5 +1,8 @@
 # Plan: refactor STATS → REPORTING, stage-local QC, split MultiQC config
 
+> **Status:** Partially superseded by 16 and 27 · **Date:** 2026-05-26
+> **Decision:** Statistics are produced by the stage that owns the data and handed on as a meta-carrying channel; one REPORTING subworkflow runs MultiQC; the MultiQC configuration is split into layout and sections.
+
 ## Context
 
 Today `subworkflows/local/stats.nf` does two things in one place:

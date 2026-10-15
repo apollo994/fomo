@@ -1,5 +1,8 @@
 # Plan: replace AGAT statistics with the Rust `gff-feature-stats`
 
+> **Status:** Implemented · **Date:** 2026-09-22
+> **Decision:** Every GFF statistic comes from the vendored Rust binary gff-feature-stats: the same numbers as AGAT plus introns, reads `.gz`, a flat ~20 MB of memory.
+
 > Supersedes `plans/10_replace_agat_stats.md` (the Python `bin/gff_stats_standalone.py` route).
 
 ## Context

@@ -198,7 +198,7 @@ that a U-decision explicitly allows, and none of U5's changes touches a delivera
 | 27g | [27g_stats_records.md](27g_stats_records.md) | Producers emit data records (additive); manifest | 27f | U7, T1–T3, P1, D3 | 2.5 d | done (2026-10-15) |
 | 27h | [27h_run_summary_records.md](27h_run_summary_records.md) | Run summary reads records | 27g | P2, P4, R5 | 2 d | done (2026-10-15) |
 | 27i | [27i_multiqc_from_records.md](27i_multiqc_from_records.md) | Renderer + section registry; delete adapters, one GFF_STATS | 27h | P3, D2, D4, U5 | 3 d | done (2026-10-15) |
-| 27j | [27j_docs.md](27j_docs.md) | CLAUDE.md, README, docs/, ADR plans, CHANGELOG, budget | 27i | V5–V7, T4, T5 | 2 d | not started |
+| 27j | [27j_docs.md](27j_docs.md) | CLAUDE.md, README, docs/, ADR plans, CHANGELOG, budget | 27i | V5–V7, T4, T5 | 2 d | done (2026-10-15) |
 | 27k | [27k_final_validation.md](27k_final_validation.md) | Clean-checkout gates, real-data G5, plan comparison | all | — | 1.5 d | not started |
 
 The estimates are engineering days and are only for ordering. The order matters: 27a protects
@@ -350,6 +350,7 @@ by two files (a filename, a label, a section id) gets a consistency test.
 | 2026-10-15 | 27g | done: every stats producer also writes fomo-data/1 records (7 sections), a manifest carries per-file identity, the bridge test proves records hold every table value (121 pairs), G4 identical; GFFCOMPARE_BATCH stays on its image (gffcompare `.loci` tie order depends on build and path); 5 deviations | 6.7 |
 | 2026-10-15 | 27h | done: the run summary reads only data records (cached indexes, pure compute + emit, no label or filename parsing, no lint ignores), byte-identical on the V1/V2 fixtures and in G4; 1 deviation | 7.0 |
 | 2026-10-15 | 27i | done: MultiQC custom content rendered in MULTIQC from records via one registry; 5 adapter processes, 4 scripts and the producers' tables deleted; one GFF_STATS module; duplicate target rows gone (U5); V2 167 → 133 tasks; G4 identical; 3 deviations | 7.3 |
+| 2026-10-15 | 27j | done: CLAUDE.md 514 → 150 lines with 16 tested invariants, README + docs/, CHANGELOG, CONTRIBUTING, decision-record headers on plans 00–26, dev/ tools with the comment budget and link check in pre-commit; TD2 guard test added; G4 identical; 4 deviations | 7.6 |
 
 ## 11. Outcome
 

@@ -1,5 +1,8 @@
 # 14 — Multi-target: `role: both` and all-vs-all in one run
 
+> **Status:** Implemented · **Date:** 2026-09-22
+> **Decision:** A species can be `both` (donor and target), so one run covers an all-vs-all comparison; the target dimension lives in channels, not a nested subworkflow, and joins key on the target.
+
 ## Problem
 
 FOMO annotated **one** target from **many** sources. An all-vs-all experiment therefore

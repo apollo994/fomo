@@ -1,5 +1,8 @@
 # Plan: Top-3 consensus annotation (selected by lncRNA transcript F1)
 
+> **Status:** Superseded by 23 · **Date:** 2026-05-27
+> **Decision:** A second consensus pooled the three sources with the best lncRNA transcript F1.
+
 ## Context
 
 The pipeline already builds an **all-source** consensus per gene type

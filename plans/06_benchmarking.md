@@ -1,5 +1,8 @@
 # Plan: FOMO Benchmarking — gffcompare per projection
 
+> **Status:** Partially superseded by 18 and 20 · **Date:** 2026-05-26
+> **Decision:** Every projection is compared by gffcompare with the target's annotation of the same feature type; decoys compared with the real annotation give the false-positive baseline; MultiQC reads the `.stats` natively.
+
 ## Context
 
 From `BRAINSTORM.md` benchmarking step:

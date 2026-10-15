@@ -1,5 +1,8 @@
 # Plan: Unify MAPPING + BAM_TO_GFF under PROJECTION + record alignment %
 
+> **Status:** Implemented; partially superseded by 15 · **Date:** 2026-05-25
+> **Decision:** Alignment and BAM-to-GFF3 conversion form one PROJECTION subworkflow, and alignment statistics are recorded for the report.
+
 ## Context
 
 Two related changes on top of `plans/03_mapping.md` + `plans/04_bam_to_gff.md`:

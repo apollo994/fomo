@@ -1,5 +1,8 @@
 # 20 — One filtered annotation per species: longest isoform, used for projection, reference and results
 
+> **Status:** Implemented · **Date:** 2026-10-01
+> **Decision:** One filtered annotation per species (spliced, longest isoform per gene, TD2-noncoding) is projected, is the benchmarking reference and is published.
+
 ## Status: implemented (2026-10-01), verified against baseline on `-profile test`
 
 Implemented on branch `longest-isoform` as planned; one detail changed: the funnel row's

@@ -1,61 +1,79 @@
 # FOMO
 
-A Nextflow DSL2 pipeline that annotates candidate long non-coding RNAs (lncRNAs) on a
-target genome assembly by transferring lncRNA annotations from source species.
+FOMO is a Nextflow pipeline that annotates candidate long non-coding RNAs (lncRNAs) on genome
+assemblies by transferring the lncRNA annotation of related species. Each source's spliced
+transcripts are aligned to every target genome, the projected models are benchmarked against
+the target's own annotation where one exists, and the intron chains that several species agree
+on become a curated annotation, merged into the target's reference.
 
-- **Input:** target `.fa` assembly + source `.gff3`/`.fa`
-- **Output:** `.gff3` of candidate lncRNAs on the target
+## Requirements
 
-Each species in the samplesheet can act as a `source` (donates annotation), a `target`
-(receives projections), or `both` — so a single run can cover an all-vs-all comparison
-across many species. A `gff3` is required for `source` and `both`. A `target` may also give
-one: it is then the reference the curated annotation is filtered against, tagged with and
-merged into, but the target is not benchmarked — to benchmark a species against its own
-annotation, make it `both` (it then also donates).
+- Nextflow ≥ 25.04
+- Singularity / Apptainer or Docker (every tool runs in a pinned container)
 
-Pipeline stages:
-
-1. **Preprocessing** — keep one spliced transcript per gene (the longest isoform;
-   `--longest_isoform false` keeps them all), drop lncRNA with coding potential (TD2), and
-   extract their sequences from each source, plus optional decoy sequences for a
-   false-positive baseline. The result is one filtered annotation per source.
-2. **Projection** — splice-aware alignment (minimap2) of source sequences onto each
-   target genome, converted back to GFF3. A species is never projected onto itself.
-3. **Benchmarking** — compare `allModels` (every source pooled) and each source's
-   projected models against each `both` target's own filtered annotation (gffcompare).
-4. **Curation** — the consensus: keep only intron chains shared exactly by ≥ 2 source
-   species (`--curate_min_species`), drop models overlapping any exon of the target's
-   reference, report one transcript per supported chain, grouped into genes by shared
-   splice junctions (each gene tagged with its location and nearest reference gene; IDs are
-   content hashes of the intron chains, stable across runs) and merge the result into the
-   reference annotation (`--curate false` skips it).
-5. **Reporting** — one MultiQC report per target, plus one run-level summary report.
-
-## Usage
+## Quick start
 
 ```bash
-nextflow run . -profile test
+nextflow run . -profile test,singularity     # or: -profile test,docker
 ```
 
-See `nextflow run . --help` for the full parameter list, and `assets/schema_input.json`
-for the samplesheet format (`species,role,fasta,gff3`).
+The test profile runs three species, each cut to one chromosome, in a few minutes.
+
+## Samplesheet
+
+```csv
+species,role,fasta,gff3
+Lycaena_alciphron_282377,both,alciphron.fna.gz,alciphron.gff3.gz
+Lycaena_hippothoe_580924,target,hippothoe.fna.gz,hippothoe.gff3.gz
+Lycaena_thersamon_265360,source,thersamon.fna.gz,thersamon.gff3.gz
+```
+
+One row per species; `species` is unique and matches `^[A-Za-z0-9_-]+$`. FASTA and GFF3 may be
+plain or gzipped.
+
+| role | donates its annotation | receives projections | gff3 |
+|:---|:---|:---|:---|
+| `source` | yes | no | required |
+| `target` | no | yes | optional: the curation reference |
+| `both` | yes, to every other target | yes, from every other source | required |
+
+A species is never projected onto itself. Only `both` species are benchmarked: the reference is
+the species' own filtered annotation, which only a donor has. A `target`'s gff3 is used for
+curation only — curated models overlapping its exons are dropped, each curated gene is tagged
+with its nearest reference gene, and the curated genes are merged into it; a `target` without a
+gff3 is curated without a reference. One run with `both` rows is an all-vs-all comparison.
+
+## Parameters
+
+`nextflow run . --help` lists every parameter. The main ones:
+
+| parameter | default | |
+|:---|:---|:---|
+| `--input` | | the samplesheet |
+| `--outdir` | `results` | |
+| `--include_mrna` | `false` | also transfer mRNA, a positive control |
+| `--include_decoy` | `false` | also project relocated decoys, a false-positive baseline |
+| `--longest_isoform` | `true` | one transcript per gene, the longest spliced isoform |
+| `--curate` / `--curate_min_species` | `true` / `2` | the curated annotation, and how many species must share a chain |
+| `--td2_psauron_min` | `0.5` | PSAURON score at which a complete ORF makes a lncRNA coding |
+
+Usage on a cluster, resources and reruns: [docs/usage.md](docs/usage.md).
 
 ## Outputs
 
-```
-targets/<target>/   alignment/, annotation/, gffcompare/, multiqc/,
-                    curated/<target>.curated.<gtype>.gff3.gz          — curated genes
-                            <target>.curated.<gtype>.merged.gff3.gz   — reference + curated
-                            <target>.curated.<gtype>.curation.{tsv,json} — curation report
-sources/<source>/   annotation/<source>.<ft>.filtered.gff3 — what was projected from
-                    this source (and, for a `both` species, the benchmark reference)
-summary/            multiqc/ (run-level report), tables/
-```
+Per target: the alignments, the projected models (pooled and per source), the benchmarking,
+the curated annotation and a MultiQC report; per source: the filtered annotation that was
+projected; per run: a summary report and its tables. The full tree: [docs/output.md](docs/output.md).
 
 ## Documentation
 
-See `CLAUDE.md` for pipeline architecture, subworkflow details, and conventions.
+- [docs/usage.md](docs/usage.md) — running FOMO
+- [docs/output.md](docs/output.md) — what each output file holds
+- [docs/architecture.md](docs/architecture.md) — how the pipeline works
+- [docs/data_records.md](docs/data_records.md) — the statistics records behind the reports
+- [CONTRIBUTING.md](CONTRIBUTING.md) — conventions, tests and gates
+- [CHANGELOG.md](CHANGELOG.md)
 
-## License
+## Citation and licence
 
-MIT — see [LICENSE](LICENSE).
+There is no publication yet; cite this repository. MIT licence — see [LICENSE](LICENSE).

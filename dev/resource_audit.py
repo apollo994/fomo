@@ -2,10 +2,9 @@
 """Audit requested vs. actually-used resources in a Nextflow execution trace.
 
 Usage:
-    python3 13_resource_rightsizing_audit.py <path/to/execution_trace.txt> [...]
+    python3 dev/resource_audit.py <path/to/execution_trace*.txt> [...]
 
-Companion to plans/13_resource_rightsizing.md — this is the script that produced the
-numbers in that plan, and the one to re-run for its verification protocol.
+Rationale: plans/13 (the numbers in that plan came from this script).
 
 Interpretation notes:
   * `peak_rss` for tasks shorter than ~5 s is under-sampled by Nextflow's trace poller.
@@ -35,14 +34,16 @@ def gb(value):
 
 def secs(value):
     """'1h 2m 3s' / '32.2s' / '10m' -> float seconds. Missing or '-' -> 0.0."""
-    return sum(
-        float(n) * _DUR[u] for n, u in re.findall(r"([\d.]+)\s*(ms|s|m|h|d)", value or "")
-    )
+    return sum(float(n) * _DUR[u] for n, u in re.findall(r"([\d.]+)\s*(ms|s|m|h|d)", value or ""))
 
 
 def cores(value):
     """'68.3%' -> 0.683 cores actually consumed (Nextflow reports cumulative %CPU)."""
     return float((value or "0").rstrip("%") or 0) / 100.0
+
+
+def ratio(a, b):
+    return f"{a / b:.1f}x" if b else "  inf"
 
 
 def audit(path):
@@ -61,8 +62,7 @@ def audit(path):
     print(f"\n{'=' * 118}\n{path}\n{'=' * 118}")
     print(f"tasks: {len(rows)}   status: {dict(status)}   attempts: {dict(attempts)}")
     if any(a != "1" for a in attempts):
-        print("  !! retries present — a tier may be cut too far; check the `exit` column "
-              "(137=OOM, 143=timeout)")
+        print("  !! retries present — a tier may be cut too far; check the `exit` column (137=OOM, 143=timeout)")
 
     res_gbh = used_gbh = res_cpuh = used_cpuh = 0.0
     wall = queue = 0.0
@@ -97,23 +97,25 @@ def audit(path):
         if rt >= 5.0:
             peaks[k].append((pk_m, use_c, rt, r["memory"], r["cpus"], r["time"]))
 
-    def ratio(a, b):
-        return f"{a / b:.1f}x" if b else "  inf"
-
     print(
-        f"\nreserved memory {res_gbh:8.2f} GB.h   used {used_gbh:6.2f} GB.h   "
-        f"overestimate {ratio(res_gbh, used_gbh)}"
+        f"\nreserved memory {res_gbh:8.2f} GB.h   used {used_gbh:6.2f} GB.h   overestimate {ratio(res_gbh, used_gbh)}"
     )
     print(
-        f"reserved cpu    {res_cpuh:8.2f} cpu.h  used {used_cpuh:6.2f} cpu.h  "
-        f"overestimate {ratio(res_cpuh, used_cpuh)}"
+        f"reserved cpu    {res_cpuh:8.2f} cpu.h  used {used_cpuh:6.2f} cpu.h  overestimate {ratio(res_cpuh, used_cpuh)}"
     )
     print(f"actual compute  {wall / 3600:8.2f} h      queue+poll overhead {queue / 3600:6.2f} h")
 
+    report_per_process(per, len(rows), res_gbh - used_gbh)
+    report_reliable(peaks, len(rows))
+
+
+def report_per_process(per, n_rows, wasted):
     print(f"\n{'-- per process, ranked by GB.h wasted ' + '-' * 80}")
-    hdr = (f"{'process':46s} {'n':>4} {'req mem':>8} {'maxpeak':>8} {'mem x':>7} "
-           f"{'cpus':>5} {'maxcore':>7} {'cpu x':>6} {'req t':>7} {'max t':>7} "
-           f"{'GBh wast':>8}")
+    hdr = (
+        f"{'process':46s} {'n':>4} {'req mem':>8} {'maxpeak':>8} {'mem x':>7} "
+        f"{'cpus':>5} {'maxcore':>7} {'cpu x':>6} {'req t':>7} {'max t':>7} "
+        f"{'GBh wast':>8}"
+    )
     print(hdr)
     for k, p in sorted(per.items(), key=lambda kv: -(kv[1]["res_gbh"] - kv[1]["used_gbh"])):
         print(
@@ -123,15 +125,14 @@ def audit(path):
             f"{p['req_time'] / 60:6.0f}m {p['max_real']:6.0f}s "
             f"{p['res_gbh'] - p['used_gbh']:8.2f}"
         )
-    print(
-        f"{'TOTAL':46s} {len(rows):4d} {'':8} {'':8} {'':7} {'':5} {'':7} {'':6} "
-        f"{'':7} {'':7} {res_gbh - used_gbh:8.2f}"
-    )
+    print(f"{'TOTAL':46s} {n_rows:4d} {'':8} {'':8} {'':7} {'':5} {'':7} {'':6} {'':7} {'':7} {wasted:8.2f}")
 
+
+def report_reliable(peaks, n_rows):
     reliable = sum(len(v) for v in peaks.values())
     print(
         f"\n{'-- RELIABLE subset: realtime >= 5s ' + '-' * 83}\n"
-        f"{reliable}/{len(rows)} tasks measured long enough to trust peak_rss. "
+        f"{reliable}/{n_rows} tasks measured long enough to trust peak_rss. "
         f"Base tier decisions on these."
     )
     print(f"{'process':46s} {'n':>4} {'request':>18} {'maxpeak':>8} {'maxcore':>8} {'maxreal':>8}")

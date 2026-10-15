@@ -1,5 +1,8 @@
 # Plan: FOMO BAM → GFF3 conversion
 
+> **Status:** Implemented · **Date:** 2026-05-25
+> **Decision:** Alignments become GFF3 models in `bin/bam_to_gff.sh`: the read name `tid|type|species` gives `source` and `gene_class` attributes, exon blocks come from the CIGAR, single-exon alignments are dropped by default.
+
 ## Context
 
 `MAPPING` (plan `03_mapping.md`) emits one sorted+indexed BAM per (source × feature_type × decoy?). The next step from `BRAINSTORM.md` is **projection** — converting each BAM into a GFF3 describing the projected transcripts on the target genome. Reference implementation: `legacy_scripts/minimap_transfer/01_convert_bam_to_gff.sh` (driven by `01_convert_bam_to_gff_commands.sh`, which is just a fanout that runs the script on every per-(target, source, class) BAM).

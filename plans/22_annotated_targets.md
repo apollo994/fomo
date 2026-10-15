@@ -1,5 +1,8 @@
 # 22 — Annotated targets: a `target` may carry a gff3, used as the curation reference
 
+> **Status:** Implemented · **Date:** 2026-10-07
+> **Decision:** A pure target may carry a gff3, used as its curation reference only; benchmarking stays for `both` species.
+
 ## Status: implemented — merged to `main` @ `3dc0ce4` (squashed; detailed commit in tag `archive/plans-21-23`) — verification in **Results**
 
 ## Decisions (2026-10-07)

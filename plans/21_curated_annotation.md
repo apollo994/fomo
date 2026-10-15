@@ -1,5 +1,8 @@
 # 21 — Curated annotation: chains shared by ≥ 2 species, merged with the reference
 
+> **Status:** Implemented · **Date:** 2026-10-06
+> **Decision:** The curated annotation keeps intron chains shared exactly by at least N species, drops models overlapping reference exons, and merges the rest into the target's reference.
+
 ## Status: done (phases A–C; C folded into plans/23) — merged to `main` @ `3dc0ce4` (squashed; detailed commits in tag `archive/plans-21-23`)
 
 Phase A = `bin/curate_models.py` + `tests/curate_models/test_curate_models.py` (43 fixture checks

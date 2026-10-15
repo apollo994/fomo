@@ -1,5 +1,8 @@
 # 16 — Run-level "general" MultiQC report
 
+> **Status:** Implemented · **Date:** 2026-09-22
+> **Decision:** Besides the per-target reports, one run-level MultiQC report aggregates across targets and donors, built by one RUN_SUMMARY_TABLES task.
+
 ## Context
 
 Since plans/14 an all-vs-all experiment is **one** `nextflow run` (`role: both`), and

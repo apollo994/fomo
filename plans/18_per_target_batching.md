@@ -1,5 +1,8 @@
 # 18 — Per-target batching: one process for all sources
 
+> **Status:** Implemented; partially superseded by 27 · **Date:** 2026-09-08
+> **Decision:** Per-source GFF statistics and gffcompare run as one task per (target, track) that covers every source, so their task count grows with T, not S·T.
+
 ## Status: implemented (2026-09-08), verified against baseline on `-profile test`
 
 Implemented as `modules/local/gff_stats_projected_batch.nf` (`GFF_STATS_PROJECTED_BATCH`)
