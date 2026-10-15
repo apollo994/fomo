@@ -1,0 +1,4 @@
+min_mrna_species	supported_lnc_chains	coding_truth	flagged	tp	recall	precision	flagged_not_coding
+1	38934	7652	18188	7145	93.4	39.3	11043
+2	38934	7652	10537	5605	73.2	53.2	4932
+3	38934	7652	6685	3995	52.2	59.8	2690
