@@ -1,13 +1,7 @@
 process TD2_PREDICT {
     tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_low'
-
-    // Wave builds of the conda spec below (BioContainers stops at td2 1.0.7). They carry CPU
-    // torch; PSAURON uses a GPU only with a CUDA-torch image and `--nv`.
-    conda 'bioconda::td2=1.1.0'
-    container "${workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container
-        ? 'oras://community.wave.seqera.io/library/td2:1.1.0--357f46c1cbbeed20'
-        : 'community.wave.seqera.io/library/td2:1.1.0--76046a413a4219c1'}"
+    label 'img_td2'
 
     input:
     tuple val(meta), path(fasta)
@@ -16,9 +10,6 @@ process TD2_PREDICT {
     tuple val(meta), path("*.TD2.pep"), emit: pep
     // TD2 has no --version flag: read the package metadata.
     tuple val("${task.process}"), val('td2'), eval("python -c 'import importlib.metadata as m; print(m.version(\"TD2\"))'"), topic: versions, emit: versions_td2
-
-    when:
-    task.ext.when == null || task.ext.when
 
     script:
     // ext.args  → TD2.LongOrfs flags (default: strand-specific, complete ORFs)

@@ -1,18 +1,14 @@
 process GFF_TO_GENE_BED {
     tag "${meta.id}"
     label 'process_single'
-
-    container 'ubuntu:22.04'
+    label 'img_ubuntu'
 
     input:
     tuple val(meta), path(gff3), path(sizes)
 
     output:
     tuple val(meta), path("*.genes.bed"), emit: bed
-    tuple val("${task.process}"), val('awk'), eval('awk --version 2>&1 | head -n1'), topic: versions, emit: versions_awk
-
-    when:
-    task.ext.when == null || task.ext.when
+    tuple val("${task.process}"), val('mawk'), eval("awk -W version 2>&1 | sed '1!d;s/^mawk //'"), topic: versions, emit: versions_mawk
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"

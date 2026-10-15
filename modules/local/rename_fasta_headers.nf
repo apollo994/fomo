@@ -1,8 +1,7 @@
 process RENAME_FASTA_HEADERS {
     tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_single'
-
-    container 'ubuntu:22.04'
+    label 'img_ubuntu'
 
     input:
     tuple val(meta), path(fasta)
@@ -12,10 +11,7 @@ process RENAME_FASTA_HEADERS {
     // renamed header → original gffread seqname (the GFF3 transcript ID, verbatim): the
     // only place both names are known; FILTER_ANNOTATION matches on it exactly.
     tuple val(meta), path("*.id_map.tsv")   , emit: id_map
-    tuple val("${task.process}"), val('awk'), eval('awk --version 2>&1 | head -n1'), topic: versions, emit: versions_awk
-
-    when:
-    task.ext.when == null || task.ext.when
+    tuple val("${task.process}"), val('mawk'), eval("awk -W version 2>&1 | sed '1!d;s/^mawk //'"), topic: versions, emit: versions_mawk
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"

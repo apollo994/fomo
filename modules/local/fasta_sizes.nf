@@ -1,6 +1,7 @@
 process FASTA_SIZES {
     tag "${meta.id}"
     label 'process_single'
+    label 'img_ubuntu'
 
     // Chromosome sizes for the decoy chain, in one streaming pass over the (still gzipped)
     // genome. Same output as `cut -f1,2` of a .fai; samtools faidx is not used because it
@@ -10,10 +11,7 @@ process FASTA_SIZES {
 
     output:
     tuple val(meta), path("*.sizes"), emit: sizes
-    tuple val("${task.process}"), val('awk'), eval('awk --version 2>&1 | head -n1'), topic: versions, emit: versions_awk
-
-    when:
-    task.ext.when == null || task.ext.when
+    tuple val("${task.process}"), val('mawk'), eval("awk -W version 2>&1 | sed '1!d;s/^mawk //'"), topic: versions, emit: versions_mawk
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"

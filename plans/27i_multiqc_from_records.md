@@ -48,7 +48,8 @@ summary stay identical.
 - [ ] **B3. Rework the MULTIQC module script** to run `render_mqc.py …` and then `multiqc …`.
   - Inputs: records, native tool files (samtools `.stats` for MultiQC's native module, the
     gffcompare `.stats` for the native gffcompare section), the software-versions YAML (27c),
-    and the configs.
+    and the configs. (updated by D27c-5: MULTIQC must not emit to the versions topic, and the
+    YAML must not reach any process that does — e.g. RUN_SUMMARY_TABLES.)
   - MULTIQC_RUN_SUMMARY does not render; its inputs are already custom content.
 
 ### C. Delete the old path

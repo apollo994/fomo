@@ -34,15 +34,7 @@ workflow BENCHMARKING {
             by: [0, 1]
         )
 
-    ch_split = ch_paired.multiMap { _tid, _ftype, q_meta, q_gffs, r_gff ->
-        query:     tuple(q_meta, q_gffs)
-        reference: tuple([id: "${q_meta.target_id}.${q_meta.feature_type}"], r_gff)
-    }
-
-    GFFCOMPARE_BATCH(
-        ch_split.query,
-        ch_split.reference
-    )
+    GFFCOMPARE_BATCH(ch_paired.map { _tid, _ftype, meta, gffs, ref -> tuple(meta, gffs, ref) })
 
     // One item per stats file; consumers read the target from meta and the source from the
     // file name.

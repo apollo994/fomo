@@ -4,6 +4,7 @@ include { BENCHMARKING       } from '../subworkflows/local/benchmarking'
 include { CURATION           } from '../subworkflows/local/curation'
 include { REPORTING          } from '../subworkflows/local/reporting'
 include { RUN_SUMMARY        } from '../subworkflows/local/run_summary'
+include { softwareVersionsYaml } from '../subworkflows/local/fomo_utils'
 include { samplesheetToList  } from 'plugin/nf-schema'
 include { validateParameters } from 'plugin/nf-schema'
 include { paramsSummaryLog   } from 'plugin/nf-schema'
@@ -61,10 +62,15 @@ workflow FOMO {
 
     ch_target_ids = ch_targets.map { meta, _fasta, _gff3 -> meta.id }
 
+    // Every module puts its tool versions on the `versions` topic. The YAML goes to the MultiQC
+    // tasks only: a consumer that also emits versions would wait on itself.
+    ch_versions = softwareVersionsYaml(channel.topic('versions'))
+
     REPORTING(
         ch_all_mqc,
         BENCHMARKING.out.stats,
-        ch_target_ids
+        ch_target_ids,
+        ch_versions
     )
 
     // Species roles are the one fact no stats file carries; the sorted CSV keeps the task cacheable.
@@ -73,5 +79,5 @@ workflow FOMO {
         .collectFile(name: 'species_roles.csv', newLine: true, sort: true,
                      seed: 'species,role,has_gff3')
 
-    RUN_SUMMARY(ch_all_mqc, ch_roles)
+    RUN_SUMMARY(ch_all_mqc, ch_roles, ch_versions)
 }

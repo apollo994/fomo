@@ -1,8 +1,7 @@
 process GFF_STATS_TO_MQC {
     tag "${meta.id}.${meta.kind}"
     label 'process_single'
-
-    container 'python:3.11'
+    label 'img_python'
 
     input:
     tuple val(meta), path(json)
@@ -10,9 +9,6 @@ process GFF_STATS_TO_MQC {
     output:
     tuple val(meta), path("*_mqc.tsv"), emit: tsv
     tuple val("${task.process}"), val('python'), eval('python3 --version 2>&1 | sed "s/Python //"'), topic: versions, emit: versions_python
-
-    when:
-    task.ext.when == null || task.ext.when
 
     script:
     def prefix     = task.ext.prefix      ?: "${meta.id}.${meta.kind}"

@@ -53,7 +53,8 @@ hand-written key/strip patterns.
     in `modules.config` (most already are).
   - The pseudo-source `allModels_raw` in the stats grammar is untouched; 27g replaces it.
 - [ ] **B2. One tag rule** (master §8) in every module. Check: in the V2 trace, no two tasks of
-  the same process share a tag. MINIMAP2_ALIGN shows `<target>.<track>`.
+  the same process share a tag. MINIMAP2_ALIGN shows `<target>.<track>`. (updated by D27c-7: 27c
+  left every module on its existing tag form, so this step covers all 27 modules.)
 
 ### C. Channel simplification
 

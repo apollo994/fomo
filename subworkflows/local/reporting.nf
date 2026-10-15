@@ -1,5 +1,5 @@
 include { GFFCOMPARE_TO_SCATTER } from '../../modules/local/gffcompare_to_scatter'
-include { MULTIQC               } from '../../modules/nf-core/multiqc/main'
+include { MULTIQC               } from '../../modules/local/multiqc'
 
 // One MultiQC report per target. Files with meta.target_id belong to that target's report;
 // the others (source-side stats) are broadcast into every report.
@@ -8,6 +8,7 @@ workflow REPORTING {
     ch_mqc_files        // [ meta, path | List<path> ]: *_mqc.tsv and native tool stats
     ch_gffcompare_stats // [ meta(target_id), *.gffcompare.stats ]: every source and allModels
     ch_target_ids       // String: one id per target
+    ch_versions         // path: the software versions YAML, shared by every report
 
     main:
 
@@ -31,6 +32,7 @@ workflow REPORTING {
     // spreads a list across the tuple.
     ch_by_target = ch_mqc.shared
         .flatMap { _meta, p -> [p].flatten() }
+        .mix(ch_versions)
         .combine(ch_target_ids)
         .map { p, tid -> tuple(tid, p) }
         .mix(ch_mqc.scoped.flatMap { meta, p ->
@@ -45,10 +47,7 @@ workflow REPORTING {
             [
                 file(params.multiqc_main_config,     checkIfExists: true),
                 file(params.multiqc_sections_config, checkIfExists: true)
-            ],
-            [],
-            [],
-            []
+            ]
         )
     }
 

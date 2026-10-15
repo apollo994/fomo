@@ -1,11 +1,11 @@
 include { MERGE_FASTA as MERGE_SOURCE_FASTA        } from '../../modules/local/merge_fasta'
-include { MINIMAP2_INDEX                           } from '../../modules/nf-core/minimap2/index/main'
-include { MINIMAP2_ALIGN                           } from '../../modules/nf-core/minimap2/align/main'
-include { SAMTOOLS_STATS                           } from '../../modules/nf-core/samtools/stats/main.nf'
+include { MINIMAP2_INDEX                           } from '../../modules/local/minimap2_index'
+include { MINIMAP2_ALIGN                           } from '../../modules/local/minimap2_align'
+include { SAMTOOLS_STATS                           } from '../../modules/local/samtools_stats'
 include { SAMTOOLS_TO_MQC                          } from '../../modules/local/samtools_to_mqc'
 include { BAM_TO_GFF                               } from '../../modules/local/bam_to_gff'
 include { GFF_STATS_PROJECTED_BATCH                } from '../../modules/local/gff_stats_projected_batch'
-include { GFFREAD           as EXTRACT_PROJECTED_LNC } from '../../modules/nf-core/gffread/main'
+include { EXTRACT_TRANSCRIPTS as EXTRACT_PROJECTED_LNC } from '../../modules/local/extract_transcripts'
 include { TD2_NONCODING     as TD2_NONCODING_PROJ  } from './td2_noncoding'
 include { FILTER_GFF_BY_ID  as FILTER_ALLMODELS    } from '../../modules/local/filter_gff_by_id'
 include { GFF_BY_SOURCE     as SPLIT_GFF_BY_SOURCE } from '../../modules/local/gff_by_source'
@@ -36,35 +36,24 @@ workflow PROJECTION {
 
     MERGE_SOURCE_FASTA(ch_merged)
 
-    // One alignment per (target, gene type): F·D·T. The reference travels with its reads
-    // (multiMap), so each target is aligned against its own index. exclude_self drops the
-    // target's own records from the query, so a species is never projected onto itself.
-    ch_align = MERGE_SOURCE_FASTA.out.fasta
-        .combine(ch_ref)
-        .multiMap { meta, reads, tid, is_source, mmi ->
-            reads:     tuple(meta + [id: 'allModels', target_id: tid, exclude_self: is_source], reads)
-            reference: tuple([id: tid], mmi)
-        }
-
+    // One alignment per (target, gene type): F·D·T, each against its target's index.
+    // exclude_self drops the target's own records from the query, so a species is never
+    // projected onto itself.
     MINIMAP2_ALIGN(
-        ch_align.reads,
-        ch_align.reference,
-        true,    // bam_format
-        'csi',   // index extension: BAI cannot address positions above 2^29 bp
-        false,   // cigar_paf_format
-        false    // cigar_bam
+        MERGE_SOURCE_FASTA.out.fasta
+            .combine(ch_ref)
+            .map { meta, reads, tid, is_source, mmi ->
+                tuple(meta + [id: 'allModels', target_id: tid, exclude_self: is_source], reads, mmi)
+            }
     )
 
-    SAMTOOLS_STATS(
-        MINIMAP2_ALIGN.out.bam.join(MINIMAP2_ALIGN.out.index),
-        [[:], [], []]
-    )
+    SAMTOOLS_STATS(MINIMAP2_ALIGN.out.bam)
 
     // A curated column set for the report; the native samtools section keeps its mapped-%
     // chart. One row per (target, gene type): the merged BAM has no per-source breakdown.
     SAMTOOLS_TO_MQC(SAMTOOLS_STATS.out.stats)
 
-    BAM_TO_GFF(MINIMAP2_ALIGN.out.bam)
+    BAM_TO_GFF(MINIMAP2_ALIGN.out.bam.map { meta, bam, _csi -> tuple(meta, bam) })
 
     // TD2 runs once per target on the pooled lncRNA models; the other tracks pass untouched.
     BAM_TO_GFF.out.gff3
@@ -74,27 +63,24 @@ workflow PROJECTION {
         }
         .set { ch_proj }
 
-    // Transcripts are extracted from the target's own genome (joined on target_id). The genome
-    // stays gzipped; the extraction module stages it on node-local scratch (plans/26).
+    // Transcripts are extracted from the target's own genome (joined on target_id).
     ch_target_fa = ch_target.map { meta, fa, _gff3 -> tuple(meta.id, fa) }
 
-    ch_lnc_extract = ch_proj.lnc
-        .map { meta, gff -> tuple(meta.target_id, meta, gff) }
-        .combine(ch_target_fa, by: 0)
-        .multiMap { _tid, meta, gff, fa ->
-            gff:   tuple(meta, gff)
-            fasta: fa
-        }
+    EXTRACT_PROJECTED_LNC(
+        ch_proj.lnc
+            .map { meta, gff -> tuple(meta.target_id, meta, gff) }
+            .combine(ch_target_fa, by: 0)
+            .map { _tid, meta, gff, fa -> tuple(meta, gff, fa) }
+    )
 
-    EXTRACT_PROJECTED_LNC(ch_lnc_extract.gff, ch_lnc_extract.fasta)
-
-    TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.gffread_fasta)
+    TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.fasta)
 
     // Every track goes through FILTER_ALLMODELS, so one process writes every
     // `allModels.<gtype>.raw.gff3`; only lncRNA has a drop list.
     ch_filter_in = ch_proj.lnc
         .join(TD2_NONCODING_PROJ.out.coding_ids)
-        .mix(ch_proj.rest.map { meta, gff -> tuple(meta, gff, []) })
+        .map { meta, gff, ids -> tuple(meta, gff, ids, []) }
+        .mix(ch_proj.rest.map { meta, gff -> tuple(meta, gff, [], []) })
 
     FILTER_ALLMODELS(ch_filter_in)
 

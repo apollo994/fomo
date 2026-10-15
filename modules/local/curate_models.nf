@@ -1,13 +1,7 @@
 process CURATE_MODELS {
     tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_low'
-
-    // One image with python3, gffcompare and gffread (Wave build of the conda spec below; the
-    // pins match the benchmarking gffcompare and the extraction gffread).
-    conda 'conda-forge::python=3.11 bioconda::gffcompare=0.12.6 bioconda::gffread=0.12.7'
-    container "${workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container
-        ? 'oras://community.wave.seqera.io/library/python_gffcompare_gffread:970e511c83295d93'
-        : 'community.wave.seqera.io/library/python_gffcompare_gffread:8f0a261560fe9c3b'}"
+    label 'img_curate'
 
     // `ref` is the target's samplesheet GFF3 (every biotype), or [] for a target without one.
     input:

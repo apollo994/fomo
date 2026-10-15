@@ -1,0 +1,30 @@
+process MULTIQC {
+    tag "${meta.id}"
+    label 'process_single'
+    label 'img_multiqc'
+
+    // No versions output: the input waits on the versions topic, so emitting to it would never
+    // let the topic close. The report shows its MultiQC version.
+    input:
+    tuple val(meta), path(multiqc_files, stageAs: '?/*'), path(multiqc_config, stageAs: '?/*')
+
+    output:
+    tuple val(meta), path("*.html"), emit: report
+    tuple val(meta), path("*_data"), emit: data
+    tuple val(meta), path("*_plots"), emit: plots, optional: true
+
+    script:
+    def args   = task.ext.args ?: ''
+    def prefix = task.ext.prefix ? "--filename ${task.ext.prefix}.html" : ''
+    def config = [multiqc_config].flatten().collect { cfg -> "--config ${cfg}" }.join(' ')
+    """
+    multiqc --force ${args} ${config} ${prefix} .
+    """
+
+    stub:
+    def prefix = task.ext.prefix ?: 'multiqc_report'
+    """
+    mkdir ${prefix}_data
+    touch ${prefix}_data/.stub ${prefix}.html
+    """
+}

@@ -1,0 +1,15 @@
+gff-feature-stats — vendored release binary
+
+upstream   https://github.com/apollo994/gff-feature-stats
+commit     67ffea7 (reports version 0.2.0, as does the earlier 6b31e3a: the commit is the provenance)
+checksum   gff-feature-stats.sha256 (checked by tests/test_repo_conventions.py)
+platform   x86-64 Linux, dynamically linked, needs glibc >= 2.34 (ubuntu:22.04 has 2.35)
+
+Rebuild (and update the checksum and the commit above):
+
+    cd gff-feature-stats && cargo build --release
+    # or a static binary:
+    RUSTFLAGS='-C target-feature=+crt-static' cargo build --release
+    cp target/release/gff-feature-stats <fomo>/bin/ && chmod 755 <fomo>/bin/gff-feature-stats
+    cd <fomo>/bin && sha256sum gff-feature-stats > gff-feature-stats.sha256
+    singularity exec docker://ubuntu:22.04 ./gff-feature-stats -V   # smoke test

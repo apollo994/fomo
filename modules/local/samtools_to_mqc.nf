@@ -1,11 +1,7 @@
 process SAMTOOLS_TO_MQC {
     tag "${meta.id}"
     label 'process_single'
-
-    // stdlib Python: runs in the MultiQC image.
-    container "${workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container
-        ? 'https://depot.galaxyproject.org/singularity/multiqc:1.35--pyhdfd78af_1'
-        : 'quay.io/biocontainers/multiqc:1.35--pyhdfd78af_1'}"
+    label 'img_python'
 
     input:
     tuple val(meta), path(stats)
@@ -13,9 +9,6 @@ process SAMTOOLS_TO_MQC {
     output:
     tuple val(meta), path("*_samtools_align_mqc.tsv"), emit: tsv
     tuple val("${task.process}"), val('python'), eval('python3 --version 2>&1 | sed "s/Python //"'), topic: versions, emit: versions_python
-
-    when:
-    task.ext.when == null || task.ext.when
 
     script:
     def prefix = task.ext.prefix     ?: "${meta.id}"

@@ -3,14 +3,14 @@ include { GFF_TO_GENE_BED                    } from '../../modules/local/gff_to_
 include { RELOCATE_LOCI                      } from '../../modules/local/relocate_loci'
 include { RENAME_FASTA_HEADERS               } from '../../modules/local/rename_fasta_headers'
 include { TD2_NONCODING                      } from './td2_noncoding'
-include { FILTER_ANNOTATION                  } from '../../modules/local/filter_annotation'
-include { GFFREAD as EXTRACT_SEQUENCES       } from '../../modules/nf-core/gffread/main'
-include { GFFREAD as EXTRACT_DECOY_SEQUENCES } from '../../modules/nf-core/gffread/main'
+include { FILTER_GFF_BY_ID as FILTER_ANNOTATION         } from '../../modules/local/filter_gff_by_id'
+include { EXTRACT_TRANSCRIPTS as EXTRACT_SEQUENCES       } from '../../modules/local/extract_transcripts'
+include { EXTRACT_TRANSCRIPTS as EXTRACT_DECOY_SEQUENCES } from '../../modules/local/extract_transcripts'
 include { FASTA_SIZES                        } from '../../modules/local/fasta_sizes'
-include { BEDTOOLS_COMPLEMENT                } from '../../modules/nf-core/bedtools/complement/main'
+include { BEDTOOLS_COMPLEMENT                } from '../../modules/local/bedtools_complement'
 include { GFF_STATS                          } from '../../modules/local/gff_stats'
 include { GFF_STATS_TO_MQC                   } from '../../modules/local/gff_stats_to_mqc'
-include { SEQKIT_STATS                       } from '../../modules/nf-core/seqkit/stats/main'
+include { SEQKIT_STATS                       } from '../../modules/local/seqkit_stats'
 include { SEQKIT_TO_MQC                      } from '../../modules/local/seqkit_to_mqc'
 
 // Per source and target-independent: S tasks per step, never S·T.
@@ -23,8 +23,8 @@ workflow PREPROCESSING {
 
     main:
 
-    // Inputs stay compressed (plans/26): each gffread task stages its genome on node-local
-    // scratch, and every GFF3 consumer reads .gz. No samtools faidx: it rejects plain gzip.
+    // Inputs stay compressed: EXTRACT_TRANSCRIPTS stages its genome on node-local scratch, and
+    // every GFF3 consumer reads .gz. No samtools faidx: it rejects plain gzip. Rationale: plans/26.
     ch_source_fasta = ch_sources.map { meta, fasta, _gff3 -> tuple(meta.id, fasta) }
 
     // Candidates per (source, feature type): stranded, spliced and, with --longest_isoform,
@@ -32,21 +32,17 @@ workflow PREPROCESSING {
     // FILTER_ANNOTATION.
     ch_filter_input = ch_sources
         .flatMap { meta, _fasta, gff3 ->
-            feature_types.collect { ft -> tuple(meta + [feature_type: ft, decoy: false], gff3, ft) }
+            feature_types.collect { ft -> tuple(meta + [feature_type: ft, decoy: false], gff3) }
         }
 
     FILTER_TRANSCRIPT(ch_filter_input)
 
-    FILTER_TRANSCRIPT.out.gff3
-        .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-        .combine(ch_source_fasta, by: 0)
-        .multiMap { _id, meta, gff3, fa ->
-            gff:   tuple(meta, gff3)
-            fasta: fa
-        }
-        .set { ch_extract }
-
-    EXTRACT_SEQUENCES(ch_extract.gff, ch_extract.fasta)
+    EXTRACT_SEQUENCES(
+        FILTER_TRANSCRIPT.out.gff3
+            .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
+            .combine(ch_source_fasta, by: 0)
+            .map { _id, meta, gff3, fa -> tuple(meta, gff3, fa) }
+    )
 
     // Decoys (--include_decoy): source loci moved into the source's own intergenic space, the
     // false-positive baseline. Intergenic space is the complement of the RAW annotation's
@@ -75,13 +71,10 @@ workflow PREPROCESSING {
                 FASTA_SIZES.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
                 by: 0
             )
-            .multiMap { _id, meta, bed, sizes ->
-                bed:   tuple(meta, bed)
-                sizes: sizes
-            }
+            .map { _id, meta, bed, sizes -> tuple(meta, bed, sizes) }
             .set { ch_complement }
 
-        BEDTOOLS_COMPLEMENT(ch_complement.bed, ch_complement.sizes)
+        BEDTOOLS_COMPLEMENT(ch_complement)
 
         FILTER_TRANSCRIPT.out.gff3
             .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
@@ -94,19 +87,15 @@ workflow PREPROCESSING {
 
         RELOCATE_LOCI(ch_relocate)
 
-        RELOCATE_LOCI.out.gff3
-            .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-            .combine(ch_source_fasta, by: 0)
-            .multiMap { _id, meta, gff3, fa ->
-                gff:   tuple(meta, gff3)
-                fasta: fa
-            }
-            .set { ch_decoy_extract }
-
-        EXTRACT_DECOY_SEQUENCES(ch_decoy_extract.gff, ch_decoy_extract.fasta)
+        EXTRACT_DECOY_SEQUENCES(
+            RELOCATE_LOCI.out.gff3
+                .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
+                .combine(ch_source_fasta, by: 0)
+                .map { _id, meta, gff3, fa -> tuple(meta, gff3, fa) }
+        )
 
         ch_decoy_gff3      = RELOCATE_LOCI.out.gff3
-        ch_decoy_fasta_raw = EXTRACT_DECOY_SEQUENCES.out.gffread_fasta
+        ch_decoy_fasta_raw = EXTRACT_DECOY_SEQUENCES.out.fasta
     }
     else {
         ch_decoy_gff3      = channel.empty()
@@ -115,7 +104,7 @@ workflow PREPROCESSING {
 
     // `>tid|type|species` headers, for real and decoy tracks alike.
     RENAME_FASTA_HEADERS(
-        EXTRACT_SEQUENCES.out.gffread_fasta
+        EXTRACT_SEQUENCES.out.fasta
             .mix(ch_decoy_fasta_raw)
     )
 

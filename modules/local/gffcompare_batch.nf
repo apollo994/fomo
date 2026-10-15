@@ -1,18 +1,16 @@
 process GFFCOMPARE_BATCH {
     tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_high'
+    label 'img_gffcompare'
 
     // One task per (target, feature_type, decoy): a separate single-query gffcompare per
     // projected model set (every source, plus the allModels aggregate) against the target's
     // filtered reference. Not gffcompare's multi-query mode, which pools the queries into one
     // Sn/Pr and loses the per-source accuracy. Rationale: plans/18.
-    container "${ workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container ?
-        'https://depot.galaxyproject.org/singularity/gffcompare:0.12.6--h9f5acd7_0' :
-        'quay.io/biocontainers/gffcompare:0.12.6--h9f5acd7_0' }"
-
     input:
-    tuple val(meta), path(gffs)          // every source's projected GFF3 + the *.raw.gff3 aggregate
-    tuple val(ref_meta), path(reference) // the target's filtered reference GFF3
+    // gffs: every source's projected GFF3 + the *.raw.gff3 aggregate; reference: the target's
+    // filtered annotation.
+    tuple val(meta), path(gffs), path(reference)
 
     output:
     tuple val(meta), path("*.gffcompare.stats"), emit: stats
@@ -22,9 +20,6 @@ process GFFCOMPARE_BATCH {
     tuple val(meta), path("*.refmap"),        optional: true, emit: refmap
     tuple val(meta), path("*.annotated.gtf"), optional: true, emit: annotated_gtf
     tuple val("${task.process}"), val('gffcompare'), eval('gffcompare --version 2>&1 | sed "s/gffcompare v//"'), emit: versions_gffcompare, topic: versions
-
-    when:
-    task.ext.when == null || task.ext.when
 
     script:
     def args = task.ext.args ?: ''

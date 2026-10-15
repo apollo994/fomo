@@ -1,20 +1,16 @@
 process FILTER_TRANSCRIPT {
     tag "${meta.id}.${meta.feature_type}"
     label 'process_single'
-
-    container 'ubuntu:22.04'
+    label 'img_ubuntu'
 
     input:
-    tuple val(meta), path(gff3), val(feature_type)
+    tuple val(meta), path(gff3)
 
     output:
     tuple val(meta), path("*.gff3")                        , emit: gff3
     // One-row funnel (n_transcripts, n_stranded, n_spliced, n_selected), Sample <id>.<ft>.
     tuple val(meta), path("*_transcript_filter_mqc.tsv")   , emit: mqc
-    path  "versions.yml"                                   , emit: versions
-
-    when:
-    task.ext.when == null || task.ext.when
+    tuple val("${task.process}"), val('mawk'), eval("awk -W version 2>&1 | sed '1!d;s/^mawk //'"), topic: versions, emit: versions_mawk
 
     script:
     def args = task.ext.args ?: ''            // --longest (params.longest_isoform)
@@ -36,20 +32,14 @@ process FILTER_TRANSCRIPT {
     filter_transcript.sh \\
         ${args} \\
         --counts ${prefix}_transcript_filter_mqc.tsv \\
-        --sample ${meta.id}.${feature_type} \\
-        "\$input" ${feature_type} > ${prefix}.gff3
-
-    cat <<-END_VERSIONS > versions.yml
-    "${task.process}":
-        awk: \$(awk --version | head -n1 | sed 's/[^0-9.]//g')
-    END_VERSIONS
+        --sample ${meta.id}.${meta.feature_type} \\
+        "\$input" ${meta.feature_type} > ${prefix}.gff3
     """
 
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
     """
     touch ${prefix}.gff3
-    printf 'Sample\\tfeature\\tn_transcripts\\tn_stranded\\tn_spliced\\tn_selected\\n${meta.id}.${feature_type}\\t${feature_type}\\t0\\t0\\t0\\t0\\n' > ${prefix}_transcript_filter_mqc.tsv
-    touch versions.yml
+    printf 'Sample\\tfeature\\tn_transcripts\\tn_stranded\\tn_spliced\\tn_selected\\n${meta.id}.${meta.feature_type}\\t${meta.feature_type}\\t0\\t0\\t0\\t0\\n' > ${prefix}_transcript_filter_mqc.tsv
     """
 }

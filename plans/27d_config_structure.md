@@ -65,7 +65,8 @@ Process placement in the call tree no longer matters.
   in `nextflow.config`, and drop `overwrite = true`. Fix the comment.
 - [ ] **A7. Manifest and schema.**
   - `homePage 'https://github.com/apollo994/fomo'`, `defaultBranch 'main'`, an `author`.
-  - `nextflowVersion`: raise to `!>=25.04.0` if 27c-D4 found it necessary.
+  - `nextflowVersion`: raise to `!>=25.04.0` (updated by D27c-6: necessary — topic channels
+    leave preview in 25.04).
   - Fix the `$id` of `nextflow_schema.json` and `assets/schema_input.json`
     (`https://raw.githubusercontent.com/apollo994/fomo/main/...`).
 - [ ] **A8. Delete the comments these changes made obsolete** (master §8).

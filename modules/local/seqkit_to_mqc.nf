@@ -1,17 +1,14 @@
 process SEQKIT_TO_MQC {
     tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_single'
-
-    container 'ubuntu:22.04'
+    label 'img_ubuntu'
 
     input:
     tuple val(meta), path(stats_tsv)
 
     output:
     tuple val(meta), path("*_seqkit_mqc.tsv"), emit: mqc
-
-    when:
-    task.ext.when == null || task.ext.when
+    tuple val("${task.process}"), val('mawk'), eval("awk -W version 2>&1 | sed '1!d;s/^mawk //'"), topic: versions, emit: versions_mawk
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"

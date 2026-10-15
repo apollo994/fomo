@@ -1,8 +1,7 @@
 process TD2_CODING_FILTER {
     tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_single'
-
-    container 'python:3.11'
+    label 'img_python'
 
     input:
     tuple val(meta), path(fasta), path(pep)
@@ -11,9 +10,7 @@ process TD2_CODING_FILTER {
     tuple val(meta), path("*.noncoding.fasta"), emit: kept_fasta
     tuple val(meta), path("*.coding_ids.txt"),  emit: coding_ids
     tuple val(meta), path("*_td2_coding_mqc.tsv"), emit: mqc
-
-    when:
-    task.ext.when == null || task.ext.when
+    tuple val("${task.process}"), val('python'), eval('python3 --version 2>&1 | sed "s/Python //"'), topic: versions, emit: versions_python
 
     script:
     def args   = task.ext.args   ?: ''            // e.g. --psauron-min 0.5
