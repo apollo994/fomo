@@ -1,5 +1,5 @@
 process GFFCOMPARE_BATCH {
-    tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_batch'
     label 'img_gffcompare'
 
@@ -30,7 +30,7 @@ process GFFCOMPARE_BATCH {
     shopt -s nullglob
 
     for gff in *.raw.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
+        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.track}.projected.gff3"
     done
 
     run_one() {
@@ -50,7 +50,7 @@ process GFFCOMPARE_BATCH {
     """
     shopt -s nullglob
     for gff in *.raw.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
+        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.track}.projected.gff3"
     done
     for gff in *.projected.gff3; do
         prefix="\${gff%.projected.gff3}"

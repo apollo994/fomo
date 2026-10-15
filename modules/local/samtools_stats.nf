@@ -1,5 +1,5 @@
 process SAMTOOLS_STATS {
-    tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_samtools'
 

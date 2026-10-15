@@ -1,5 +1,5 @@
 process FILTER_GFF_BY_ID {
-    tag "${[meta.target_id, meta.id, meta.feature_type].findAll().join('.')}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_python'
 

@@ -1,5 +1,5 @@
 process MINIMAP2_INDEX {
-    tag "${meta.id}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_index'
     label 'img_minimap2'
 

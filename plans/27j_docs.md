@@ -76,7 +76,8 @@ The comment budget is enforced mechanically from now on.
   - Bump `manifest.version` to `0.2.0dev`.
 - [ ] **D2. `CONTRIBUTING.md`:** the principles (review §4), conventions, gates, the commit
   format, and how to run CI locally.
-- [ ] **D3. Create `dev/` for maintenance tools.** Move `bin/subsample_test_data.sh` to `dev/`
+- [ ] **D3. Create `dev/` for maintenance tools** (it already holds `environment.yml`, 27a, and
+  `nextflow_lint.sh`, 27e C4). Move `bin/subsample_test_data.sh` to `dev/`
   (fix its header and paths). Move `plans/13_resource_rightsizing_audit.py` to `dev/` and leave
   a pointer in plans/13. Copy `ablation/scripts/code_metrics.py` to `dev/code_metrics.py`; the
   ablation copy stays as the study record.

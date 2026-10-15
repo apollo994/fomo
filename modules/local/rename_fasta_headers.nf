@@ -1,5 +1,5 @@
 process RENAME_FASTA_HEADERS {
-    tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_ubuntu'
 
@@ -15,12 +15,10 @@ process RENAME_FASTA_HEADERS {
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
-    def ftype  = meta.feature_type == 'lnc_RNA' ? 'lncRNA' : meta.feature_type
-    def type   = meta.decoy ? "decoy_${ftype}" : ftype
     """
     set -euo pipefail
 
-    awk -v type="${type}" -v species="${meta.id}" -v map="${prefix}.id_map.tsv" '
+    awk -v type="${meta.label}" -v species="${meta.id}" -v map="${prefix}.id_map.tsv" '
         /^>/ {
             split(\$1, a, ":")
             tid = (length(a) > 1) ? a[2] : substr(\$1, 2)

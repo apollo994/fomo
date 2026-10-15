@@ -11,6 +11,7 @@ include { BEDTOOLS_COMPLEMENT                } from '../../modules/local/bedtool
 include { GFF_STATS                          } from '../../modules/local/gff_stats'
 include { GFF_STATS_TO_MQC                   } from '../../modules/local/gff_stats_to_mqc'
 include { SEQKIT_STATS                       } from '../../modules/local/seqkit_stats'
+include { withTrack; pairById                } from './fomo_utils'
 include { SEQKIT_TO_MQC                      } from '../../modules/local/seqkit_to_mqc'
 
 // Per source and target-independent: S tasks per step, never S·T.
@@ -27,91 +28,49 @@ workflow PREPROCESSING {
     // every GFF3 consumer reads .gz. No samtools faidx: it rejects plain gzip. Rationale: plans/26.
     ch_source_fasta = ch_sources.map { meta, fasta, _gff3 -> tuple(meta.id, fasta) }
 
-    // Candidates per (source, feature type): stranded, spliced and, with --longest_isoform,
-    // the longest isoform per gene. They feed extraction, decoy relocation and
-    // FILTER_ANNOTATION.
+    // Candidates per (source, track): stranded, spliced and, with --longest_isoform, the longest
+    // isoform per gene. They feed extraction, decoy relocation and FILTER_ANNOTATION.
     ch_filter_input = ch_sources
         .flatMap { meta, _fasta, gff3 ->
-            feature_types.collect { ft -> tuple(meta + [feature_type: ft, decoy: false], gff3) }
+            feature_types.collect { ft -> tuple(withTrack(meta + [feature_type: ft, decoy: false]), gff3) }
         }
 
     FILTER_TRANSCRIPT(ch_filter_input)
 
-    EXTRACT_SEQUENCES(
-        FILTER_TRANSCRIPT.out.gff3
-            .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-            .combine(ch_source_fasta, by: 0)
-            .map { _id, meta, gff3, fa -> tuple(meta, gff3, fa) }
-    )
+    EXTRACT_SEQUENCES(pairById(FILTER_TRANSCRIPT.out.gff3, ch_source_fasta))
 
     // Decoys (--include_decoy): source loci moved into the source's own intergenic space, the
     // false-positive baseline. Intergenic space is the complement of the RAW annotation's
     // gene-level features (coding genes included), whatever tracks are enabled, so the chain
-    // runs once per source and its BED serves every feature type.
-    if (params.include_decoy) {
-        FASTA_SIZES(
-            ch_sources.map { meta, fasta, _gff3 -> tuple(meta, fasta) }
+    // runs once per source and its BED serves every feature type. Without the flag the chain
+    // gets no input and runs no task.
+    ch_decoy_sources = params.include_decoy ? ch_sources : channel.empty()
+
+    FASTA_SIZES(ch_decoy_sources.map { meta, fasta, _gff3 -> tuple(meta, fasta) })
+
+    ch_sizes = FASTA_SIZES.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) }
+
+    // Gene BED in the chromosome order of the sizes file, as bedtools complement requires.
+    GFF_TO_GENE_BED(pairById(ch_decoy_sources.map { meta, _fasta, gff3 -> tuple(meta, gff3) }, ch_sizes))
+
+    BEDTOOLS_COMPLEMENT(pairById(GFF_TO_GENE_BED.out.bed, ch_sizes))
+
+    RELOCATE_LOCI(
+        pairById(
+            FILTER_TRANSCRIPT.out.gff3.map { meta, gff3 -> tuple(withTrack(meta + [decoy: true]), gff3) },
+            BEDTOOLS_COMPLEMENT.out.bed.map { meta, bed -> tuple(meta.id, bed) }
         )
+    )
 
-        // Gene BED in the chromosome order of the sizes file, as bedtools complement requires.
-        ch_sources
-            .map { meta, _fasta, gff3 -> tuple(meta.id, meta, gff3) }
-            .combine(
-                FASTA_SIZES.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
-                by: 0
-            )
-            .map { _id, meta, gff3, sizes -> tuple(meta, gff3, sizes) }
-            .set { ch_gff_to_bed }
-
-        GFF_TO_GENE_BED(ch_gff_to_bed)
-
-        GFF_TO_GENE_BED.out.bed
-            .map { meta, bed -> tuple(meta.id, meta, bed) }
-            .combine(
-                FASTA_SIZES.out.sizes.map { meta, sizes -> tuple(meta.id, sizes) },
-                by: 0
-            )
-            .map { _id, meta, bed, sizes -> tuple(meta, bed, sizes) }
-            .set { ch_complement }
-
-        BEDTOOLS_COMPLEMENT(ch_complement)
-
-        FILTER_TRANSCRIPT.out.gff3
-            .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-            .combine(
-                BEDTOOLS_COMPLEMENT.out.bed.map { meta, bed -> tuple(meta.id, bed) },
-                by: 0
-            )
-            .map { _id, meta, gff3, bed -> tuple(meta + [decoy: true], gff3, bed) }
-            .set { ch_relocate }
-
-        RELOCATE_LOCI(ch_relocate)
-
-        EXTRACT_DECOY_SEQUENCES(
-            RELOCATE_LOCI.out.gff3
-                .map { meta, gff3 -> tuple(meta.id, meta, gff3) }
-                .combine(ch_source_fasta, by: 0)
-                .map { _id, meta, gff3, fa -> tuple(meta, gff3, fa) }
-        )
-
-        ch_decoy_gff3      = RELOCATE_LOCI.out.gff3
-        ch_decoy_fasta_raw = EXTRACT_DECOY_SEQUENCES.out.fasta
-    }
-    else {
-        ch_decoy_gff3      = channel.empty()
-        ch_decoy_fasta_raw = channel.empty()
-    }
+    EXTRACT_DECOY_SEQUENCES(pairById(RELOCATE_LOCI.out.gff3, ch_source_fasta))
 
     // `>tid|type|species` headers, for real and decoy tracks alike.
-    RENAME_FASTA_HEADERS(
-        EXTRACT_SEQUENCES.out.fasta
-            .mix(ch_decoy_fasta_raw)
-    )
+    RENAME_FASTA_HEADERS(EXTRACT_SEQUENCES.out.fasta.mix(EXTRACT_DECOY_SEQUENCES.out.fasta))
 
     // TD2 drops real lncRNA with a complete, PSAURON-confident ORF; mRNA and decoys pass.
     RENAME_FASTA_HEADERS.out.fasta
         .branch { meta, _fa ->
-            lnc:  !meta.decoy && meta.feature_type == 'lnc_RNA'
+            lnc:  meta.td2
             rest: true
         }
         .set { ch_renamed }
@@ -149,8 +108,8 @@ workflow PREPROCESSING {
     // Stats of the raw, filtered and decoy annotations of each source (gff-feature-stats
     // reads .gz).
     ch_stats_gff = ch_sources.map { meta, _fa, gff3 -> tuple(meta + [kind: 'raw'], gff3) }
-        .mix(ch_filtered_gff3.map { m, g -> tuple(m + [kind: 'filtered'], g) })
-        .mix(ch_decoy_gff3          .map { m, g -> tuple(m + [kind: 'decoy'],    g) })
+        .mix(ch_filtered_gff3.map       { m, g -> tuple(m + [kind: 'filtered'], g) })
+        .mix(RELOCATE_LOCI.out.gff3.map { m, g -> tuple(m + [kind: 'decoy'],    g) })
 
     GFF_STATS(ch_stats_gff)
     GFF_STATS_TO_MQC(GFF_STATS.out.json)

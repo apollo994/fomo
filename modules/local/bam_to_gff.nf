@@ -1,5 +1,5 @@
 process BAM_TO_GFF {
-    tag "${meta.target_id}.from_${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_samtools'
 

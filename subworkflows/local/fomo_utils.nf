@@ -1,3 +1,36 @@
+// A track is a feature type plus the decoy flag. Its keys, stamped on meta once: `track` (the
+// file-name segment), `label` (report label and FASTA header type), `order` (row order in the
+// reports) and `td2` (whether TD2 filters it).
+def trackOf(String featureType, boolean decoy) {
+    def labels = [lnc_RNA: 'lncRNA', mRNA: 'mRNA']
+    if (!labels.containsKey(featureType)) {
+        error("Unknown feature type '${featureType}': expected one of ${labels.keySet()}")
+    }
+    return [
+        track: decoy ? "${featureType}.decoy".toString() : featureType,
+        label: decoy ? "decoy_${labels[featureType]}".toString() : labels[featureType],
+        order: (featureType == 'lnc_RNA' ? 1 : 3) + (decoy ? 1 : 0),
+        td2:   featureType == 'lnc_RNA' && !decoy,
+    ]
+}
+
+def withTrack(meta) {
+    return meta + trackOf(meta.feature_type, meta.decoy as boolean)
+}
+
+// Pairs each [meta, ...] item of `left` with every [key, value] item of `right` whose key is
+// key(meta): [meta, ..., value]. A left item without a partner is dropped.
+def pairBy(left, right, key) {
+    return left
+        .map { item -> [key.call(item[0]), item] }
+        .combine(right, by: 0)
+        .map { _key, item, value -> item.toList() + [value] }
+}
+
+def pairById(left, right) {
+    return pairBy(left, right, { meta -> meta.id })
+}
+
 // Software versions as MultiQC's `*_mqc_versions.yml` ({process: {tool: version}}), from the
 // [process, tool, version] items of the versions topic plus the workflow's own versions.
 def softwareVersionsYaml(ch_versions) {

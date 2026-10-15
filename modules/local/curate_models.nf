@@ -1,5 +1,5 @@
 process CURATE_MODELS {
-    tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_low'
     label 'img_curate'
 
@@ -20,31 +20,27 @@ process CURATE_MODELS {
     tuple val("${task.process}"), val('gffcompare'), eval('gffcompare --version 2>&1 | sed "s/gffcompare v//"'), topic: versions, emit: versions_gffcompare
     tuple val("${task.process}"), val('gffread'), eval('gffread --version 2>&1'), topic: versions, emit: versions_gffread
 
-    when:
-    task.ext.when == null || task.ext.when
-
     script:
     // No `def`: the output declarations read `prefix`.
-    prefix = task.ext.prefix ?: "${meta.target_id}.curated.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    prefix = task.ext.prefix ?: "${meta.target_id}.curated.${meta.track}"
     def args = task.ext.args ?: ''
-    def track = "${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     """
     curate_models.py \\
         --gff ${gff3} \\
         ${ref ? "--ref ${ref}" : ''} \\
         --prefix ${prefix} \\
         --target ${meta.target_id} \\
-        --track ${track} \\
+        --track ${meta.track} \\
         ${args}
 
     curation_to_mqc.py \\
         --json ${prefix}.curation.json \\
         --prefix ${prefix} \\
-        --sample ${meta.target_id}.${track}
+        --sample ${meta.target_id}.${meta.track}
     """
 
     stub:
-    prefix = task.ext.prefix ?: "${meta.target_id}.curated.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    prefix = task.ext.prefix ?: "${meta.target_id}.curated.${meta.track}"
     """
     python3 -c "import gzip, sys; [gzip.open(p, 'wt').close() for p in sys.argv[1:]]" ${prefix}.gff3.gz ${ref ? "${prefix}.merged.gff3.gz" : ''}
     touch ${prefix}.curation.tsv ${prefix}.curation.json

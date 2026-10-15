@@ -1,5 +1,5 @@
 process RELOCATE_LOCI {
-    tag "${meta.id}.${meta.feature_type}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_python'
 

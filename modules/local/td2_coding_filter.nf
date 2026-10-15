@@ -1,5 +1,5 @@
 process TD2_CODING_FILTER {
-    tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_python'
 
@@ -14,7 +14,7 @@ process TD2_CODING_FILTER {
 
     script:
     def args   = task.ext.args   ?: ''            // e.g. --psauron-min 0.5
-    def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    def prefix = task.ext.prefix ?: "${meta.id}.${meta.track}"
     def stage  = meta.stage ?: 'input'
     def sample = task.ext.sample_name ?: prefix
     """
@@ -31,7 +31,7 @@ process TD2_CODING_FILTER {
     """
 
     stub:
-    def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    def prefix = task.ext.prefix ?: "${meta.id}.${meta.track}"
     """
     touch ${prefix}.noncoding.fasta ${prefix}.coding_ids.txt ${prefix}_td2_coding_mqc.tsv
     """

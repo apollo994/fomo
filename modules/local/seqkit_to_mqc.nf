@@ -1,5 +1,5 @@
 process SEQKIT_TO_MQC {
-    tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_ubuntu'
 
@@ -11,7 +11,7 @@ process SEQKIT_TO_MQC {
     tuple val("${task.process}"), val('mawk'), eval("awk -W version 2>&1 | sed '1!d;s/^mawk //'"), topic: versions, emit: versions_mawk
 
     script:
-    def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    def prefix = task.ext.prefix ?: "${meta.id}.${meta.track}"
     def sample = task.ext.sample_name ?: prefix
     """
     set -euo pipefail
@@ -24,7 +24,7 @@ process SEQKIT_TO_MQC {
     """
 
     stub:
-    def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    def prefix = task.ext.prefix ?: "${meta.id}.${meta.track}"
     """
     touch ${prefix}_seqkit_mqc.tsv
     """

@@ -1,5 +1,5 @@
 process MINIMAP2_ALIGN {
-    tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_align'
     label 'img_minimap2_samtools'
 

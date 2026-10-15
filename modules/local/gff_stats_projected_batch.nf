@@ -1,5 +1,5 @@
 process GFF_STATS_PROJECTED_BATCH {
-    tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_batch'
     label 'img_python'
     label 'amd64_only'
@@ -16,19 +16,13 @@ process GFF_STATS_PROJECTED_BATCH {
 
     script:
     // The aggregate is linked under the per-source '<target>.from_<id>.<track>.projected.gff3'
-    // shape so one loop handles every file; the row name is '<target>.from_<id>.<order>', with
-    // <id> taken from the filename (ids never contain '.') and <order> fixed per task.
-    def order =
-        !meta.decoy && meta.feature_type == 'lnc_RNA' ? '1_lncRNA'        :
-         meta.decoy && meta.feature_type == 'lnc_RNA' ? '2_decoy_lncRNA'  :
-        !meta.decoy && meta.feature_type == 'mRNA'    ? '3_mRNA'          :
-         meta.decoy && meta.feature_type == 'mRNA'    ? '4_decoy_mRNA'    :
-                                                        'unknown'
+    // shape so one loop handles every file; the row name is '<target>.from_<id>.<order>_<label>',
+    // with <id> taken from the filename (ids never contain '.').
     """
     shopt -s nullglob
 
     for gff in *.raw.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
+        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.track}.projected.gff3"
     done
 
     run_one() {
@@ -40,7 +34,7 @@ process GFF_STATS_PROJECTED_BATCH {
         gff-feature-stats "\$gff" "\${prefix}.stats.json"
         gff_stats_to_mqc.py \\
             --input "\${prefix}.stats.json" \\
-            --name "${meta.target_id}.from_\${id}.${order}" \\
+            --name "${meta.target_id}.from_\${id}.${meta.order}_${meta.label}" \\
             --role projection \\
             --kind projected \\
             --output "\${prefix}_gffstats_projection_mqc.tsv"
@@ -55,7 +49,7 @@ process GFF_STATS_PROJECTED_BATCH {
     """
     shopt -s nullglob
     for gff in *.raw.gff3; do
-        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.feature_type}${meta.decoy ? '.decoy' : ''}.projected.gff3"
+        ln -s "\$gff" "${meta.target_id}.from_allModels_raw.${meta.track}.projected.gff3"
     done
     for gff in *.projected.gff3; do
         prefix="\${gff%.gff3}"

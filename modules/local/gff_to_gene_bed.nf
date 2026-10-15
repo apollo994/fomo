@@ -1,5 +1,5 @@
 process GFF_TO_GENE_BED {
-    tag "${meta.id}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_ubuntu'
 

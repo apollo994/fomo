@@ -1,6 +1,7 @@
 include { GFFCOMPARE_BATCH                         } from '../../modules/local/gffcompare_batch'
 include { GFF_STATS         as GFF_STATS_TARGET    } from '../../modules/local/gff_stats'
 include { GFF_STATS_TO_MQC  as GFF_STATS_TARGET_TO_MQC } from '../../modules/local/gff_stats_to_mqc'
+include { pairBy                                   } from './fomo_utils'
 
 workflow BENCHMARKING {
     take:
@@ -27,14 +28,13 @@ workflow BENCHMARKING {
     // key must include target_id: on feature_type alone a projection would also be compared
     // with every other target's reference, under the same output name. The inner join also
     // drops targets without a reference.
-    ch_paired = ch_projected_gff3
-        .map { meta, gffs -> tuple(meta.target_id, meta.feature_type, meta, gffs) }
-        .combine(
-            ch_target_refs.map { meta, gff3 -> tuple(meta.id, meta.feature_type, gff3) },
-            by: [0, 1]
+    GFFCOMPARE_BATCH(
+        pairBy(
+            ch_projected_gff3,
+            ch_target_refs.map { meta, gff3 -> tuple([meta.id, meta.feature_type], gff3) },
+            { meta -> [meta.target_id, meta.feature_type] }
         )
-
-    GFFCOMPARE_BATCH(ch_paired.map { _tid, _ftype, meta, gffs, ref -> tuple(meta, gffs, ref) })
+    )
 
     // One item per stats file; consumers read the target from meta and the source from the
     // file name.

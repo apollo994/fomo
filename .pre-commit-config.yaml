@@ -16,7 +16,7 @@ repos:
         types: [shell]
       - id: nextflow-lint
         name: nextflow lint
-        entry: nextflow lint -o concise main.nf workflows subworkflows modules conf nextflow.config
+        entry: dev/nextflow_lint.sh
         language: system
         files: '\.(nf|config)$'
         pass_filenames: false

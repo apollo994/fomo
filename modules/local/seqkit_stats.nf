@@ -1,5 +1,5 @@
 process SEQKIT_STATS {
-    tag "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_low'
     label 'img_seqkit'
 

@@ -1,5 +1,5 @@
 process GFF_STATS_TO_MQC {
-    tag "${meta.id}.${meta.kind}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
     label 'img_python'
 

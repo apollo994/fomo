@@ -9,12 +9,13 @@ include { EXTRACT_TRANSCRIPTS as EXTRACT_PROJECTED_LNC } from '../../modules/loc
 include { TD2_NONCODING     as TD2_NONCODING_PROJ  } from './td2_noncoding'
 include { FILTER_GFF_BY_ID  as FILTER_ALLMODELS    } from '../../modules/local/filter_gff_by_id'
 include { GFF_BY_SOURCE     as SPLIT_GFF_BY_SOURCE } from '../../modules/local/gff_by_source'
+include { withTrack; pairBy                        } from './fomo_utils'
 
 workflow PROJECTION {
     take:
     ch_target            // [ meta(role:'target'|'both'), fasta[.gz], gff3[.gz]|[] ] × T
-    ch_spliced_fasta     // [ meta(decoy:false, feature_type), fasta ] × F·S
-    ch_decoy_spliced     // [ meta(decoy:true,  feature_type), fasta ] × F·S
+    ch_spliced_fasta     // [ meta(track), fasta ] × F·S
+    ch_decoy_spliced     // [ meta(track, decoy:true), fasta ] × F·S
 
     main:
 
@@ -27,10 +28,7 @@ workflow PROJECTION {
     // its species (`>tid|type|species`), which the split below recovers.
     ch_merged = ch_spliced_fasta
         .mix(ch_decoy_spliced)
-        .map { meta, fa ->
-            def gtype = meta.feature_type + (meta.decoy ? '_decoy' : '')
-            tuple([id: gtype, feature_type: meta.feature_type, decoy: meta.decoy, gtype: gtype], fa)
-        }
+        .map { meta, fa -> tuple(withTrack([id: meta.track, feature_type: meta.feature_type, decoy: meta.decoy]), fa) }
         .groupTuple()
         .map { meta, fas -> tuple(meta, fas.sort { fa -> fa.name }) }   // deterministic concat order
 
@@ -43,7 +41,7 @@ workflow PROJECTION {
         MERGE_SOURCE_FASTA.out.fasta
             .combine(ch_ref)
             .map { meta, reads, tid, is_source, mmi ->
-                tuple(meta + [id: 'allModels', target_id: tid, exclude_self: is_source], reads, mmi)
+                tuple(meta + [id: tid, target_id: tid, exclude_self: is_source], reads, mmi)
             }
     )
 
@@ -58,7 +56,7 @@ workflow PROJECTION {
     // TD2 runs once per target on the pooled lncRNA models; the other tracks pass untouched.
     BAM_TO_GFF.out.gff3
         .branch { meta, _g ->
-            lnc:  !meta.decoy && meta.feature_type == 'lnc_RNA'
+            lnc:  meta.td2
             rest: true
         }
         .set { ch_proj }
@@ -66,26 +64,21 @@ workflow PROJECTION {
     // Transcripts are extracted from the target's own genome (joined on target_id).
     ch_target_fa = ch_target.map { meta, fa, _gff3 -> tuple(meta.id, fa) }
 
-    EXTRACT_PROJECTED_LNC(
-        ch_proj.lnc
-            .map { meta, gff -> tuple(meta.target_id, meta, gff) }
-            .combine(ch_target_fa, by: 0)
-            .map { _tid, meta, gff, fa -> tuple(meta, gff, fa) }
-    )
+    EXTRACT_PROJECTED_LNC(pairBy(ch_proj.lnc, ch_target_fa, { meta -> meta.target_id }))
 
     TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.fasta.map { meta, fa -> tuple(meta + [stage: 'projected'], fa) })
 
     // Every track goes through FILTER_ALLMODELS, so one process writes every
-    // `allModels.<gtype>.raw.gff3`; only lncRNA has a drop list (one per target).
-    ch_filter_in = ch_proj.lnc
-        .map { meta, gff -> tuple(meta.target_id, meta, gff) }
-        .join(TD2_NONCODING_PROJ.out.coding_ids.map { meta, ids -> tuple(meta.target_id, ids) })
-        .map { _tid, meta, gff, ids -> tuple(meta, gff, ids, []) }
+    // `allModels.<track>.raw.gff3`; only lncRNA has a drop list (one per target).
+    ch_coding_ids = TD2_NONCODING_PROJ.out.coding_ids.map { meta, ids -> tuple(meta.target_id, ids) }
+
+    ch_filter_in = pairBy(ch_proj.lnc, ch_coding_ids, { meta -> meta.target_id })
+        .map { meta, gff, ids -> tuple(meta, gff, ids, []) }
         .mix(ch_proj.rest.map { meta, gff -> tuple(meta, gff, [], []) })
 
     FILTER_ALLMODELS(ch_filter_in)
 
-    ch_allmodels_raw = FILTER_ALLMODELS.out.gff3   // [ meta(id:'allModels'), gff3 ] × F·D·T
+    ch_allmodels_raw = FILTER_ALLMODELS.out.gff3   // [ meta(id = target_id, track), gff3 ] × F·D·T
 
     // Back to one GFF3 per source, by the `source=` attribute.
     SPLIT_GFF_BY_SOURCE(ch_allmodels_raw)
@@ -107,7 +100,7 @@ workflow PROJECTION {
         .mix(TD2_NONCODING_PROJ.out.mqc)
 
     emit:
-    allmodels_raw = ch_allmodels_raw     // [ meta(id:'allModels'), *.gff3 ] × F·D·T
+    allmodels_raw = ch_allmodels_raw     // [ meta(id = target_id, track), *.gff3 ] × F·D·T
     gff3          = ch_projected_batch   // [ meta, List<gff3> ] × F·D·T: allModels + every source
     mqc_files     = ch_mqc_files         // [ meta, path | List<path> ]
 }

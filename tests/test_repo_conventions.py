@@ -13,8 +13,9 @@ CONTAINERS = (ROOT / 'conf/containers.config').read_text()
 
 # MULTIQC consumes the versions topic, so it cannot emit to it.
 NO_VERSIONS = {'multiqc.nf'}
-# Gated by `ext.when` in conf/modules.config.
-WHEN_ALLOWED = {'curate_models.nf'}
+# One task per run, no meta.
+NO_META = {'run_summary_tables.nf'}
+TAG = '''tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"'''
 
 
 def labels(text):
@@ -30,7 +31,8 @@ def test_module_shape(module):
     assert len(img) == 1, f'exactly one img_* label, found {img}'
     assert not re.search(r'^\s*(container|conda)\b', text, re.M), 'images live in conf/containers.config'
     assert re.search(r'^\s*stub:', text, re.M), 'every module has a stub'
-    assert ('when:' in text) == (module.name in WHEN_ALLOWED)
+    assert 'when:' not in text, 'optional branches are gated by their input channel'
+    assert (TAG in text) == (module.name not in NO_META), 'one tag rule'
     assert ('topic: versions' in text) == (module.name not in NO_VERSIONS)
 
 
