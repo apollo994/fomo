@@ -694,9 +694,8 @@ def test_gtf_reference(tmp, ref_gtf, main):
     ],
 )
 def test_location_guard_rejects_contradictions(cm, loc, bad):
-    with pytest.raises(SystemExit) as ex:
+    with pytest.raises(cm.fomo_io.FomoError, match='inconsistent reference tag'):
         cm.check_location(loc, bad, 1000, 'x')
-    assert ex.value.code == 1
 
 
 def test_empty_input(tmp, ref):
@@ -796,5 +795,5 @@ def test_gene_hash_collision_exits_1(tmp, cm, monkeypatch):
     )
     monkeypatch.setattr(sys, 'stderr', buf)
     with pytest.raises(SystemExit) as ex:
-        cm.main()
+        cm.fomo_io.run(cm.main)
     assert ex.value.code == 1 and 'gene hash collision deadbeef0000' in buf.getvalue()

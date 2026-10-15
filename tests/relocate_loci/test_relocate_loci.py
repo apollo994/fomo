@@ -1,6 +1,10 @@
 """bin/relocate_loci.py: decoys keep a model's shape and move into intergenic space, reproducibly."""
 
+from pathlib import Path
+
 from conftest import run_script, write
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 MODELS = (
     '\n'.join(
@@ -23,9 +27,7 @@ BED = 'c\t10000\t20000\nc\t30000\t31000\nd\t0\t50000\n'
 def run(tmp_path, *extra, seed=7, name='out.gff3'):
     gff, bed = write(tmp_path / 'm.gff3', '##gff-version 3\n' + MODELS), write(tmp_path / 'i.bed', BED)
     out = tmp_path / name
-    r = run_script(
-        'relocate_loci.py', '--input-gff', gff, '--intergenic-bed', bed, '--output-gff', out, '--seed', seed, *extra
-    )
+    r = run_script('relocate_loci.py', '--gff', gff, '--bed', bed, '--output', out, '--seed', seed, *extra)
     assert r.returncode == 0, r.stderr
     return out.read_text()
 
@@ -69,3 +71,9 @@ def test_output_grouped_by_seqid(tmp_path):
 def test_cap(tmp_path):
     tx, _ = models(run(tmp_path, '--decoy-cap', 1))
     assert len(tx) == 1
+
+
+def test_output_is_byte_stable(tmp_path):
+    """Seed 7 must keep giving these decoys: the draw order of the random generator is a contract."""
+    assert run(tmp_path, name='a.gff3') == (FIXTURES / 'seed7.gff3').read_text()
+    assert run(tmp_path, '--decoy-cap', 1, name='b.gff3') == (FIXTURES / 'seed7_cap1.gff3').read_text()

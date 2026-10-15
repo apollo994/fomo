@@ -12,19 +12,20 @@ One row per curated track; Sample = <target>.<track> (track = <feature_type>[.de
 No `# id:` header: the sections are routed by `sp` filename patterns only (assets/multiqc/sections.yml),
 since a file found by both renders twice. Stdlib only.
 """
+
 import argparse
 import json
+import sys
+from pathlib import Path
 
-OBSERVED = ['n_models', 'self_excluded', 'single_exon', 'multi_exon_models', 'species', 'chains',
-            'supported_chains', 'supported_chains_2sp', 'supported_chains_3sp', 'supported_chains_4sp',
-            'supported_chains_ge5sp', 'models_in_supported_chains', 'genes']
-DISCARDED = ['models_removed', 'models_removed_in_supported_chains', 'supported_chains_lost',
-             'supported_chains_kept_after_removal', 'genes_lost']
-NOVEL = ['genes', 'transcripts', 'genes_2sp', 'genes_3sp', 'genes_4sp', 'genes_ge5sp', 'genes_1chain', 'genes_2chain',
-         'genes_ge3chain']
-LOCATIONS = ['intergenic', 'divergent', 'antisense_exonic', 'antisense_intronic', 'intronic',
-             'sense_span_overlap', 'no_reference']
-MEDIANS = ['n_exons', 'transcript_length', 'gene_span', 'intron_length', 'de']
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fomo_stats  # noqa: E402
+
+OBSERVED = fomo_stats.CURATION_OBSERVED
+DISCARDED = fomo_stats.CURATION_DISCARDED
+NOVEL = fomo_stats.CURATION_NOVEL
+LOCATIONS = fomo_stats.CURATION_LOCATION_COLUMNS
+MEDIANS = fomo_stats.CURATION_MEDIANS
 
 
 def write(path, sample, cols):
@@ -40,7 +41,8 @@ def main():
     p.add_argument('--sample', help='MultiQC sample name (default: <target>.<track> from the report params)')
     args = p.parse_args()
 
-    r = json.load(open(args.json))
+    with open(args.json, encoding='utf-8') as fh:
+        r = json.load(fh)
     obs, dis, nov, par = r['observed'], r['discarded_by_reference'], r['novel'], r['params']
     sample = args.sample or f"{par['target']}.{par['track']}"
     has_ref = bool(par.get('ref'))
@@ -50,7 +52,7 @@ def main():
     cols = [('reference', 'yes' if has_ref else 'no')]
     cols += [(k, dis.get(k, 0) if has_ref else None) for k in DISCARDED]
     pref = 'chains_lost_by_primary_type:'
-    cols += [(f'chains_lost:{k[len(pref):]}', v) for k, v in dis.items() if k.startswith(pref)]
+    cols += [(f'chains_lost:{k[len(pref) :]}', v) for k, v in dis.items() if k.startswith(pref)]
     write(f'{args.prefix}_curation_discarded_mqc.tsv', sample, cols)
 
     cols = [(k, nov.get(k, 0)) for k in NOVEL]

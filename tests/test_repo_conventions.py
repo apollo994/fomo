@@ -2,6 +2,7 @@
 the vendored binary."""
 
 import hashlib
+import os
 import re
 from pathlib import Path
 
@@ -56,3 +57,10 @@ def test_no_nf_core_modules():
 def test_gff_feature_stats_checksum():
     expected = (ROOT / 'bin/gff-feature-stats.sha256').read_text().split()[0]
     assert hashlib.sha256((ROOT / 'bin/gff-feature-stats').read_bytes()).hexdigest() == expected
+
+
+def test_bin_scripts_are_executable():
+    """Nextflow runs bin/ scripts by name: every file with a shebang needs its execute bit."""
+    for path in sorted((ROOT / 'bin').iterdir()):
+        if path.is_file() and path.read_bytes()[:2] == b'#!':
+            assert os.access(path, os.X_OK), f'{path.name} is not executable'

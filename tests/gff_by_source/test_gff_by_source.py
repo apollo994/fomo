@@ -62,6 +62,13 @@ def test_duplicate_transcript_id_fails(tmp_path):
     assert "duplicate transcript ID 't1|A'" in r.stderr and "'A'" in r.stderr and "'B'" in r.stderr
 
 
+def test_duplicate_transcript_id_from_one_source_fails(tmp_path):
+    rows = model('t1', 'A') + model('t1', 'A', start=900)
+    src = write(tmp_path / 'in.gff3', gff(*rows))
+    r = run_script('gff_by_source.py', '--gff', src, '--outdir', tmp_path / 'out', '--name-template', TEMPLATE)
+    assert r.returncode == 1 and "duplicate transcript ID 't1|A'" in r.stderr
+
+
 def test_empty_input_writes_nothing(tmp_path):
     src = write(tmp_path / 'in.gff3', '##gff-version 3\n')
     out = tmp_path / 'out'

@@ -1,0 +1,14 @@
+##gff-version 3
+##source=relocate_loci
+##feature_type=lnc_RNA
+##relocated_models=2
+##skipped_models=0
+c	relocated	gene	15992	16542	.	+	.	ID=t1.gene.reloc;decoy=true
+c	relocated	lnc_RNA	15992	16542	.	+	.	ID=t1.reloc;Parent=t1.gene.reloc;decoy=true
+c	relocated	exon	15992	16042	.	+	.	ID=t1.reloc.exon1;Parent=t1.reloc
+c	relocated	exon	16192	16292	.	+	.	ID=t1.reloc.exon2;Parent=t1.reloc
+c	relocated	exon	16492	16542	.	+	.	ID=t1.reloc.exon3;Parent=t1.reloc
+d	relocated	gene	42660	43060	.	+	.	ID=t0.gene.reloc;decoy=true
+d	relocated	lnc_RNA	42660	43060	.	+	.	ID=t0.reloc;Parent=t0.gene.reloc;decoy=true
+d	relocated	exon	42660	42760	.	+	.	ID=t0.reloc.exon1;Parent=t0.reloc
+d	relocated	exon	42960	43060	.	+	.	ID=t0.reloc.exon2;Parent=t0.reloc

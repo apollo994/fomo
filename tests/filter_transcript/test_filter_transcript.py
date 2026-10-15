@@ -1,6 +1,7 @@
-"""bin/filter_transcript.sh: stranded, spliced and (with --longest) one isoform per gene.
+"""bin/filter_transcript.py: stranded, spliced and (with --longest) one isoform per gene.
 
-These tests are the behaviour oracle for any reimplementation (plans/27f).
+These tests are the behaviour oracle of the selection rules: they ran unchanged against the awk
+implementation this script replaced.
 """
 
 import gzip
@@ -9,7 +10,15 @@ import pytest
 
 from conftest import run_script, write
 
-SCRIPT = 'filter_transcript.sh'
+
+def filter_gff(tmp_path, src, ttype, *opts):
+    """-> (CompletedProcess, output lines, funnel lines)."""
+    counts, dest = tmp_path / 'counts.tsv', tmp_path / 'out.gff3'
+    args = ['--gff', src, '--feature-type', ttype, *opts, '--counts', counts, '--sample', 'S', '--output', dest]
+    r = run_script('filter_transcript.py', *args)
+    out = dest.read_text() if dest.exists() else ''
+    funnel = counts.read_text().splitlines() if counts.exists() else []
+    return r, out.splitlines(), funnel
 
 
 def tx(chrom, tid, parent, strand, exons, ftype='lnc_RNA', child_strands=None):
@@ -29,11 +38,9 @@ def gene(chrom, gid, strand, s=1, e=10000, ftype='ncRNA_gene'):
 
 def run(tmp_path, rows, *opts, ttype='lnc_RNA', name='in.gff3'):
     src = write(tmp_path / name, '##gff-version 3\n' + '\n'.join(rows) + '\n')
-    counts = tmp_path / 'counts.tsv'
-    r = run_script(SCRIPT, *opts, '--counts', counts, '--sample', 'S', src, ttype)
+    r, out, funnel = filter_gff(tmp_path, src, ttype, *opts)
     assert r.returncode == 0, r.stderr
-    funnel = counts.read_text().splitlines()
-    return r.stdout.splitlines(), funnel
+    return out, funnel
 
 
 def ids(lines, ftype='lnc_RNA'):
@@ -151,10 +158,18 @@ def test_other_types_and_cds_children(tmp_path):
 
 def test_empty_input_reports_zero(tmp_path):
     src = write(tmp_path / 'e.gff3', '')
-    counts = tmp_path / 'c.tsv'
-    r = run_script(SCRIPT, '--counts', counts, '--sample', 'S', src, 'lnc_RNA')
-    assert r.returncode == 0 and r.stdout == ''
-    assert counts.read_text().splitlines()[1] == 'S\tlnc_RNA\t0\t0\t0\t0'
+    r, out, funnel = filter_gff(tmp_path, src, 'lnc_RNA')
+    assert r.returncode == 0 and out == []
+    assert funnel[1] == 'S\tlnc_RNA\t0\t0\t0\t0'
+
+
+def test_gzipped_input(tmp_path):
+    rows = gene('c', 'G1', '+') + tx('c', 'T1', 'G1', '+', [(1, 100), (200, 300)])
+    src = tmp_path / 'in.gff3.gz'
+    with gzip.open(src, 'wt') as fh:
+        fh.write('\n'.join(rows) + '\n')
+    r, out, _ = filter_gff(tmp_path, src, 'lnc_RNA')
+    assert r.returncode == 0 and out == rows
 
 
 def test_output_order_is_input_order(tmp_path):

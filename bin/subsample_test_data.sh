@@ -11,11 +11,9 @@ TEST_DATA_DIR="$REPO_DIR/assets/test_data"
 
 # "species:assembly" pairs
 PAIRS=(
-    "Lycaena_phlaeas_282391:GCA_905333005.2"
     "Lycaena_alciphron_282377:GCA_964273875.1"
     "Lycaena_hippothoe_580924:GCA_964264015.1"
     "Lycaena_thersamon_265360:GCA_965194355.1"
-    "Lycaena_virgaureae_282395:GCA_964263885.1"
 )
 
 for pair in "${PAIRS[@]}"; do

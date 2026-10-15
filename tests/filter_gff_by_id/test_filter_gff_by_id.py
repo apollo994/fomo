@@ -53,7 +53,7 @@ def test_keep_mode_exact(tmp_path):
     fasta = write(tmp_path / 'k.fa', '>T2|lnc|S\nACGT\n')
     idmap = write(tmp_path / 'map.tsv', 'T1|lnc|S\ttranscript:T1\nT2|lnc|S\ttranscript:T2\nT3|lnc|S\ttranscript:T3\n')
     out = tmp_path / 'out.gff3'
-    r = run_script('filter_gff_by_id.py', '--gff', src, '--keep-fasta', fasta, '--id-map', idmap, '--output', out)
+    r = run_script('filter_gff_by_id.py', '--gff', src, '--fasta', fasta, '--id-map', idmap, '--output', out)
     assert r.returncode == 0, r.stderr
     tx = [x for x in ids_out(out) if x.startswith('transcript:')]
     assert tx == ['transcript:T2<gene:G1'], 'the transcripts of the output are exactly the FASTA records'
@@ -63,9 +63,7 @@ def test_keep_mode_fails_on_twice_mapped_header(tmp_path):
     src = write(tmp_path / 'a.gff3', ANNOT)
     fasta = write(tmp_path / 'k.fa', '>T2|lnc|S\nACGT\n')
     idmap = write(tmp_path / 'map.tsv', 'T2|lnc|S\ttranscript:T2\nT2|lnc|S\ttranscript:T1\n')
-    r = run_script(
-        'filter_gff_by_id.py', '--gff', src, '--keep-fasta', fasta, '--id-map', idmap, '--output', tmp_path / 'o'
-    )
+    r = run_script('filter_gff_by_id.py', '--gff', src, '--fasta', fasta, '--id-map', idmap, '--output', tmp_path / 'o')
     assert r.returncode == 1 and 'maps to both' in r.stderr
 
 
@@ -73,9 +71,7 @@ def test_keep_mode_fails_on_unmapped_record(tmp_path):
     src = write(tmp_path / 'a.gff3', ANNOT)
     fasta = write(tmp_path / 'k.fa', '>X|lnc|S\nACGT\n')
     idmap = write(tmp_path / 'map.tsv', 'T2|lnc|S\ttranscript:T2\n')
-    r = run_script(
-        'filter_gff_by_id.py', '--gff', src, '--keep-fasta', fasta, '--id-map', idmap, '--output', tmp_path / 'o'
-    )
+    r = run_script('filter_gff_by_id.py', '--gff', src, '--fasta', fasta, '--id-map', idmap, '--output', tmp_path / 'o')
     assert r.returncode == 1 and 'is not in the id map' in r.stderr
 
 
@@ -83,9 +79,7 @@ def test_keep_mode_fails_on_id_not_in_gff(tmp_path):
     src = write(tmp_path / 'a.gff3', ANNOT)
     fasta = write(tmp_path / 'k.fa', '>Z|lnc|S\nACGT\n')
     idmap = write(tmp_path / 'map.tsv', 'Z|lnc|S\ttranscript:Z\n')
-    r = run_script(
-        'filter_gff_by_id.py', '--gff', src, '--keep-fasta', fasta, '--id-map', idmap, '--output', tmp_path / 'o'
-    )
+    r = run_script('filter_gff_by_id.py', '--gff', src, '--fasta', fasta, '--id-map', idmap, '--output', tmp_path / 'o')
     assert r.returncode == 1 and 'have no transcript' in r.stderr
 
 

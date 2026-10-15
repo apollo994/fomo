@@ -1,136 +1,100 @@
 #!/usr/bin/env python3
 """
-Split a projected GFF3 (a target's allModels.raw.gff3, every source in one file) by the
-source species that produced each model.
+Split a projected GFF3 (a target's allModels.raw.gff3, every source in one file) by the source
+species that produced each model.
 
-The key is the `source=` attribute that bin/bam_to_gff.sh writes on every `gene` and
-`transcript` row; child features (exon, CDS, UTR) inherit it through `Parent`.
+The key is the `source=` attribute that bin/bam_to_gff.sh writes on every gene and transcript row;
+child features (exon, CDS, UTR) inherit it through `Parent`.
 
   --name-template '<target>.from_{source}.lnc_RNA.projected.gff3'
       One output file per distinct `source=` value; `{source}` is substituted.
 
 Records keep their input order, so a coordinate-sorted input gives coordinate-sorted,
-seqid-grouped outputs (as gff-feature-stats requires). A duplicate transcript ID is an
-error: bam_to_gff.sh makes IDs unique (<tid>|<source>), and a duplicate would corrupt the
-split and make gffread and gffcompare misbehave.
+seqid-grouped outputs (as gff-feature-stats requires). A duplicate transcript ID is an error:
+bam_to_gff.sh makes IDs unique (<tid>|<source>), and a duplicate would corrupt the split and make
+gffread and gffcompare misbehave. An input without records writes no file.
 """
+
 import argparse
+import collections
+import contextlib
 import os
 import sys
-from typing import Dict, TextIO
+from pathlib import Path
 
-# Feature types that own a transcript-level ID (the same set as filter_gff_by_id.py).
-TX_TYPES = {
-    "transcript", "mrna", "lnc_rna", "lncrna", "ncrna", "mirna", "trna",
-    "rrna", "snrna", "snorna", "pseudogenic_transcript", "primary_transcript",
-}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fomo_io  # noqa: E402
 
-GFF_HEADER = "##gff-version 3\n"
-
-
-def attr(col9: str, key: str) -> str:
-    """Return the value of an attribute key from a GFF3 column 9, or ''."""
-    for field in col9.strip().split(";"):
-        field = field.strip()
-        if field.startswith(key + "="):
-            return field[len(key) + 1:]
-    return ""
+GFF_HEADER = '##gff-version 3\n'
+log = fomo_io.get_logger('gff_by_source')
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--gff", required=True, help="input GFF3 (an allModels.raw.gff3)")
-    p.add_argument("--outdir", required=True, help="directory to write output GFF3s into")
-    p.add_argument("--name-template", required=True,
-                   help="output filename with a literal {source} placeholder")
-    return p.parse_args()
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--gff', required=True, help='input GFF3 (an allModels.raw.gff3)')
+    p.add_argument('--outdir', required=True, help='directory to write the output GFF3s into')
+    p.add_argument('--name-template', required=True, help='output file name with a literal {source} placeholder')
+    args = p.parse_args()
+    if '{source}' not in args.name_template:
+        p.error('--name-template must contain the literal {source}')
+    return args
+
+
+def attributed_rows(gff: str):
+    """Yield (source, columns) per feature. Rows carrying `source=` define it; the others take it
+    from the first Parent seen so far, which suffices because bam_to_gff.sh writes gene ->
+    transcript -> exons in that order."""
+    source_by_id: dict[str, str] = {}
+    source_by_tid: dict[str, str] = {}
+    for lineno, cols in fomo_io.iter_gff(gff):
+        attrs = fomo_io.parse_attrs(cols[8])
+        fid = attrs.get('ID', '')
+        source = attrs.get('source', '') or next(
+            (source_by_id[p] for p in fomo_io.split_ids(attrs.get('Parent', '')) if p in source_by_id), ''
+        )
+        if not source:
+            fomo_io.die(
+                f'{gff}:{lineno}: cannot attribute record to a source — no source= attribute and no known Parent'
+            )
+        if fid:
+            source_by_id[fid] = source
+        if fid and fomo_io.is_transcript(cols[2]):
+            if fid in source_by_tid:
+                fomo_io.die(
+                    f"duplicate transcript ID '{fid}' in {gff} (line {lineno}): claimed by both "
+                    f"'{source_by_tid[fid]}' and '{source}'. Transcript IDs must be unique across the merged "
+                    f'annotation — gffread and gffcompare silently misbehave otherwise.'
+                )
+            source_by_tid[fid] = source
+        yield source, cols
+
+
+def split_by_source(gff: str, outdir: str, template: str) -> collections.Counter:
+    """Write one GFF3 per source; -> records per source."""
+    counts: collections.Counter = collections.Counter()
+    os.makedirs(outdir, exist_ok=True)
+    with contextlib.ExitStack() as stack:
+        handles = {}
+        for source, cols in attributed_rows(gff):
+            if source not in handles:
+                path = os.path.join(outdir, template.replace('{source}', source))
+                handles[source] = stack.enter_context(fomo_io.open_text(path, 'wt'))
+                handles[source].write(GFF_HEADER)
+            handles[source].write('\t'.join(cols) + '\n')
+            counts[source] += 1
+    return counts
 
 
 def main() -> int:
     args = parse_args()
-
-    if "{source}" not in args.name_template:
-        print("ERROR: --name-template must contain the literal {source}", file=sys.stderr)
-        return 2
-
-    os.makedirs(args.outdir, exist_ok=True)
-
-    # ID -> source, populated as records are read. Rows carrying `source=` seed it;
-    # rows without one resolve through Parent. A forward single pass suffices because
-    # bam_to_gff.sh emits gene → transcript → exons in that order.
-    source_by_id: Dict[str, str] = {}
-    # Transcript ID -> the source that first claimed it (for the duplicate guard).
-    source_by_tid: Dict[str, str] = {}
-
-    handles: Dict[str, TextIO] = {}
-    counts: Dict[str, int] = {}
-
-    def handle_for(source: str) -> TextIO:
-        if source not in handles:
-            fname = args.name_template.replace("{source}", source)
-            handles[source] = open(os.path.join(args.outdir, fname), "w", encoding="utf-8")
-            handles[source].write(GFF_HEADER)
-        return handles[source]
-
-    try:
-        with open(args.gff, encoding="utf-8") as fh:
-            for lineno, line in enumerate(fh, 1):
-                # Header/comment lines are regenerated per output, not copied: an
-                # output must start with its own ##gff-version 3 and nothing else.
-                if line.startswith("#") or not line.strip():
-                    continue
-                cols = line.rstrip("\n").split("\t")
-                if len(cols) < 9:
-                    continue
-
-                ftype = cols[2].lower()
-                fid = attr(cols[8], "ID")
-                source = attr(cols[8], "source")
-
-                if not source:
-                    # Child feature: inherit from the first resolvable parent.
-                    for parent in (p.strip() for p in attr(cols[8], "Parent").split(",")):
-                        if parent in source_by_id:
-                            source = source_by_id[parent]
-                            break
-
-                if not source:
-                    print(f"ERROR: {args.gff}:{lineno}: cannot attribute record to a "
-                          f"source — no source= attribute and no known Parent",
-                          file=sys.stderr)
-                    return 1
-
-                if fid:
-                    source_by_id[fid] = source
-
-                if ftype in TX_TYPES and fid:
-                    previous = source_by_tid.get(fid)
-                    if previous is not None:
-                        print(f"ERROR: duplicate transcript ID '{fid}' in {args.gff} "
-                              f"(line {lineno}): claimed by both '{previous}' and "
-                              f"'{source}'. Transcript IDs must be unique across the "
-                              f"merged annotation — gffread and gffcompare silently "
-                              f"misbehave otherwise.", file=sys.stderr)
-                        return 1
-                    source_by_tid[fid] = source
-
-                handle_for(source).write(line)
-                counts[source] = counts.get(source, 0) + 1
-    finally:
-        for fh_out in handles.values():
-            fh_out.close()
-
-    if not handles:
-        print(f"WARNING: {args.gff} contained no records — no output files written",
-              file=sys.stderr)
-
+    counts = split_by_source(args.gff, args.outdir, args.name_template)
+    if not counts:
+        log.warning(f'{args.gff} contained no records — no output files written')
     for source in sorted(counts):
-        print(f"gff_by_source: {source}\t{counts[source]} records", file=sys.stderr)
-    print(f"gff_by_source: {len(source_by_tid)} transcripts across {len(counts)} sources",
-          file=sys.stderr)
+        log.info(f'{source}\t{counts[source]} records')
+    log.info(f'{sum(counts.values())} records across {len(counts)} sources')
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == '__main__':
+    fomo_io.run(main)

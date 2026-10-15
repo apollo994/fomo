@@ -2,12 +2,7 @@
 
 from conftest import run_script, write
 
-FASTA = (
-    '>t1|lncRNA|alpha\nACGT\nAC\n'
-    '>t2|lncRNA|beta\nGGGG\n'
-    '>t3|lncRNA|alpha_2\nTTTT\n'
-    '>t4|decoy_lncRNA|alpha\nCCCC\n'
-)
+FASTA = '>t1|lncRNA|alpha\nACGT\nAC\n>t2|lncRNA|beta\nGGGG\n>t3|lncRNA|alpha_2\nTTTT\n>t4|decoy_lncRNA|alpha\nCCCC\n'
 
 
 def test_drops_only_the_named_species(tmp_path):

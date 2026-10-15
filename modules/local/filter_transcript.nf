@@ -1,7 +1,7 @@
 process FILTER_TRANSCRIPT {
     tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
-    label 'img_ubuntu'
+    label 'img_python'
 
     input:
     tuple val(meta), path(gff3)
@@ -10,30 +10,19 @@ process FILTER_TRANSCRIPT {
     tuple val(meta), path("*.gff3")                        , emit: gff3
     // One-row funnel (n_transcripts, n_stranded, n_spliced, n_selected), Sample <id>.<ft>.
     tuple val(meta), path("*_transcript_filter_mqc.tsv")   , emit: mqc
-    tuple val("${task.process}"), val('mawk'), eval("awk -W version 2>&1 | sed '1!d;s/^mawk //'"), topic: versions, emit: versions_mawk
+    tuple val("${task.process}"), val('python'), eval('python3 --version 2>&1 | sed "s/Python //"'), topic: versions, emit: versions_python
 
     script:
-    def args = task.ext.args ?: ''            // --longest (params.longest_isoform)
+    def args   = task.ext.args ?: ''            // --longest (params.longest_isoform)
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
-    // The script reads its input twice, so a gzipped GFF3 is decompressed to node-local
-    // scratch ($TMPDIR, then /tmp, then the work dir) and removed on exit.
     """
-    if [[ "${gff3}" == *.gz ]]; then
-        scratch=\$(mktemp -d "\${TMPDIR:-/tmp}/filter_transcript.XXXXXX" 2>/dev/null \\
-            || mktemp -d /tmp/filter_transcript.XXXXXX 2>/dev/null \\
-            || mktemp -d "\$PWD/filter_transcript.XXXXXX")
-        trap 'rm -rf "\$scratch"' EXIT
-        input="\$scratch/input.gff"
-        gzip -cd "${gff3}" > "\$input"
-    else
-        input="${gff3}"
-    fi
-
-    filter_transcript.sh \\
+    filter_transcript.py \\
         ${args} \\
+        --gff ${gff3} \\
+        --feature-type ${meta.feature_type} \\
         --counts ${prefix}_transcript_filter_mqc.tsv \\
         --sample ${meta.id}.${meta.feature_type} \\
-        "\$input" ${meta.feature_type} > ${prefix}.gff3
+        --output ${prefix}.gff3
     """
 
     stub:

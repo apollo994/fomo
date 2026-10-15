@@ -15,9 +15,9 @@ process RELOCATE_LOCI {
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
     """
     relocate_loci.py \\
-        --input-gff ${gff3} \\
-        --intergenic-bed ${intergenic_bed} \\
-        --output-gff ${prefix}.decoy.gff3 \\
+        --gff ${gff3} \\
+        --bed ${intergenic_bed} \\
+        --output ${prefix}.decoy.gff3 \\
         --feature-type ${meta.feature_type} \\
         ${args}
     """

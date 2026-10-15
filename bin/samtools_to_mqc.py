@@ -16,6 +16,7 @@ Columns (in order):
     SN  average quality:        38.5
     SN  average length:         100
 """
+
 import argparse
 import sys
 from typing import Dict, List, Tuple
@@ -23,13 +24,13 @@ from typing import Dict, List, Tuple
 
 # (output column, raw SN key in samtools stats output)
 METRICS: List[Tuple[str, str]] = [
-    ("raw_total_sequences",     "raw total sequences"),
-    ("reads_mapped",            "reads mapped"),
-    ("reads_mapped_percent",    "reads mapped %"),
-    ("non_primary_alignments",  "non-primary alignments"),
-    ("error_rate",              "error rate"),
-    ("average_quality",         "average quality"),
-    ("average_length",          "average length"),
+    ("raw_total_sequences", "raw total sequences"),
+    ("reads_mapped", "reads mapped"),
+    ("reads_mapped_percent", "reads mapped %"),
+    ("non_primary_alignments", "non-primary alignments"),
+    ("error_rate", "error rate"),
+    ("average_quality", "average quality"),
+    ("average_length", "average length"),
 ]
 
 
@@ -52,12 +53,9 @@ def parse_stats(path: str) -> Dict[str, str]:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--input",  required=True, metavar="STATS",
-                   help="`samtools stats` output file")
-    p.add_argument("--name",   required=True, metavar="SAMPLE",
-                   help="Row sample identifier")
-    p.add_argument("--output", required=True, metavar="TSV",
-                   help="Output one-row TSV")
+    p.add_argument("--input", required=True, metavar="STATS", help="`samtools stats` output file")
+    p.add_argument("--name", required=True, metavar="SAMPLE", help="Row sample identifier")
+    p.add_argument("--output", required=True, metavar="TSV", help="Output one-row TSV")
     return p.parse_args()
 
 
@@ -67,7 +65,7 @@ def main() -> int:
 
     # `samtools stats` doesn't emit `reads mapped %` directly — derive it.
     try:
-        total  = float(data["raw total sequences"])
+        total = float(data["raw total sequences"])
         mapped = float(data["reads mapped"])
         if total > 0:
             data["reads mapped %"] = f"{(mapped / total) * 100:.2f}"

@@ -168,6 +168,11 @@ comment policy (master §8), so later subplans start from present-tense, accurat
 
 ## Results
 
+> **Correction (found in 27f, D27f-1):** the three A2 items `assets/samplesheet_full.csv`, the
+> test species *L. phlaeas* / *L. virgaureae* and the `PAIRS` list of
+> `bin/subsample_test_data.sh` were recorded below as done but were not in the 27b commit. They
+> were made in 27f. The rest of A2 (`.DS_Store`, `assets/empty_ids.txt`) was in 27b.
+
 **Deleted.**
 - **Modules and files:** `modules/nf-core/{gunzip,gffcompare}`, `.DS_Store`,
   `assets/samplesheet_full.csv`, `assets/empty_ids.txt` (the drop list is now an optional

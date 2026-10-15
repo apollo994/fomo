@@ -18,6 +18,7 @@ Input: one or more gffcompare `.stats` files named
        <target>.from_<source>.<feature_type>[.decoy].gffcompare.stats
 Output: a single <prefix>_mqc.json MultiQC custom-content file.
 """
+
 import argparse
 import json
 import sys
@@ -40,21 +41,31 @@ from fomo_stats import (  # noqa: E402
 # Marker symbol per feature class (Plotly symbol names).
 SYMBOL_BY_CLASS = {
     "lncRNA": "circle",
-    "mRNA":   "square",
-    "decoy":  "triangle-up",
+    "mRNA": "square",
+    "decoy": "triangle-up",
 }
 
 # Qualitative palette (D3 category10) assigned per source.
 PALETTE = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
 ]
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("stats", nargs="+", help="gffcompare .stats files")
-    p.add_argument("--output", required=True, metavar="JSON",
-                   help="output MultiQC custom-content JSON (name it *_mqc.json)")
+    p.add_argument(
+        "--output", required=True, metavar="JSON", help="output MultiQC custom-content JSON (name it *_mqc.json)"
+    )
     p.add_argument("--section-name", default="Accuracy values")
     return p.parse_args()
 
@@ -78,9 +89,12 @@ def main() -> int:
     if not records:
         # No comparison has accuracy lines (e.g. a reference with no spliced transcript):
         # emit a validly shaped, empty scatter.
-        print("WARNING: no usable gffcompare stats files (every comparison had an "
-              "empty or feature-less reference after filtering) — emitting an empty "
-              "accuracy plot", file=sys.stderr)
+        print(
+            "WARNING: no usable gffcompare stats files (every comparison had an "
+            "empty or feature-less reference after filtering) — emitting an empty "
+            "accuracy plot",
+            file=sys.stderr,
+        )
 
     # Stable colour assignment: the aggregate pseudo-sources first, in the fixed
     # AGGREGATE_IDS order, then the real species alphabetically — so the headline
@@ -102,9 +116,7 @@ def main() -> int:
                 "x": round(sens / 100.0, 4),
                 "y": round(prec / 100.0, 4),
                 "color": colour_by_source[ident.source],
-                "marker_symbol": SYMBOL_BY_CLASS[
-                    feature_class(ident.feature_type, ident.decoy)
-                ],
+                "marker_symbol": SYMBOL_BY_CLASS[feature_class(ident.feature_type, ident.decoy)],
                 "name": name,
             }
         data.append(level_points)
@@ -125,10 +137,12 @@ def main() -> int:
             "title": "GffCompare: Accuracy values",
             "xlab": "Sensitivity",
             "ylab": "Precision",
-            "xmin": 0, "xmax": 1, "ymin": 0, "ymax": 1,
+            "xmin": 0,
+            "xmax": 1,
+            "ymin": 0,
+            "ymax": 1,
             "data_labels": [
-                {"name": lvl.replace("_", " "), "xlab": "Sensitivity", "ylab": "Precision"}
-                for lvl in LEVELS
+                {"name": lvl.replace("_", " "), "xlab": "Sensitivity", "ylab": "Precision"} for lvl in LEVELS
             ],
         },
         "data": data,
@@ -138,8 +152,11 @@ def main() -> int:
         json.dump(doc, fh, indent=2)
 
     n_pts = sum(len(d) for d in data)
-    print(f"gffcompare_accuracy_mqc: {len(records)} samples × {len(LEVELS)} levels "
-          f"= {n_pts} points; {len(sources)} colours", file=sys.stderr)
+    print(
+        f"gffcompare_accuracy_mqc: {len(records)} samples × {len(LEVELS)} levels "
+        f"= {n_pts} points; {len(sources)} colours",
+        file=sys.stderr,
+    )
     return 0
 
 

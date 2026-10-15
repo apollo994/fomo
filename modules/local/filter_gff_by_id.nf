@@ -16,7 +16,7 @@ process FILTER_GFF_BY_ID {
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
-    def filter = fasta ? "--keep-fasta ${fasta} --id-map ${ids}" : ids ? "--drop-ids ${ids}" : ''
+    def filter = fasta ? "--fasta ${fasta} --id-map ${ids}" : ids ? "--drop-ids ${ids}" : ''
     """
     filter_gff_by_id.py \\
         --gff ${gff3} \\

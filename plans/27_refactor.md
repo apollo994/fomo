@@ -194,7 +194,7 @@ that a U-decision explicitly allows, and none of U5's changes touches a delivera
 | 27c | [27c_local_modules.md](27c_local_modules.md) | All modules local, containers, versions, no conda | 27b | C1–C5, D4 (filters) | 3 d | done (2026-10-15) |
 | 27d | [27d_config_structure.md](27d_config_structure.md) | Config layout, selectors, resources, pipeline_info | 27c | P5, P6, R7, C4 | 1.5 d | done (2026-10-15) |
 | 27e | [27e_track_identity.md](27e_track_identity.md) | Track registry, meta identity, channel simplification | 27d | N1, N2, P7, P10 | 2.5 d | done (2026-10-15) |
-| 27f | [27f_python_shared.md](27f_python_shared.md) | Shared Python modules, filter_transcript.py, curate split | 27e | D1, P8, P9, N4, R5, R6 | 4 d | not started |
+| 27f | [27f_python_shared.md](27f_python_shared.md) | Shared Python modules, filter_transcript.py, curate split | 27e | D1, P8, P9, N4, R5, R6 | 4 d | done (2026-10-15) |
 | 27g | [27g_stats_records.md](27g_stats_records.md) | Producers emit data records (additive); manifest | 27f | U7, T1–T3, P1, D3 | 2.5 d | not started |
 | 27h | [27h_run_summary_records.md](27h_run_summary_records.md) | Run summary reads records | 27g | P2, P4, R5 | 2 d | not started |
 | 27i | [27i_multiqc_from_records.md](27i_multiqc_from_records.md) | Renderer + section registry; delete adapters, one GFF_STATS | 27h | P3, D2, D4, U5 | 3 d | not started |
@@ -346,6 +346,7 @@ by two files (a filename, a label, a section id) gets a consistency test.
 | 2026-10-15 | 27c | done: `modules/nf-core` and conda gone, 27 local modules (1,272 → 964 lines), 12 `img_*` labels in `conf/containers.config` (python/ubuntu pinned by digest), versions topic → Software Versions in every MultiQC report, G4 identical; 7 deviations (D27c-6: floor → 25.04 in 27d) | 3.0 |
 | 2026-10-15 | 27d | done: include order base → containers → profiles → modules, crg site-only, resources only in `base.config` (crg values identical for all 31 processes), 38 `.*:NAME$` selectors, TD2 told apart by `meta.stage`, timestamped `pipeline_info`, floor 25.04, G4 identical; 4 deviations | 3.5 |
 | 2026-10-15 | 27e | done: track keys stamped once (`withTrack`), no pseudo meta ids, one tag rule, 9 pairings → `pairBy`, optional branches gated by empty input (no `when:`, no selector warnings), lint warnings fail the hook, G4 identical; 2 deviations | 3.9 |
+| 2026-10-15 | 27f | done: `fomo_io.py` shared by every migrated script, curate_models split (max complexity 38 → 12), `filter_transcript.py` replaces the awk, flags unified; 299/299 old-vs-new comparisons on the 23-species data byte-identical, G4 identical; 27b's missed A2 deletions made; 2 deviations | 4.8 |
 
 ## 11. Outcome
 

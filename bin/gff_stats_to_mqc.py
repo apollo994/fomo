@@ -21,6 +21,7 @@ absence is meaningful: `intron_stats` is missing for a type whose transcripts
 are all single-exon, `exon_stats.concatenated_length` for a type with no
 multi-exon transcript, and `cds_stats` for a non-coding type.
 """
+
 import argparse
 import json
 import sys
@@ -155,9 +156,7 @@ def gene_rows(stats: Dict[str, Any], role: str, kind: str) -> List[Dict[str, str
                 "mean_gene_length": fmt(length_field(length_stats, "mean")),
                 "min_gene_length": fmt(length_field(length_stats, "min")),
                 "max_gene_length": fmt(length_field(length_stats, "max")),
-                "n_transcript_types": fmt(
-                    len(ttype_counts) if isinstance(ttype_counts, dict) else None
-                ),
+                "n_transcript_types": fmt(len(ttype_counts) if isinstance(ttype_counts, dict) else None),
                 "top_biotype": fmt(top_key(gc.get("biotype_counts"))),
             }
         )
@@ -169,8 +168,7 @@ def gene_rows(stats: Dict[str, Any], role: str, kind: str) -> List[Dict[str, str
     return rows
 
 
-def write_tsv(path: str, base_name: str, name_suffix_col: str,
-              columns: List[str], rows: List[Dict[str, str]]) -> None:
+def write_tsv(path: str, base_name: str, name_suffix_col: str, columns: List[str], rows: List[Dict[str, str]]) -> None:
     """Write the table. Sample name = `<base>.<value of name_suffix_col>`."""
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("Sample\t" + "\t".join(columns) + "\n")
@@ -181,20 +179,17 @@ def write_tsv(path: str, base_name: str, name_suffix_col: str,
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--input", required=True, metavar="JSON",
-                   help="gff-feature-stats JSON output")
-    p.add_argument("--name", required=True, metavar="SAMPLE",
-                   help="Row sample identifier; the transcript type / gene "
-                        "category is appended to it")
-    p.add_argument("--role", required=True,
-                   choices=["source", "target", "projection"],
-                   help="Role label for the rows")
-    p.add_argument("--kind", default=NA,
-                   help="Annotation stage (raw/filtered/decoy/projected)")
-    p.add_argument("--output", required=True, metavar="TSV",
-                   help="Output transcript-type TSV")
-    p.add_argument("--genes-output", metavar="TSV",
-                   help="Optional output gene-category TSV")
+    p.add_argument("--input", required=True, metavar="JSON", help="gff-feature-stats JSON output")
+    p.add_argument(
+        "--name",
+        required=True,
+        metavar="SAMPLE",
+        help="Row sample identifier; the transcript type / gene category is appended to it",
+    )
+    p.add_argument("--role", required=True, choices=["source", "target", "projection"], help="Role label for the rows")
+    p.add_argument("--kind", default=NA, help="Annotation stage (raw/filtered/decoy/projected)")
+    p.add_argument("--output", required=True, metavar="TSV", help="Output transcript-type TSV")
+    p.add_argument("--genes-output", metavar="TSV", help="Optional output gene-category TSV")
     return p.parse_args()
 
 

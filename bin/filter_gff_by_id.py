@@ -1,217 +1,162 @@
 #!/usr/bin/env python3
 """
-Drop transcripts (and their lineage) from a GFF3 by a list of transcript IDs.
+Filter the transcripts of a GFF3, with their lineage, by transcript ID.
 
-Removes TD2 coding-potential lncRNA from a GFF3. Handles both the flat
-projected GFF3 (gene `gene-<tid>` → transcript `<tid>` → `<tid>.exonN`) and the
-hierarchical Ensembl-style input GFF3 (gene `gene:<gid>` → transcript
-`transcript:<tid>` → exon/CDS). Matching is on a NORMALISED bare id: a leading
-`transcript:`, `gene:`, `gene-`, `rna-`, `mrna-`, `cds-` prefix is stripped from
-both the GFF feature IDs and the drop-list entries before comparison.
+Drop mode (--drop-ids, optional): drop the listed transcripts. Matching is on a normalised bare
+id: a leading `transcript:`, `gene:`, `gene-`, `rna-`, `mrna-`, `cds-` or `cds:` is stripped from
+both the GFF3 IDs and the list, so the list may come from either naming. Without a list nothing
+is dropped (the GFF3 is copied).
 
-Lineage-aware: a transcript is dropped if its normalised ID is in the drop list;
-its child exon/CDS/UTR features (linked via Parent) are dropped with it; a gene
-is dropped only if ALL of its transcript children are dropped (so shared genes
-with surviving isoforms are kept).
+Keep mode (--fasta + --id-map): keep exactly the transcripts whose record is in the FASTA. The id
+map (RENAME_FASTA_HEADERS) translates each FASTA header back to its GFF3 transcript ID verbatim,
+so matching is exact. Exits 1 if a header maps twice, a FASTA record is not in the map, or a
+mapped id is not a transcript of the GFF3: on success the output's transcripts are the FASTA's
+records.
 
-KEEP mode (--keep-fasta + --id-map, plans/20_longest_isoform.md) is the inverse,
-used by FILTER_ANNOTATION to build a source's filtered GFF3 FROM the FASTA that is
-actually projected: keep exactly the transcripts whose record is in the FASTA,
-drop every other one (same lineage rules). The id map (RENAME_FASTA_HEADERS)
-translates each renamed FASTA header back to its GFF3 transcript ID verbatim, so
-matching is EXACT — normalise() is not used. Fails loudly (exit 1) rather than
-letting the GFF3 and the FASTA describe different sets:
-  * a renamed header appears twice in the map (two source ids renamed alike);
-  * a FASTA record is not in the map;
-  * a mapped id is not a transcript of the GFF3.
-On success the transcripts of the output == the records of the FASTA.
-
-Without --drop-ids or keep mode nothing is dropped (the GFF3 is copied).
+Lineage, in both modes: a dropped transcript takes its child features (exon, CDS, UTR, ...) with
+it, and a gene is dropped only when all of its transcripts are. Every other line is copied.
 
 Usage: filter_gff_by_id.py --gff in.gff3 [--drop-ids ids.txt] --output out.gff3
-       filter_gff_by_id.py --gff in.gff3 --keep-fasta kept.fa --id-map map.tsv --output out.gff3
+       filter_gff_by_id.py --gff in.gff3 --fasta kept.fa --id-map map.tsv --output out.gff3
 """
+
 import argparse
+import collections
 import re
 import sys
-from typing import Dict, Optional, Set
+from pathlib import Path
 
-GENE_TYPES = {"gene", "ncrna_gene", "pseudogene"}
-TX_TYPES = {
-    "transcript", "mrna", "lnc_rna", "lncrna", "ncrna", "mirna", "trna",
-    "rrna", "snrna", "snorna", "pseudogenic_transcript", "primary_transcript",
-}
-PREFIX_RE = re.compile(r"^(transcript:|gene:|gene-|rna-|mrna-|cds-|cds:)")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fomo_io  # noqa: E402
+
+PREFIX_RE = re.compile(r'^(transcript:|gene:|gene-|rna-|mrna-|cds-|cds:)')
+log = fomo_io.get_logger('filter_gff_by_id')
 
 
 def normalise(raw_id: str) -> str:
-    return PREFIX_RE.sub("", raw_id.strip())
-
-
-def attr(col9: str, key: str) -> str:
-    """Return the value of an attribute key from a GFF3 column 9, or ''."""
-    for field in col9.strip().split(";"):
-        field = field.strip()
-        if field.startswith(key + "="):
-            return field[len(key) + 1:]
-    return ""
+    return PREFIX_RE.sub('', raw_id.strip())
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--gff", required=True, help="input GFF3")
-    p.add_argument("--drop-ids", help="newline-separated transcript IDs to drop (drop mode)")
-    p.add_argument("--keep-fasta", help="FASTA whose records are the transcripts to keep (keep mode)")
-    p.add_argument("--id-map", help="TSV: renamed FASTA header -> GFF3 transcript ID (keep mode)")
-    p.add_argument("--output", required=True, help="output filtered GFF3")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--gff', required=True, help='input GFF3')
+    p.add_argument('--drop-ids', help='newline-separated transcript IDs to drop (drop mode)')
+    p.add_argument('--fasta', help='FASTA whose records are the transcripts to keep (keep mode)')
+    p.add_argument('--id-map', help='TSV: renamed FASTA header -> GFF3 transcript ID (keep mode)')
+    p.add_argument('--output', required=True, help='output GFF3')
     args = p.parse_args()
-    keep_mode = args.keep_fasta is not None or args.id_map is not None
+    keep_mode = args.fasta is not None or args.id_map is not None
     if keep_mode and args.drop_ids is not None:
-        p.error("--drop-ids is mutually exclusive with --keep-fasta/--id-map")
-    if keep_mode and (args.keep_fasta is None or args.id_map is None):
-        p.error("keep mode needs both --keep-fasta and --id-map")
+        p.error('--drop-ids is mutually exclusive with --fasta/--id-map')
+    if keep_mode and (args.fasta is None or args.id_map is None):
+        p.error('keep mode needs both --fasta and --id-map')
     return args
 
 
-def fail(msg: str) -> None:
-    print(f"filter_gff_by_id: ERROR: {msg}", file=sys.stderr)
-    sys.exit(1)
-
-
-def read_keep_ids(keep_fasta: str, id_map: str) -> Set[str]:
-    """GFF3 transcript IDs (verbatim) of the records in keep_fasta, via id_map."""
-    mapping: Dict[str, str] = {}
-    with open(id_map, encoding="utf-8") as fh:
+def read_id_map(path: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    with fomo_io.open_text(path) as fh:
         for n, line in enumerate(fh, 1):
             if not line.strip():
                 continue
-            parts = line.rstrip("\n").split("\t")
+            parts = line.rstrip('\n').split('\t')
             if len(parts) != 2:
-                fail(f"{id_map}:{n}: expected 2 tab-separated columns, got {len(parts)}")
+                fomo_io.die(f'{path}:{n}: expected 2 tab-separated columns, got {len(parts)}')
             renamed, original = parts
             if renamed in mapping:
-                fail(f"renamed header {renamed!r} maps to both {mapping[renamed]!r} and "
-                     f"{original!r} — two source transcript ids collapse to one after "
-                     f"RENAME_FASTA_HEADERS")
+                fomo_io.die(
+                    f'renamed header {renamed!r} maps to both {mapping[renamed]!r} and {original!r} '
+                    f'— two source transcript ids collapse to one after RENAME_FASTA_HEADERS'
+                )
             mapping[renamed] = original
-    keep: Set[str] = set()
-    with open(keep_fasta, encoding="utf-8") as fh:
-        for line in fh:
-            if line.startswith(">"):
-                name = line[1:].split()[0]
-                if name not in mapping:
-                    fail(f"FASTA record {name!r} is not in the id map {id_map}")
-                keep.add(mapping[name])
+    return mapping
+
+
+def read_keep_ids(fasta: str, id_map: str) -> set[str]:
+    """GFF3 transcript IDs (verbatim) of the records in the FASTA."""
+    mapping = read_id_map(id_map)
+    keep: set[str] = set()
+    for name in fomo_io.fasta_names(fasta):
+        if name not in mapping:
+            fomo_io.die(f'FASTA record {name!r} is not in the id map {id_map}')
+        keep.add(mapping[name])
     return keep
 
 
-def transcript_ids(raw_lines) -> Set[str]:
-    ids: Set[str] = set()
-    for line in raw_lines:
-        if line.startswith("#") or not line.strip():
-            continue
-        cols = line.rstrip("\n").split("\t")
-        if len(cols) >= 9 and cols[2].lower() in TX_TYPES:
-            tid = attr(cols[8], "ID")
-            if tid:
-                ids.add(tid)
-    return ids
+def read_transcripts(gff: str) -> list[tuple[str, list[str]]]:
+    """(ID, parents) of every transcript row, in file order; the ID is '' when the row has none."""
+    rows = []
+    for _, cols in fomo_io.iter_gff(gff):
+        if fomo_io.is_transcript(cols[2]):
+            attrs = fomo_io.parse_attrs(cols[8])
+            rows.append((attrs.get('ID', ''), fomo_io.split_ids(attrs.get('Parent', ''))))
+    return rows
+
+
+def drop_predicate(args: argparse.Namespace, transcripts: list[tuple[str, list[str]]]):
+    """-> is_dropped(transcript ID) for the mode the arguments select."""
+    if args.fasta is not None:
+        keep = read_keep_ids(args.fasta, args.id_map)
+        missing = sorted(keep - {tid for tid, _ in transcripts if tid})
+        if missing:
+            fomo_io.die(f'{len(missing)} FASTA record(s) have no transcript in {args.gff}, e.g. {missing[0]!r}')
+        return lambda tid: tid not in keep
+    drop: set[str] = set()
+    if args.drop_ids is not None:
+        with fomo_io.open_text(args.drop_ids) as fh:
+            drop = {normalise(line) for line in fh if line.strip()}
+    return lambda tid: normalise(tid) in drop
+
+
+def select(transcripts: list[tuple[str, list[str]]], is_dropped) -> tuple[set[str], set[str]]:
+    """-> (dropped transcript IDs, genes whose every transcript is dropped). A transcript without
+    an ID is never dropped, but counts for its genes."""
+    dropped_tx: set[str] = set()
+    n_total: collections.Counter = collections.Counter()
+    n_dropped: collections.Counter = collections.Counter()
+    for tid, parents in transcripts:
+        dropped = bool(tid) and is_dropped(tid)
+        if dropped:
+            dropped_tx.add(tid)
+        n_total.update(parents)
+        if dropped:
+            n_dropped.update(parents)
+    dropped_genes = {g for g, total in n_total.items() if n_dropped[g] == total}
+    return dropped_tx, dropped_genes
+
+
+def is_dropped_line(cols: list[str], dropped_tx: set[str], dropped_genes: set[str]) -> bool:
+    attrs = fomo_io.parse_attrs(cols[8])
+    kind = fomo_io.feature_kind(cols[2])
+    if kind == 'gene':
+        return attrs.get('ID', '') in dropped_genes
+    if kind == 'transcript':
+        return attrs.get('ID', '') in dropped_tx
+    return any(p in dropped_tx for p in fomo_io.split_ids(attrs.get('Parent', '')))
+
+
+def write_filtered(gff: str, output: str, dropped_tx: set[str], dropped_genes: set[str]) -> int:
+    """Copy every line that is not dropped; -> number of feature lines removed."""
+    n_removed = 0
+    with fomo_io.open_text(gff) as fh, fomo_io.open_text(output, 'wt') as out:
+        for line in fh:
+            if not line.startswith('#') and line.strip():
+                cols = line.rstrip('\n').split('\t')
+                if len(cols) >= 9 and is_dropped_line(cols, dropped_tx, dropped_genes):
+                    n_removed += 1
+                    continue
+            out.write(line)
+    return n_removed
 
 
 def main() -> int:
     args = parse_args()
-
-    with open(args.gff, encoding="utf-8") as fh:
-        raw_lines = fh.readlines()
-
-    # Drop mode matches on normalised ids; keep mode turns the keep set into an
-    # exact (verbatim) drop set, so both share the lineage logic below.
-    drop: Set[str] = set()
-    exact_drop: Optional[Set[str]] = None
-    if args.keep_fasta is None:
-        if args.drop_ids is not None:
-            with open(args.drop_ids, encoding="utf-8") as fh:
-                drop = {normalise(line) for line in fh if line.strip()}
-    else:
-        keep = read_keep_ids(args.keep_fasta, args.id_map)
-        all_tx = transcript_ids(raw_lines)
-        missing = sorted(keep - all_tx)
-        if missing:
-            fail(f"{len(missing)} FASTA record(s) have no transcript in {args.gff}, "
-                 f"e.g. {missing[0]!r}")
-        exact_drop = all_tx - keep
-
-    # Pass 1: identify dropped transcripts and tally per-gene transcript fate.
-    dropped_tx: Set[str] = set()          # raw transcript IDs to drop
-    gene_total: Dict[str, int] = {}        # raw gene ID -> n transcript children
-    gene_dropped: Dict[str, int] = {}      # raw gene ID -> n dropped transcript children
-
-    for line in raw_lines:
-        if line.startswith("#") or not line.strip():
-            continue
-        cols = line.rstrip("\n").split("\t")
-        if len(cols) < 9:
-            continue
-        ftype = cols[2].lower()
-        if ftype in TX_TYPES:
-            tid = attr(cols[8], "ID")
-            parents = attr(cols[8], "Parent")
-            if not tid:
-                is_dropped = False
-            elif exact_drop is not None:
-                is_dropped = tid in exact_drop
-            else:
-                is_dropped = normalise(tid) in drop
-            if is_dropped and tid:
-                dropped_tx.add(tid)
-            for parent in parents.split(",") if parents else []:
-                parent = parent.strip()
-                if not parent:
-                    continue
-                gene_total[parent] = gene_total.get(parent, 0) + 1
-                if is_dropped:
-                    gene_dropped[parent] = gene_dropped.get(parent, 0) + 1
-
-    # Genes whose every transcript child was dropped.
-    dropped_genes = {
-        g for g, total in gene_total.items()
-        if total > 0 and gene_dropped.get(g, 0) == total
-    }
-
-    # Pass 2: emit, skipping dropped transcripts, their children, and dead genes.
-    n_dropped = 0
-    with open(args.output, "w", encoding="utf-8") as out:
-        for line in raw_lines:
-            if line.startswith("#") or not line.strip():
-                out.write(line)
-                continue
-            cols = line.rstrip("\n").split("\t")
-            if len(cols) < 9:
-                out.write(line)
-                continue
-            ftype = cols[2].lower()
-            fid = attr(cols[8], "ID")
-            parents = [p.strip() for p in attr(cols[8], "Parent").split(",") if p.strip()]
-
-            if ftype in GENE_TYPES:
-                if fid in dropped_genes:
-                    n_dropped += 1
-                    continue
-            elif ftype in TX_TYPES:
-                if fid in dropped_tx:
-                    n_dropped += 1
-                    continue
-            else:
-                # child feature (exon/CDS/UTR): drop if any parent is a dropped tx
-                if any(p in dropped_tx for p in parents):
-                    n_dropped += 1
-                    continue
-            out.write(line)
-
-    print(f"filter_gff_by_id: dropped {len(dropped_tx)} transcripts "
-          f"({len(dropped_genes)} genes), {n_dropped} feature lines removed", file=sys.stderr)
+    transcripts = read_transcripts(args.gff)
+    dropped_tx, dropped_genes = select(transcripts, drop_predicate(args, transcripts))
+    n_removed = write_filtered(args.gff, args.output, dropped_tx, dropped_genes)
+    log.info(f'dropped {len(dropped_tx)} transcripts ({len(dropped_genes)} genes), {n_removed} feature lines removed')
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == '__main__':
+    fomo_io.run(main)

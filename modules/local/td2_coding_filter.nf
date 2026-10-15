@@ -19,11 +19,9 @@ process TD2_CODING_FILTER {
     def sample = task.ext.sample_name ?: prefix
     """
     td2_coding_filter.py \\
-        --in-fasta ${fasta} \\
+        --fasta ${fasta} \\
         --pep ${pep} \\
-        --kept-fasta ${prefix}.noncoding.fasta \\
-        --coding-ids ${prefix}.coding_ids.txt \\
-        --mqc ${prefix}_td2_coding_mqc.tsv \\
+        --prefix ${prefix} \\
         --sample ${sample} \\
         --stage ${stage} \\
         --feature lncRNA \\
