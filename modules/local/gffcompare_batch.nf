@@ -1,6 +1,6 @@
 process GFFCOMPARE_BATCH {
     tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
-    label 'process_high'
+    label 'process_batch'
     label 'img_gffcompare'
 
     // One task per (target, feature_type, decoy): a separate single-query gffcompare per

@@ -73,13 +73,14 @@ workflow PROJECTION {
             .map { _tid, meta, gff, fa -> tuple(meta, gff, fa) }
     )
 
-    TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.fasta)
+    TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.fasta.map { meta, fa -> tuple(meta + [stage: 'projected'], fa) })
 
     // Every track goes through FILTER_ALLMODELS, so one process writes every
-    // `allModels.<gtype>.raw.gff3`; only lncRNA has a drop list.
+    // `allModels.<gtype>.raw.gff3`; only lncRNA has a drop list (one per target).
     ch_filter_in = ch_proj.lnc
-        .join(TD2_NONCODING_PROJ.out.coding_ids)
-        .map { meta, gff, ids -> tuple(meta, gff, ids, []) }
+        .map { meta, gff -> tuple(meta.target_id, meta, gff) }
+        .join(TD2_NONCODING_PROJ.out.coding_ids.map { meta, ids -> tuple(meta.target_id, ids) })
+        .map { _tid, meta, gff, ids -> tuple(meta, gff, ids, []) }
         .mix(ch_proj.rest.map { meta, gff -> tuple(meta, gff, [], []) })
 
     FILTER_ALLMODELS(ch_filter_in)

@@ -1,6 +1,6 @@
 process MINIMAP2_ALIGN {
     tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
-    label 'process_medium'
+    label 'process_align'
     label 'img_minimap2_samtools'
 
     input:

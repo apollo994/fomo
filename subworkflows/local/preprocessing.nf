@@ -116,7 +116,7 @@ workflow PREPROCESSING {
         }
         .set { ch_renamed }
 
-    TD2_NONCODING(ch_renamed.lnc)
+    TD2_NONCODING(ch_renamed.lnc.map { meta, fa -> tuple(meta + [stage: 'input'], fa) })
 
     ch_renamed_final = TD2_NONCODING.out.kept_fasta.mix(ch_renamed.rest)
 

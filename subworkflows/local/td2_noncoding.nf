@@ -6,7 +6,7 @@ include { TD2_CODING_FILTER } from '../../modules/local/td2_coding_filter'
 // (PREPROCESSING) and on each target's pooled projected lncRNA (PROJECTION).
 workflow TD2_NONCODING {
     take:
-    ch_fasta   // [ meta, fasta ]: lncRNA transcript FASTA
+    ch_fasta   // [ meta(stage: 'input' | 'projected'), fasta ]: lncRNA transcript FASTA
 
     main:
     TD2_PREDICT(ch_fasta)

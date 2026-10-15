@@ -15,7 +15,7 @@ process TD2_CODING_FILTER {
     script:
     def args   = task.ext.args   ?: ''            // e.g. --psauron-min 0.5
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
-    def stage  = task.ext.stage  ?: 'input'
+    def stage  = meta.stage ?: 'input'
     def sample = task.ext.sample_name ?: prefix
     """
     td2_coding_filter.py \\

@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://raw.githubusercontent.com/fomo/master/nextflow_schema.json",
+    "$id": "https://raw.githubusercontent.com/apollo994/fomo/main/nextflow_schema.json",
     "title": "FOMO pipeline parameters",
     "description": "Annotates candidate lncRNAs on a target assembly by transferring annotation from source species",
     "type": "object",
@@ -42,6 +42,13 @@
                         "move"
                     ],
                     "fa_icon": "fas fa-copy",
+                    "hidden": true
+                },
+                "trace_report_suffix": {
+                    "type": "string",
+                    "description": "Suffix of the pipeline_info report file names.",
+                    "help_text": "Defaults to the launch time (yyyy-MM-dd_HH-mm-ss), so each run keeps its own trace, report, timeline and DAG.",
+                    "fa_icon": "far fa-calendar",
                     "hidden": true
                 }
             }

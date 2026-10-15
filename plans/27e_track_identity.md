@@ -59,7 +59,7 @@ hand-written key/strip patterns.
 ### C. Channel simplification
 
 - [ ] **C1. Replace the nine re-key → combine → strip patterns with `pairById`** or with id-keyed
-  channels: `preprocessing.nf` (6), `projection.nf` (1), `benchmarking.nf` (1),
+  channels: `preprocessing.nf` (6), `projection.nf` (2; updated by D27d-3), `benchmarking.nf` (1),
   `curation.nf` (1). Build `FASTA_SIZES` pairing once.
 - [ ] **C2. One gating mechanism for optional branches (P10).** (updated by D27a-4: the V1 log
   shows the warning for the `if`-gated decoy processes with fully qualified selectors. Re-check

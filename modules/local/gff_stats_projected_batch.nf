@@ -1,6 +1,6 @@
 process GFF_STATS_PROJECTED_BATCH {
     tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
-    label 'process_high'
+    label 'process_batch'
     label 'img_python'
     label 'amd64_only'
 

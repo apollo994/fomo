@@ -1,6 +1,6 @@
 process MINIMAP2_INDEX {
     tag "${meta.id}"
-    label 'process_low'
+    label 'process_index'
     label 'img_minimap2'
 
     input:
