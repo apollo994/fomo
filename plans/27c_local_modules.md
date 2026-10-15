@@ -47,7 +47,9 @@ selectors.
     - MULTIQC's logo, replace_names and sample_names.
   - Keep each tool's args exactly. The outputs MultiQC parses natively (samtools `.stats`) must
     not change.
-- [ ] **A5. Delete `modules/nf-core/`** (including every `environment.yml`).
+- [ ] **A5. Delete `modules/nf-core/`** (including every `environment.yml`). The forked gffread
+  and minimap2/align comments were not swept in 27b (D27b-3): write fresh, policy-conform
+  comments for the local versions.
 
 ### B. Consolidate local modules
 

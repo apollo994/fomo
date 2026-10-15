@@ -4,18 +4,10 @@ process FILTER_ANNOTATION {
 
     container 'python:3.11'
 
-    // Builds a source's ONE filtered annotation, <id>.<ft>.filtered.gff3
-    // (plans/20_longest_isoform.md): the candidate GFF3 (FILTER_TRANSCRIPT —
-    // spliced + longest isoform) subset to EXACTLY the transcripts of the FASTA that
-    // is sent to projection (TD2-noncoding for lncRNA, everything for mRNA). The
-    // id map from RENAME_FASTA_HEADERS translates each renamed header back to its
-    // GFF3 ID verbatim, and filter_gff_by_id.py exits 1 if the three inputs do not
-    // describe the same set — so this file is, by construction, what was projected.
-    // It is also the gffcompare reference for projections onto this species, and is
-    // published under sources/<id>/annotation/.
-    //
-    // The GFF3 is staged in a subdir (`stageAs: 'input/*'`) so ext.prefix can own
-    // the full output name without colliding with the input's.
+    // A source's filtered annotation: the candidate GFF3 subset to exactly the transcripts of
+    // the projected FASTA, matched through the id map by exact id; exits 1 if the three
+    // disagree. Rationale: plans/20. The GFF3 is staged in a subdirectory so the output may
+    // take the same name.
     input:
     tuple val(meta), path(gff3, stageAs: 'input/*'), path(id_map), path(fasta)
 

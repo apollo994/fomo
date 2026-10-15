@@ -77,4 +77,18 @@ nextflow_pipeline {
             assert FomoTest.published("${outputDir}/results") == FomoTest.expected(baseDir, 'S3')
         }
     }
+
+    test("S4: a species id outside [A-Za-z0-9_-] fails at launch") {
+        when {
+            params {
+                input = FomoTest.sheetRenamed(baseDir, 'assets/samplesheet.csv', outputDir, 'Lycaena_thersamon_265360', 'Sp.1')
+                outdir = "${outputDir}/results"
+            }
+        }
+        then {
+            assert workflow.failed
+            assert workflow.trace.tasks().size() == 0
+            assert (workflow.stdout + workflow.stderr).any { line -> line.contains('Sp.1') && line.contains('does not match') }
+        }
+    }
 }

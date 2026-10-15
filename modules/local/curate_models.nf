@@ -1,21 +1,15 @@
 process CURATE_MODELS {
     tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
-    // Phase-A real-data runs (plans/21): median 4 s, max 28 s, peak RSS 772 MB on the largest of
-    // 82 targets (191 k models from 176 species, 1.14 M reference exons) — 1 core, well inside 4 GB.
     label 'process_low'
 
-    // bin/curate_models.py needs python3 (stdlib only) + gffcompare (exact intron-chain cliques)
-    // + gffread (validates the curated GFF3) in ONE task. No BioContainers image has all three,
-    // so these are Seqera Containers (Wave) builds of the conda spec below — the gffcompare /
-    // gffread pins match modules/nf-core/{gffcompare,gffread} so curation and benchmarking run
-    // the same versions. Regenerate both (https://seqera.io/containers) if a pin changes.
+    // One image with python3, gffcompare and gffread (Wave build of the conda spec below; the
+    // pins match the benchmarking gffcompare and the extraction gffread).
     conda 'conda-forge::python=3.11 bioconda::gffcompare=0.12.6 bioconda::gffread=0.12.7'
     container "${workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container
         ? 'oras://community.wave.seqera.io/library/python_gffcompare_gffread:970e511c83295d93'
         : 'community.wave.seqera.io/library/python_gffcompare_gffread:8f0a261560fe9c3b'}"
 
-    // `ref` is the target's samplesheet GFF3 — the FULL annotation, every biotype — or [] for a
-    // pure target. Both inputs are staged in subdirs so the output globs can never pick them up.
+    // `ref` is the target's samplesheet GFF3 (every biotype), or [] for a target without one.
     input:
     tuple val(meta), path(gff3, stageAs: 'input/*'), path(ref, stageAs: 'ref/*')
 
@@ -36,7 +30,7 @@ process CURATE_MODELS {
     task.ext.when == null || task.ext.when
 
     script:
-    // No `def`: the output declarations above read `prefix` (same idiom as nf-core gunzip).
+    // No `def`: the output declarations read `prefix`.
     prefix = task.ext.prefix ?: "${meta.target_id}.curated.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     def args = task.ext.args ?: ''
     def track = "${meta.feature_type}${meta.decoy ? '.decoy' : ''}"

@@ -16,10 +16,9 @@ Nextflow only puts `bin/` on PATH, not on Python's import path — but it stages
 (or bind-mounts) the whole directory, so a `__file__`-relative insert finds the
 siblings on every executor. Do not "simplify" that preamble to a bare import.
 
-Why this file exists: the identity regex, AGGREGATE_IDS and the stats parser were
-duplicated across scripts that MUST agree with each other and with the pseudo-source
-ids the Nextflow side writes (`allModels_raw`, symlinked by GFFCOMPARE_BATCH and
-GFF_STATS_PROJECTED_BATCH). One copy here leaves one place to keep in sync.
+The identity regex, AGGREGATE_IDS and the stats parser must agree with each other and
+with the pseudo-source id the Nextflow side writes (`allModels_raw`, linked by
+GFFCOMPARE_BATCH and GFF_STATS_PROJECTED_BATCH), so they live here once.
 """
 import os
 import re
@@ -28,11 +27,8 @@ from typing import Dict, NamedTuple, Optional, Tuple
 # Feature levels, in the order gffcompare reports them.
 LEVELS = ["Base", "Exon", "Intron", "Intron_chain", "Transcript", "Locus"]
 
-# Pseudo-source ids standing for an aggregate model rather than a real species. They
-# use the same `from_<id>` filename convention as per-source stats, so per-source
-# tables (the donor accuracy matrix, best-single-source picks) must skip them. Since
-# plans/23 there is one: every source pooled, raw (allModels_collapsed and the top-N
-# consensus were removed).
+# Pseudo-source ids of aggregate models (every source pooled). They use the per-source
+# `from_<id>` filename convention, so per-source tables must skip them.
 AGGREGATE_IDS = ("allModels_raw",)
 
 # <target>.from_<source>.<feature_type>[.decoy], after the .gffcompare.stats suffix
@@ -49,16 +45,6 @@ class Identity(NamedTuple):
     source: str          # a real species, or one of AGGREGATE_IDS
     feature_type: str    # 'lnc_RNA' | 'mRNA'
     decoy: bool
-
-    @property
-    def is_aggregate(self) -> bool:
-        return self.source in AGGREGATE_IDS
-
-    @property
-    def is_self(self) -> bool:
-        """A species projected onto itself. Never produced since plans/23 (self is
-        dropped at alignment); kept so a pre-23 run's stats are still filtered out."""
-        return self.source == self.target
 
 
 def parse_identity(stats_path: str) -> Optional[Identity]:

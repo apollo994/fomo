@@ -2,7 +2,7 @@
 """
 Drop transcripts (and their lineage) from a GFF3 by a list of transcript IDs.
 
-Used to remove TD2 coding-potential lncRNA from a GFF3. Handles both the flat
+Removes TD2 coding-potential lncRNA from a GFF3. Handles both the flat
 projected GFF3 (gene `gene-<tid>` → transcript `<tid>` → `<tid>.exonN`) and the
 hierarchical Ensembl-style input GFF3 (gene `gene:<gid>` → transcript
 `transcript:<tid>` → exon/CDS). Matching is on a NORMALISED bare id: a leading
@@ -26,7 +26,9 @@ letting the GFF3 and the FASTA describe different sets:
   * a mapped id is not a transcript of the GFF3.
 On success the transcripts of the output == the records of the FASTA.
 
-Usage: filter_gff_by_id.py --gff in.gff3 --drop-ids ids.txt --output out.gff3
+Without --drop-ids or keep mode nothing is dropped (the GFF3 is copied).
+
+Usage: filter_gff_by_id.py --gff in.gff3 [--drop-ids ids.txt] --output out.gff3
        filter_gff_by_id.py --gff in.gff3 --keep-fasta kept.fa --id-map map.tsv --output out.gff3
 """
 import argparse
@@ -68,8 +70,6 @@ def parse_args() -> argparse.Namespace:
         p.error("--drop-ids is mutually exclusive with --keep-fasta/--id-map")
     if keep_mode and (args.keep_fasta is None or args.id_map is None):
         p.error("keep mode needs both --keep-fasta and --id-map")
-    if not keep_mode and args.drop_ids is None:
-        p.error("give either --drop-ids or --keep-fasta + --id-map")
     return args
 
 
@@ -128,9 +128,10 @@ def main() -> int:
     # exact (verbatim) drop set, so both share the lineage logic below.
     drop: Set[str] = set()
     exact_drop: Optional[Set[str]] = None
-    if args.drop_ids is not None:
-        with open(args.drop_ids, encoding="utf-8") as fh:
-            drop = {normalise(line) for line in fh if line.strip()}
+    if args.keep_fasta is None:
+        if args.drop_ids is not None:
+            with open(args.drop_ids, encoding="utf-8") as fh:
+                drop = {normalise(line) for line in fh if line.strip()}
     else:
         keep = read_keep_ids(args.keep_fasta, args.id_map)
         all_tx = transcript_ids(raw_lines)

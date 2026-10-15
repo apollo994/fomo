@@ -148,8 +148,8 @@ PARENT_RE = re.compile(r'(?:^|;)Parent=([^;]*)')
 
 
 def read_models(path):
-    """fomo GFF3 -> (list of Model, seqid order). Exits 1 on structural problems."""
-    tx, exons, order = {}, {}, {}
+    """fomo GFF3 -> list of Model. Exits 1 on structural problems."""
+    tx, exons = {}, {}
     intern = sys.intern
     with opener(path) as fh:
         for n, line in enumerate(fh, 1):
@@ -159,7 +159,6 @@ def read_models(path):
             if len(f) < 9:
                 die(f'{path}:{n}: not a 9-column GFF3 line')
             chrom = intern(f[0])
-            order.setdefault(chrom, len(order))
             if f[2] == 'exon':
                 m = PARENT_RE.search(f[8])
                 if not m:
@@ -211,7 +210,7 @@ def read_models(path):
         m.chain = tuple((ex[i][1], ex[i + 1][0]) for i in range(len(ex) - 1))
         m.ref_hits = set()
         models.append(m)
-    return models, list(order)
+    return models
 
 
 # ------------------------------------------------------------------ reference
@@ -795,24 +794,22 @@ def main():
     t0 = time.time()
 
     base = os.path.basename(args.gff)
-    target = args.target or re.sub(r'\.(allModels|top\d+|from_).*$', '', base)
+    target = args.target or re.sub(r'\.(allModels|from_).*$', '', base)
     track = args.track or next((m.group(1) for m in [re.search(r'\.((?:lnc_RNA|mRNA)(?:\.decoy)?)\.', base)] if m), 'lnc_RNA')
     tag, ftype = track_info(track)
     id_prefix = esc(args.id_prefix or f'fomo_{tag}')
     out_dir = os.path.dirname(os.path.abspath(args.prefix))
     os.makedirs(out_dir, exist_ok=True)
 
-    models, _ = read_models(args.gff)
+    models = read_models(args.gff)
     R = collections.OrderedDict()
     obs, dis, nov = collections.OrderedDict(), collections.OrderedDict(), collections.OrderedDict()
     obs['n_models'] = len(models)
     is_self = [m for m in models if m['species'] == target]
     obs['self_excluded'] = 0 if args.keep_self else len(is_self)
     if is_self and not args.keep_self:
-        # Since plans/23 a species is never aligned to its own genome, so this only fires on
-        # inputs from older runs; they are excluded as before (they would never be support).
-        log(f'warning: {len(is_self):,} self-projected models (source={target}) — input predates '
-            f'plans/23; excluded')
+        # The pipeline never aligns a species to itself; such models come from an older run.
+        log(f'warning: {len(is_self):,} self-projected models (source={target}) excluded')
     if not args.keep_self:
         models = [m for m in models if m['species'] != target]
     obs['unstranded'] = sum(m['strand'] not in '+-' for m in models)

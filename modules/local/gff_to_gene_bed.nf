@@ -16,15 +16,12 @@ process GFF_TO_GENE_BED {
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
-    // Streamed, never written out uncompressed (plans/26): the GFF3 is read once, as
-    // awk's second input (`-`); pipefail surfaces a failed gzip.
+    // The GFF3 is streamed (awk's second input); pipefail surfaces a failed gzip.
     def stream = gff3.name.endsWith('.gz') ? "gzip -cd ${gff3}" : "cat ${gff3}"
     """
     set -euo pipefail
 
-    # Sort genes in the order in which chromosomes appear in the genome sizes
-    # file (NOT alphabetically) so bedtools complement downstream — which
-    # requires BED and genome-file chromosome orders to match — succeeds.
+    # Genes in the chromosome order of the sizes file, as bedtools complement requires.
     ${stream} \\
         | awk -F'\\t' 'BEGIN{OFS="\\t"} \\
         FNR==NR { order[\$1]=++rank; next } \\

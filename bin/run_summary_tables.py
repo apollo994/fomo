@@ -212,13 +212,15 @@ class Inputs:
         return None
 
     def curation_index(self) -> Dict[tuple, dict]:
-        """{(target, feature_type, decoy): {**novel row, **observed row}}."""
+        """{(target, feature_type, decoy): {"observed": row, "novel": row}}. The two tables share
+        column names with different meanings (e.g. `genes`), so they are kept apart."""
         index: Dict[tuple, dict] = {}
-        for row in self.curation_observed_rows + self.curation_novel_rows:
-            key = self._curation_key(row["Sample"])
-            if key is None:
-                sys.exit(f"ERROR: unparseable curation Sample '{row['Sample']}' in {row['__file']}")
-            index.setdefault(key, {}).update(row)
+        for table, rows in (("observed", self.curation_observed_rows), ("novel", self.curation_novel_rows)):
+            for row in rows:
+                key = self._curation_key(row["Sample"])
+                if key is None:
+                    sys.exit(f"ERROR: unparseable curation Sample '{row['Sample']}' in {row['__file']}")
+                index.setdefault(key, {})[table] = row
         return index
 
     # ── indexed views ──────────────────────────────────────────────────────────
@@ -530,8 +532,8 @@ def section_targets(inp: Inputs, args, summary: dict) -> None:
     # zero; an enabled type without a curation row is a genuine unknown (NA).
     enabled = {"lnc_RNA"} | ({"mRNA"} if args.include_mrna else set())
 
-    def curated(target: str, ft: str, decoy: bool, key: str = "genes") -> Optional[float]:
-        row = cur.get((target, ft, decoy))
+    def curated(target: str, ft: str, decoy: bool, key: str = "genes", table: str = "novel") -> Optional[float]:
+        row = cur.get((target, ft, decoy), {}).get(table)
         return None if row is None else num(row.get(key))
 
     header = ["Sample", "target", "transcript_type", "genes_before", "curated_genes",
@@ -568,8 +570,8 @@ def section_targets(inp: Inputs, args, summary: dict) -> None:
             }
             if args.include_decoy:
                 decoy = curated(target, ttype, True) if ttype in enabled else None
-                real_in = curated(target, ttype, False, "multi_exon_models")
-                decoy_in = curated(target, ttype, True, "multi_exon_models")
+                real_in = curated(target, ttype, False, "multi_exon_models", "observed")
+                decoy_in = curated(target, ttype, True, "multi_exon_models", "observed")
                 rate_real = None if added is None or not real_in else added / real_in
                 rate_decoy = None if decoy is None or not decoy_in else decoy / decoy_in
                 record["curated_decoy_genes"] = decoy
@@ -609,10 +611,9 @@ def section_heatmap(inp: Inputs, args, summary: dict) -> None:
     sources = sorted(s for s, r in inp.roles.items() if r["is_source"])
     targets = sorted(s for s, r in inp.roles.items() if r["is_target"])
 
-    # One section PER METRIC, not one plot with a dataset switcher: MultiQC 1.35
-    # validates a custom-content heatmap's rows as scalars, so handing it a list of
-    # matrices makes the whole report fail with "No analysis results found" (verified
-    # against the 1.35 container). Bargraphs DO accept multi-dataset — heatmaps do not.
+    # One section per metric, not one plot with a dataset switcher: MultiQC 1.35 accepts
+    # multi-dataset bargraphs but not heatmaps (a list of matrices fails the whole report
+    # with "No analysis results found").
     METRICS = [
         ("f1", "F1", "F1 (the harmonic mean of the two below)"),
         ("sn", "Sensitivity", "Sensitivity — how much of the target's real annotation "
@@ -755,7 +756,7 @@ def section_aggregates(inp: Inputs, args, summary: dict) -> None:
 
 def section_donors(inp: Inputs, args, summary: dict) -> None:
     """Per source: lncRNA transcript F1 across the benchmarked targets, and how many
-    models it projects per target (self-pairs never exist since plans/23)."""
+    models it projects per target (a species is never projected onto itself)."""
     acc, projections = inp.accuracy(), inp.projection_index()
     sources = sorted(s for s, r in inp.roles.items() if r["is_source"])
 

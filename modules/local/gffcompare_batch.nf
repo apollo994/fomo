@@ -2,31 +2,17 @@ process GFFCOMPARE_BATCH {
     tag "${meta.target_id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
     label 'process_high'
 
-    // Replaces the old per-source BENCHMARKING:GFFCOMPARE tasks with ONE task per
-    // (target, feature_type, decoy) that loops separate single-query gffcompare
-    // invocations — every source (never the target itself, plans/23) plus the allModels
-    // raw aggregate — against this target's one reference. See plans/18_per_target_batching.md.
-    //
-    // Deliberately NOT gffcompare's native multi-query mode (`gffcompare -r ref q1 q2 …`):
-    // that POOLS every query's transcripts into one shared Sn/Pr, but the per-source
-    // accuracy (reports, run-summary donor table) needs one F1 per source — a pooled
-    // comparison would destroy exactly that signal. Each
-    // loop iteration is therefore its own complete single-query gffcompare run, under its
-    // own `-o` prefix, so its `.stats`/`.tracking`/`.loci`/`.tmap`/`.refmap` are exactly
-    // what the un-batched module used to write for that source — only how many times the
-    // binary runs per SLURM job has changed.
-    conda "${moduleDir}/../nf-core/gffcompare/environment.yml"
+    // One task per (target, feature_type, decoy): a separate single-query gffcompare per
+    // projected model set (every source, plus the allModels aggregate) against the target's
+    // filtered reference. Not gffcompare's multi-query mode, which pools the queries into one
+    // Sn/Pr and loses the per-source accuracy. Rationale: plans/18.
     container "${ workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/gffcompare:0.12.6--h9f5acd7_0' :
         'quay.io/biocontainers/gffcompare:0.12.6--h9f5acd7_0' }"
 
     input:
-    tuple val(meta), path(gffs)          // every source's projected GFF3 for this target,
-                                          // plus the *.raw.gff3 aggregate
-    tuple val(ref_meta), path(reference) // this target's one filtered reference GFF3
-                                          // (BENCHMARKING:FILTER_TARGET) — no fasta (-s)
-                                          // input, exactly like the un-batched call, which
-                                          // always passed an empty one
+    tuple val(meta), path(gffs)          // every source's projected GFF3 + the *.raw.gff3 aggregate
+    tuple val(ref_meta), path(reference) // the target's filtered reference GFF3
 
     output:
     tuple val(meta), path("*.gffcompare.stats"), emit: stats
@@ -42,15 +28,9 @@ process GFFCOMPARE_BATCH {
 
     script:
     def args = task.ext.args ?: ''
-    // Per-source query files are named `<target>.from_<source>.<gtype>.projected.gff3`
-    // (SPLIT_GFF_BY_SOURCE's --name-template), but the OLD un-batched GFFCOMPARE's
-    // ext.prefix was `<target>.from_<id>.<gtype>[.decoy].gffcompare` — computed purely
-    // from meta, WITHOUT a '.projected' segment, unlike GFF_STATS_PROJECTED's old prefix.
-    // So the prefix here strips the longer '.projected.gff3' suffix, not just '.gff3'.
-    // The aggregate file carries no per-file identity of its own at all (see
-    // gff_stats_projected_batch.nf's identical note) — symlinked here to the same
-    // '.from_<id>.<gtype>.projected.gff3' shape as the per-source files, using the
-    // known pseudo-source id, so the same suffix-stripping rule applies uniformly.
+    // Outputs are named after the query file minus '.projected.gff3'; the aggregate is
+    // linked under the same '<target>.from_allModels_raw.<track>.projected.gff3' shape.
+    // The worker runs in strict mode so a failing gffcompare fails the task.
     """
     shopt -s nullglob
 
@@ -59,6 +39,7 @@ process GFFCOMPARE_BATCH {
     done
 
     run_one() {
+        set -euo pipefail
         gff="\$1"
         prefix="\${gff%.projected.gff3}"
         gffcompare ${args} -r ${reference} -o "\${prefix}.gffcompare" "\$gff"

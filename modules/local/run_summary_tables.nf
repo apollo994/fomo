@@ -2,17 +2,11 @@ process RUN_SUMMARY_TABLES {
     tag 'run_summary'
     label 'process_single'
 
-    // Stdlib-only TSV/JSON parsing — the plain python image is enough (same choice
-    // as modules/local/gff_stats_to_mqc.nf). Deliberately NOT the MultiQC image:
-    // that container is pinned in one place (modules/nf-core/multiqc) and this
-    // process needs nothing from it.
     container 'python:3.11'
 
     input:
-    // The pipeline-wide union of MultiQC inputs, staged into one flat directory.
-    // Every basename is unique today (target-scoped prefixes all start with
-    // ${meta.target_id}., source-side ones are species-keyed), so a collision here
-    // is Nextflow telling you a naming contract broke — which is the point.
+    // The pipeline-wide union of MultiQC inputs in one flat directory: basenames are unique
+    // (target- or species-prefixed), so a collision means a naming contract broke.
     path(mqc_files, stageAs: 'mqc/*')
     path roles_csv
 

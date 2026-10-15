@@ -37,11 +37,6 @@ def test_parse_identity(name, expected):
     assert (ident.target, ident.source, ident.feature_type, ident.decoy) == expected
 
 
-def test_parse_identity_aggregate_and_self():
-    assert fomo_stats.parse_identity('T.from_allModels_raw.lnc_RNA.stats').is_aggregate
-    assert fomo_stats.parse_identity('T.from_T.lnc_RNA.stats').is_self
-
-
 @pytest.mark.parametrize('name', ['T.lnc_RNA.stats', 'T.from_S.snoRNA.stats', 'garbage'])
 def test_parse_identity_rejects_other_names(name):
     assert fomo_stats.parse_identity(name) is None

@@ -104,3 +104,10 @@ def test_projected_flat_ids(tmp_path):
     run_script('filter_gff_by_id.py', '--gff', src, '--drop-ids', drop, '--output', out, check=True)
     text = out.read_text()
     assert 't1|A' not in text and 't1|B' in text, 'source-qualified id drops only that source'
+
+
+def test_without_drop_list_keeps_everything(tmp_path):
+    src = write(tmp_path / 'a.gff3', ANNOT)
+    out = tmp_path / 'out.gff3'
+    run_script('filter_gff_by_id.py', '--gff', src, '--output', out, check=True)
+    assert out.read_text() == ANNOT

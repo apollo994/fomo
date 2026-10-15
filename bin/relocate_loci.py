@@ -19,7 +19,6 @@ class Feature:
     score: str
     strand: str
     phase: str
-    attrs_raw: str
     attrs: Dict[str, str]
 
     def to_gff3(self) -> str:
@@ -121,12 +120,6 @@ def transcript_span(exons: List[Feature]) -> Tuple[int, int]:
     return min(e.start for e in exons), max(e.end for e in exons)
 
 
-def build_shape(exons: List[Feature]) -> List[Tuple[int, int]]:
-    exons_sorted = sorted(exons, key=lambda f: f.start)
-    t_start = exons_sorted[0].start
-    return [(ex.start - t_start, ex.end - t_start) for ex in exons_sorted]
-
-
 def relocate_model(model: TranscriptModel, new_seqid: str, new_t_start: int, new_source: str = "relocated") -> TranscriptModel:
     t_old_start, t_old_end = transcript_span(model.exons)
     t_len = t_old_end - t_old_start + 1
@@ -144,7 +137,7 @@ def relocate_model(model: TranscriptModel, new_seqid: str, new_t_start: int, new
         seqid=new_seqid, source=new_source, ftype="gene",
         start=new_t_start, end=new_t_end,
         score=t_feat.score, strand=t_feat.strand, phase=".",
-        attrs_raw="", attrs={"ID": new_gid, "decoy": "true"}
+        attrs={"ID": new_gid, "decoy": "true"}
     )
 
     new_t_attrs["decoy"] = "true"
@@ -152,7 +145,7 @@ def relocate_model(model: TranscriptModel, new_seqid: str, new_t_start: int, new
         seqid=new_seqid, source=new_source, ftype=t_feat.ftype,
         start=new_t_start, end=new_t_end,
         score=t_feat.score, strand=t_feat.strand, phase=t_feat.phase,
-        attrs_raw=t_feat.attrs_raw, attrs=new_t_attrs
+        attrs=new_t_attrs
     )
 
     new_exons: List[Feature] = []
@@ -173,7 +166,7 @@ def relocate_model(model: TranscriptModel, new_seqid: str, new_t_start: int, new
             seqid=new_seqid, source=new_source, ftype=ex.ftype,
             start=new_ex_s, end=new_ex_e,
             score=ex.score, strand=ex.strand, phase=ex.phase,
-            attrs_raw=ex.attrs_raw, attrs=new_e_attrs
+            attrs=new_e_attrs
         ))
 
     new_exons.sort(key=lambda f: f.start)
@@ -228,7 +221,7 @@ def read_gff3_models(path: str, transcript_type: str = "lnc_RNA", exon_type: str
                 seqid=seqid, source=source, ftype=ftype,
                 start=start_i, end=end_i,
                 score=score, strand=strand, phase=phase,
-                attrs_raw=attrs_raw, attrs=attrs
+                attrs=attrs
             )
 
             if ftype == transcript_type:

@@ -80,7 +80,9 @@ The comment budget is enforced mechanically from now on.
   (fix its header and paths). Move `plans/13_resource_rightsizing_audit.py` to `dev/` and leave
   a pointer in plans/13. Copy `ablation/scripts/code_metrics.py` to `dev/code_metrics.py`; the
   ablation copy stays as the study record.
-- [ ] **D4. Budget mode.** Add `dev/code_metrics.py --check` with thresholds:
+- [ ] **D4. Budget mode.** (updated by D27b-4: match the narrower phrase lists of 27b's C3/C4
+  greps, not the review's regexes, which flag present-tense phrases such as "was dropped" and
+  "verified against".) Add `dev/code_metrics.py --check` with thresholds:
   - Nextflow layer comment ratio ≤ 0.40;
   - 0 incident hits; 0 history hits;
   - no `plans/` reference in user-facing files.

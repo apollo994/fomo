@@ -16,13 +16,9 @@ FASTAs (`tid|source`, see bin/bam_to_gff.sh) — no delimiter-specific parsing.
 
 Outputs:
   --kept-fasta   FASTA of records NOT called coding (the retained non-coding set)
-  --coding-ids   newline-separated list of coding seqnames (dropped) — for
-                 --stage input this is the BARE transcript id (informational
-                 since plans/20, see main()); for
-                 --stage projected it is the id VERBATIM, unstripped, because
-                 that stage's target gff3 (allModels) uses the same
-                 source-qualified id and a bare tid would be ambiguous across
-                 the merged sources
+  --coding-ids   newline-separated list of coding seqnames (dropped): the bare
+                 transcript id for --stage input (informational), the id verbatim
+                 for --stage projected (see main())
   --mqc          one-row MultiQC custom-content TSV (n_in/n_coding/n_kept/pct)
 """
 import argparse
@@ -132,24 +128,10 @@ def main() -> int:
                 out.write(header)
             out.writelines(seq)
 
-    # GFF subsetting downstream keys on whatever id namespace THAT stage's
-    # target GFF3 actually uses — the two stages don't agree, and stripping
-    # is only correct for one of them:
-    #   input     — TD2 sees the RENAMED fasta (tid|gene_class|species,
-    #                RENAME_FASTA_HEADERS) of a single source, so the bare tid
-    #                is unambiguous; strip back to the token before the first
-    #                '|'. Since plans/20 nothing filters a GFF3 by this list:
-    #                FILTER_ANNOTATION builds the source's filtered GFF3 from
-    #                the KEPT fasta + RENAME_FASTA_HEADERS' id map, by exact id,
-    #                so this file is informational (debugging, provenance).
-    #   projected — TD2 sees the projected fasta named after bam_to_gff.sh's
-    #                own ID= (tid|source — see there), and FILTER_ALLMODELS's
-    #                target GFF3 uses that SAME id verbatim. Stripping here
-    #                would collapse it back to a bare tid that is NOT unique
-    #                across the merged sources (two species can and do use
-    #                the same tid) and would let one source's coding call
-    #                drop an unrelated same-named transcript from another
-    #                source. Keep the id exactly as TD2 reported it.
+    # input: one source per FASTA, so the bare tid is unambiguous; the list is
+    # informational (FILTER_ANNOTATION works from the kept FASTA).
+    # projected: FILTER_ALLMODELS drops by the source-qualified id (tid|source);
+    # a bare tid could name a transcript of another source.
     if args.stage == "input":
         drop_ids = sorted({c.split("|", 1)[0] for c in coding})
     else:

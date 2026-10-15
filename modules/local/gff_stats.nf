@@ -2,38 +2,10 @@ process GFF_STATS {
     tag "${meta.id}.${meta.kind}"
     label 'process_single'
 
-    // gff-feature-stats replaces agat_sp_statistics.pl: same gene-category and
-    // transcript-type metrics plus intron statistics, at a flat ~20 MB RSS and
-    // ~1 s for a 660 MB GFF (AGAT needed up to 12 GB / 2 h here). It also reads
-    // .gff3.gz directly, so no gunzip step is needed upstream.
-    //
-    // The tool is vendored as bin/gff-feature-stats — a release build of
-    // gff-feature-stats v0.2.0 (github.com/apollo994/gff-feature-stats @ 67ffea7).
-    // Nextflow binds bin/ into the task container and prepends it to PATH.
-    // NOTE: the commit is the real provenance — 67ffea7 did not bump the crate
-    // version, so `-V` (and the versions topic) reports 0.2.0 for it and for the
-    // earlier 6b31e3a build alike.
-    //
-    // 67ffea7 added an input requirement: each seqid's records must be
-    // CONTIGUOUS (order within a seqid is free). Interleaved seqids are rejected
-    // with exit 1, but only once the input crosses the tool's 200k-line batch
-    // threshold — smaller files are a single batch and always accepted. Every
-    // GFF fed to this process is grouped: Ensembl input, gffread output, and
-    // BAM_TO_GFF output (MINIMAP2_ALIGN sorts via samtools). Decoys are grouped
-    // explicitly by bin/relocate_loci.py, which otherwise interleaves them.
-    //
-    // The binary is dynamically linked and needs glibc >= 2.34 (ubuntu:22.04 ships
-    // 2.35 — verified). Do NOT point `container` at an older base image without
-    // re-testing, or rebuild statically:
-    //   RUSTFLAGS='-C target-feature=+crt-static' cargo build --release
-    //
-    // The binary is also x86-64-only, while ubuntu:22.04 is a multi-arch image —
-    // so on an arm64 host Docker would pull the arm64 variant and every task would
-    // die with `rosetta error: failed to open elf ...` / exit 133. The `docker`
-    // profile in nextflow.config pins this process to --platform=linux/amd64 to
-    // prevent that; keep that selector in sync if this process is ever renamed.
-    container 'ubuntu:22.04'
-
+    // bin/gff-feature-stats (vendored from github.com/apollo994/gff-feature-stats @ 67ffea7,
+    // reports 0.2.0) reads .gff3.gz. Inputs
+    // must be grouped by seqid (enforced above 200k lines). The binary is x86-64 and needs
+    // glibc >= 2.34 (ubuntu:22.04 has 2.35); the docker profile pins amd64 for it.
     input:
     tuple val(meta), path(gff)          // .gff3 or .gff3.gz; no genome FASTA needed
 
@@ -46,9 +18,7 @@ process GFF_STATS {
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.kind}"
-    // A feature-less GFF yields empty stats maps and exit 0, so no guard is
-    // needed here (AGAT required one). Progress and any span-divergence
-    // warnings go to stderr → .command.err.
+    // A feature-less GFF yields empty stats and exit 0.
     """
     gff-feature-stats ${gff} ${prefix}.stats.json
     """

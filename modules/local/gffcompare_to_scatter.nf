@@ -2,7 +2,7 @@ process GFFCOMPARE_TO_SCATTER {
     tag "${meta.id}"
     label 'process_single'
 
-    // Reuse the MultiQC container (has python3); parser is stdlib-only.
+    // stdlib Python: runs in the MultiQC image.
     container "${workflow.containerEngine in ['singularity', 'apptainer'] && !task.ext.singularity_pull_docker_container
         ? 'https://depot.galaxyproject.org/singularity/multiqc:1.35--pyhdfd78af_1'
         : 'quay.io/biocontainers/multiqc:1.35--pyhdfd78af_1'}"

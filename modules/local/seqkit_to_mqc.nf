@@ -19,10 +19,7 @@ process SEQKIT_TO_MQC {
     """
     set -euo pipefail
 
-    # Rewrite the seqkit TSV so MultiQC's custom_content table uses a clean
-    # sample identifier (matching GFF stats row names) instead of the long FASTA
-    # filename. The first column is renamed from 'file' to 'Sample' and the
-    # value is replaced with \$sample on every data row.
+    # Rename the first column to Sample and set it to the row name.
     awk -F'\\t' -v OFS='\\t' -v s='${sample}' '
         NR==1 { \$1="Sample"; print; next }
         { \$1=s; print }

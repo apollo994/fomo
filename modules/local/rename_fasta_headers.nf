@@ -9,10 +9,8 @@ process RENAME_FASTA_HEADERS {
 
     output:
     tuple val(meta), path("*.renamed.fasta"), emit: fasta
-    // renamed header token → original gffread seqname (= the GFF3 transcript ID=,
-    // verbatim). The only place that sees both names, so it is recorded here and
-    // FILTER_ANNOTATION builds the filtered GFF3 from it by EXACT id match
-    // (plans/20_longest_isoform.md) — no prefix normalisation on either side.
+    // renamed header → original gffread seqname (the GFF3 transcript ID, verbatim): the
+    // only place both names are known; FILTER_ANNOTATION matches on it exactly.
     tuple val(meta), path("*.id_map.tsv")   , emit: id_map
     tuple val("${task.process}"), val('awk'), eval('awk --version 2>&1 | head -n1'), topic: versions, emit: versions_awk
 

@@ -19,7 +19,7 @@
                     "mimetype": "text/csv",
                     "pattern": "^\\S+\\.csv$",
                     "description": "Path to the samplesheet CSV describing source and target species.",
-                    "help_text": "Columns: species, role, fasta, gff3. role is source | target | both — 'both' makes the species a donor AND a target, which is how an all-vs-all experiment runs in a single invocation. gff3 is required for source/both and optional for a pure target (an un-annotated target is projected onto but not benchmarked: no gffcompare, no top-N consensus). Species ids must be unique. See assets/schema_input.json for the per-row schema.",
+                    "help_text": "Columns: species, role, fasta, gff3. role is source | target | both — 'both' makes the species a donor AND a target, which is how an all-vs-all experiment runs in a single invocation. gff3 is required for source/both and optional for a pure target, which is projected onto and curated (against its gff3 when given) but not benchmarked. Species ids must be unique and contain only letters, digits, '_' and '-'. See assets/schema_input.json for the per-row schema.",
                     "fa_icon": "fas fa-file-csv"
                 },
                 "outdir": {
@@ -93,14 +93,14 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Keep single-exon projected models in the BAM-to-GFF3 conversion.",
-                    "help_text": "Off by default: single-exon projections (alignments with no splice gap) are discarded by bam_to_gff.sh, since source transcripts are spliced and a single-exon projection is usually a collapsed or spurious mapping. Turn on to retain them.",
+                    "help_text": "Off by default: single-exon projections (alignments with no splice gap) are discarded by bam_to_gff.sh, since source transcripts are spliced and a single-exon projection is usually a collapsed or spurious mapping. Turn on to retain them in the published allModels GFF3; benchmarking (gffcompare -M) and curation ignore single-exon models either way.",
                     "fa_icon": "fas fa-stream"
                 },
                 "curate": {
                     "type": "boolean",
                     "default": true,
                     "description": "Build the curated annotation: intron chains shared exactly by several species, merged into the reference.",
-                    "help_text": "For every allModels track (lncRNA, and mRNA / decoys when enabled) keep only intron chains shared exactly by at least --curate_min_species source species (the target itself never counts), drop models with an exon overlapping any reference exon on the same strand, group supported chains that share a splice junction into genes and report one representative per gene (most splice junctions, then most species, longest, lowest de). Writes <target>.curated.<gtype>.gff3.gz and, for annotated targets, <target>.curated.<gtype>.merged.gff3.gz (reference + curated genes) under targets/<target>/curated/. See plans/21.",
+                    "help_text": "For every allModels track (lncRNA, and mRNA / decoys when enabled) keep only intron chains shared exactly by at least --curate_min_species source species (the target itself never counts), drop models with an exon overlapping any reference exon on the same strand, group supported chains that share a splice junction into genes, and report one transcript per supported chain (t1 = most supporting species, then most splice junctions, then longest). Writes <target>.curated.<gtype>.gff3.gz and, for annotated targets, <target>.curated.<gtype>.merged.gff3.gz (reference + curated genes) under targets/<target>/curated/.",
                     "fa_icon": "fas fa-check-double"
                 },
                 "curate_min_species": {
@@ -117,7 +117,7 @@
                     "minimum": 0,
                     "maximum": 1,
                     "description": "PSAURON score at/above which a complete TD2 ORF marks a lncRNA as coding (and drops it).",
-                    "help_text": "Real lncRNA (input and per-source projected) are run through TD2 (TransDecoder2); a transcript with a complete ORF whose psauron_score >= this cutoff is treated as coding-potential and removed. mRNA and decoy tracks are never filtered.",
+                    "help_text": "Real lncRNA are run through TD2 (TransDecoder2) twice: the source lncRNA, and each target's pooled projected lncRNA; a transcript with a complete ORF whose psauron_score >= this cutoff is treated as coding-potential and removed. mRNA and decoy tracks are never filtered.",
                     "fa_icon": "fas fa-filter"
                 },
                 "multiqc_main_config": {

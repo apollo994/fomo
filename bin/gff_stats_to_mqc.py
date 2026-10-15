@@ -191,9 +191,6 @@ def parse_args() -> argparse.Namespace:
                    help="Role label for the rows")
     p.add_argument("--kind", default=NA,
                    help="Annotation stage (raw/filtered/decoy/projected)")
-    p.add_argument("--section-id", required=True,
-                   choices=["gffstats_input", "gffstats_projection"],
-                   help="MultiQC section id of the transcript table")
     p.add_argument("--output", required=True, metavar="TSV",
                    help="Output transcript-type TSV")
     p.add_argument("--genes-output", metavar="TSV",
@@ -220,7 +217,7 @@ def main() -> int:
     n_cells = len(t_rows) * (len(TRANSCRIPT_COLUMNS) - 3)  # minus the 3 label columns
     print(
         f"GFF_STATS_TO_MQC: {args.name} role={args.role} kind={args.kind} "
-        f"section={args.section_id} → {len(t_rows)} transcript-type row(s), "
+        f"→ {len(t_rows)} transcript-type row(s), "
         f"{n_cells - n_na}/{n_cells} metrics resolved",
         file=sys.stderr,
     )

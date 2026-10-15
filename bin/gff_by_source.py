@@ -1,42 +1,25 @@
 #!/usr/bin/env python3
 """
-Split a projected GFF3 by the source species that produced each model.
+Split a projected GFF3 (a target's allModels.raw.gff3, every source in one file) by the
+source species that produced each model.
 
-Since the single-mapping redesign (plans/15) every source's spliced transcripts are
-merged into one FASTA and aligned to a target in ONE minimap2 run, so a target has a
-single `allModels.raw.gff3` instead of one GFF3 per source. This script recovers the
-per-source view from it.
-
-The key is the `source=` attribute that `bin/bam_to_gff.sh` already stamps on every
-`gene` and `transcript` row (it lifts it from the `<tid>|<gene_class>|<source>` read
-name that `modules/local/rename_fasta_headers.nf` writes). Child features — `exon`,
-CDS, UTR — carry no `source=` and inherit it through `Parent`.
+The key is the `source=` attribute that bin/bam_to_gff.sh writes on every `gene` and
+`transcript` row; child features (exon, CDS, UTR) inherit it through `Parent`.
 
   --name-template '<target>.from_{source}.lnc_RNA.projected.gff3'
-      One output file per distinct `source=` value. `{source}` is substituted.
-      (The subset mode that built the top-N consensus was removed with it, plans/23.)
+      One output file per distinct `source=` value; `{source}` is substituted.
 
-Records are written in input order, so a coordinate-sorted input yields
-coordinate-sorted, seqid-grouped outputs (which `gff-feature-stats` requires).
-
-Duplicate transcript IDs are a hard error. Per-source GFF3s used to be separate
-files, so two species sharing a transcript id never collided; merged into one file a
-duplicate `ID=` would make `gffread -w` and the gffcompare collapse silently
-misbehave. Source transcript ids are NOT guaranteed unique across species —
-seen for real, two Drosophila species both used the same generic "lnc_RNA1412"
-id — so `bin/bam_to_gff.sh` makes `ID=` globally unique BY CONSTRUCTION
-(`<tid>|<source>`, not bare `<tid>`) rather than assuming upstream ids never
-collide. This check should therefore never fire now — but it still fails loudly
-rather than corrupting the per-source split if that guarantee is ever broken.
+Records keep their input order, so a coordinate-sorted input gives coordinate-sorted,
+seqid-grouped outputs (as gff-feature-stats requires). A duplicate transcript ID is an
+error: bam_to_gff.sh makes IDs unique (<tid>|<source>), and a duplicate would corrupt the
+split and make gffread and gffcompare misbehave.
 """
 import argparse
 import os
 import sys
 from typing import Dict, TextIO
 
-# Feature types that own a transcript-level ID. Mirrors filter_gff_by_id.py's TX_TYPES
-# so both scripts agree on what "a transcript" is; in practice bam_to_gff.sh only ever
-# writes `transcript`.
+# Feature types that own a transcript-level ID (the same set as filter_gff_by_id.py).
 TX_TYPES = {
     "transcript", "mrna", "lnc_rna", "lncrna", "ncrna", "mirna", "trna",
     "rrna", "snrna", "snorna", "pseudogenic_transcript", "primary_transcript",

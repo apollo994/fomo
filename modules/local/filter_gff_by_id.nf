@@ -4,9 +4,8 @@ process FILTER_GFF_BY_ID {
 
     container 'python:3.11'
 
-    // The GFF3 is staged in a subdir (`stageAs: 'input/*'`) so ext.prefix can own
-    // the full output name — including the case where output and input would
-    // otherwise be called the same thing.
+    // The GFF3 is staged in a subdirectory so the output may take the same name.
+    // drop_ids is optional ([]): without it nothing is dropped.
     input:
     tuple val(meta), path(gff3, stageAs: 'input/*'), path(drop_ids)
 
@@ -18,10 +17,11 @@ process FILTER_GFF_BY_ID {
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}${meta.decoy ? '.decoy' : ''}"
+    def drop   = drop_ids ? "--drop-ids ${drop_ids}" : ''
     """
     filter_gff_by_id.py \\
         --gff ${gff3} \\
-        --drop-ids ${drop_ids} \\
+        ${drop} \\
         --output ${prefix}.gff3
     """
 

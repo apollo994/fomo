@@ -8,18 +8,15 @@
 #
 # Stranded: the transcript's own strand is + or -, every child (exon/CDS/UTR)
 # is on that same strand, and no parent has an undefined strand. Anything else
-# is dropped. These are trans-spliced models — e.g. RefSeq plant mitochondrial
-# nad1/nad2/nad5, whose exons sit on both strands and whose mRNA line carries
-# strand "?". gffread -w hard-errors on "?" ("Error parsing strand"), and a
-# mixed-strand model cannot be extracted as one contiguous cDNA nor projected
-# as one alignment, so there is nothing useful to transfer. Seen for real on
-# the Apiaceae run (Daucus carota, RefSeq GCF_001625215.2).
+# (trans-spliced models such as RefSeq plant mitochondrial genes, strand "?")
+# is dropped: gffread -w rejects strand "?", and a mixed-strand model is neither
+# one cDNA nor one alignment.
 #
 # Transcripts with fewer than 2 exons are dropped, which keeps source projections and the
 # benchmarking reference apples-to-apples (gffcompare runs with -M
 # downstream, and decoys already require >=2 exons in relocate_loci.py).
 #
-# --longest keeps ONE transcript per gene (plans/20_longest_isoform.md): among
+# --longest keeps ONE transcript per gene (rationale: plans/20): among
 # the gene's SPLICED isoforms of TRANSCRIPT_TYPE, the one with the greatest
 # summed exon length — the spliced length, i.e. exactly what `gffread -w`
 # extracts and minimap2 aligns (not the intron-inflated genomic span, and not

@@ -9,10 +9,7 @@ process FILTER_TRANSCRIPT {
 
     output:
     tuple val(meta), path("*.gff3")                        , emit: gff3
-    // One-row funnel (n_transcripts / n_stranded / n_spliced / n_selected) — MultiQC custom
-    // content, and the source of the run summary's dropped_non_longest column.
-    // Sample = <id>.<feature_type>: with --include_mrna a species has two rows, and
-    // MultiQC keys table rows by sample name, so the bare id would collide.
+    // One-row funnel (n_transcripts, n_stranded, n_spliced, n_selected), Sample <id>.<ft>.
     tuple val(meta), path("*_transcript_filter_mqc.tsv")   , emit: mqc
     path  "versions.yml"                                   , emit: versions
 
@@ -22,10 +19,8 @@ process FILTER_TRANSCRIPT {
     script:
     def args = task.ext.args ?: ''            // --longest (params.longest_isoform)
     def prefix = task.ext.prefix ?: "${meta.id}.${meta.feature_type}"
-    // filter_transcript.sh reads its input twice (two awk passes), so a gzipped GFF3
-    // needs a real file — decompressed into node-local scratch (SLURM's per-job TMPDIR
-    // on the cluster), not the NFS work dir, and removed on exit (plans/26).
-    // Fallback order: $TMPDIR, /tmp, the work dir.
+    // The script reads its input twice, so a gzipped GFF3 is decompressed to node-local
+    // scratch ($TMPDIR, then /tmp, then the work dir) and removed on exit.
     """
     if [[ "${gff3}" == *.gz ]]; then
         scratch=\$(mktemp -d "\${TMPDIR:-/tmp}/filter_transcript.XXXXXX" 2>/dev/null \\

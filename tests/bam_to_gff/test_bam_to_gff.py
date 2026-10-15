@@ -93,3 +93,10 @@ def test_tid_with_gff_separator_fails(tmp_path):
     b = bam(tmp_path, [sam_record('t;1|lnc_RNA|A', 101, '50M100N50M')])
     r = run_script('bam_to_gff.sh', b)
     assert r.returncode != 0 and 'corrupt GFF attributes' in r.stderr
+
+
+@pytest.mark.parametrize('qname', ['t1|lnc_RNA', 't1|lnc_RNA|A|extra', 't1'])
+def test_malformed_read_name_fails(tmp_path, qname):
+    b = bam(tmp_path, [sam_record(qname, 101, '50M100N50M')])
+    r = run_script('bam_to_gff.sh', b)
+    assert r.returncode != 0 and 'read name is not' in r.stderr

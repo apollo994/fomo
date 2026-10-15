@@ -5,8 +5,10 @@
 # gffstats_genes      — gene-category breakdown of those same input GFFs
 # gffstats_projection — GFF stats on projected GFFs (minimap2-then-BAM_TO_GFF output)
 # seqkit_stats        — SeqKit FASTA length/composition stats
+# samtools_align      — curated alignment metrics, one row per (target, gene type)
 # transcript_filter   — source transcripts kept by FILTER_TRANSCRIPT (spliced → longest isoform)
 # td2_coding          — TD2 coding-potential drops for real lncRNA (input + projected)
+# curation_observed / curation_discarded / curation_novel — the curated annotation report
 # ---------------------------------------------------------------------------
 custom_data:
   gffstats_input:
@@ -63,7 +65,7 @@ custom_data:
     section_name: "Samtools — Alignment statistics (curated)"
     description: >
       Curated set of alignment metrics parsed from `samtools stats` SN lines.
-      One row per projected (target, source, feature_type, decoy/not) tuple —
+      One row per (target, gene type): every source is aligned in one run —
       mRNA and decoy rows appear only with `--include_mrna` / `--include_decoy`.
     plot_type: "table"
     pconfig:
@@ -91,8 +93,8 @@ custom_data:
     description: >
       Real lncRNA dropped because TD2 (TransDecoder2) found a complete ORF with
       psauron_score >= the configured cutoff. One row per (sample × stage):
-      `input` = source lncRNA before projection, `projected` = per-source
-      projected lncRNA before consensus. mRNA and decoy tracks are never filtered
+      `input` = source lncRNA before projection, `projected` = each target's
+      pooled projected lncRNA. mRNA and decoy tracks are never filtered
       (and are absent unless `--include_mrna` / `--include_decoy` are set).
     plot_type: "table"
     pconfig:
