@@ -1,0 +1,70 @@
+{
+ "schema": "fomo-data/1",
+ "section": "curation",
+ "identity": {
+  "species": "Lycaena_alciphron_282377",
+  "side": "target",
+  "target": "Lycaena_alciphron_282377",
+  "track": "lnc_RNA.decoy",
+  "label": "decoy_lncRNA",
+  "order": 2
+ },
+ "data": {
+  "observed": {
+   "n_models": 40,
+   "self_excluded": 0,
+   "unstranded": 0,
+   "single_exon": 0,
+   "multi_exon_models": 40,
+   "species": 1,
+   "gffcompare_inputs": 1,
+   "dup_restored": 0,
+   "chains": 40,
+   "supported_chains": 0,
+   "supported_chains_2sp": 0,
+   "supported_chains_3sp": 0,
+   "supported_chains_4sp": 0,
+   "supported_chains_ge5sp": 0,
+   "models_in_supported_chains": 0,
+   "genes": 0
+  },
+  "discarded_by_reference": {
+   "models_removed": 2,
+   "models_removed_in_supported_chains": 0,
+   "supported_chains_lost": 0,
+   "supported_chains_kept_after_removal": 0,
+   "genes_lost": 0,
+   "models_by_type:lnc_RNA": 1,
+   "models_by_type:mRNA": 1,
+   "models_by_primary_type:lnc_RNA": 1,
+   "models_by_primary_type:mRNA": 1
+  },
+  "novel": {
+   "genes": 0,
+   "transcripts": 0,
+   "transcripts_per_gene_mean": 0,
+   "genes_2sp": 0,
+   "genes_3sp": 0,
+   "genes_4sp": 0,
+   "genes_ge5sp": 0,
+   "genes_1chain": 0,
+   "genes_2chain": 0,
+   "genes_ge3chain": 0,
+   "n_exons_n": 0,
+   "transcript_length_n": 0,
+   "gene_span_n": 0,
+   "intron_length_n": 0,
+   "supporting_models_n": 0,
+   "de_n": 0,
+   "genes_location:antisense_exonic": 0,
+   "genes_location:intronic": 0,
+   "genes_location:sense_span_overlap": 0,
+   "genes_location:antisense_intronic": 0,
+   "genes_location:divergent": 0,
+   "genes_location:intergenic": 0,
+   "genes_location:no_reference": 0,
+   "intergenic_distance_n": 0
+  },
+  "has_reference": true
+ }
+}

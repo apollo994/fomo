@@ -1,2 +1,0 @@
-Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
-Lycaena_alciphron_282377.5_decoy_mRNA.non_coding	source	decoy	non_coding	867	13047.75	453	224567	1	biotype_missing

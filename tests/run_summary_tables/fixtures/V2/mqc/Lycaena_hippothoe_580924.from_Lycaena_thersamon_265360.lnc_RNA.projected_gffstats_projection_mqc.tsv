@@ -1,2 +1,0 @@
-Sample	role	kind	transcript_type	n_genes	n_transcripts	n_exons	mean_exon_length	max_exon_length	n_introns	mean_intron_length	min_intron_length	max_intron_length	mean_transcript_length	min_transcript_length	max_transcript_length	mean_spliced_length	min_spliced_length	max_spliced_length	n_cds	mean_cds_length	top_biotype
-Lycaena_hippothoe_580924.from_Lycaena_thersamon_265360.1_lncRNA.transcript	projection	projected	transcript	61	61	139	170.29	1191	78	3575.49	60	42351	4959.97	295	42930	388.03	203	1409	NA	NA	biotype_missing

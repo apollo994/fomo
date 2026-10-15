@@ -1,0 +1,63 @@
+{"schema":"fomo-data/1","section":"gffstats","identity":{"species":"Lycaena_alciphron_282377","side":"source","track":"mRNA.decoy","label":"decoy_mRNA","order":4,"kind":"decoy"},"data":{
+  "gene_category_stats": {
+    "non_coding": {
+      "total_count": 867,
+      "length_stats": {
+        "min": 453,
+        "max": 224567,
+        "mean": 13047.75
+      },
+      "biotype_counts": {
+        "biotype_missing": 867
+      },
+      "transcript_type_counts": {
+        "mRNA": 867
+      }
+    }
+  },
+  "transcript_type_stats": {
+    "mRNA": {
+      "length_stats": {
+        "min": 453,
+        "max": 224567,
+        "mean": 13047.75
+      },
+      "total_count": 867,
+      "biotype_counts": {
+        "protein_coding": 867
+      },
+      "associated_genes": {
+        "total_count": 867,
+        "gene_categories": {
+          "non_coding": 867
+        }
+      },
+      "exon_stats": {
+        "total_count": 6505,
+        "length": {
+          "min": 2,
+          "max": 5842,
+          "mean": 242.49
+        },
+        "concatenated_length": {
+          "min": 306,
+          "max": 14126,
+          "mean": 1819.41
+        }
+      },
+      "intron_stats": {
+        "total_count": 5638,
+        "length": {
+          "min": 30,
+          "max": 120460,
+          "mean": 1726.67
+        },
+        "concatenated_length": {
+          "min": 33,
+          "max": 221567,
+          "mean": 11228.34
+        }
+      }
+    }
+  }
+}}

@@ -1,2 +1,0 @@
-Sample	role	kind	transcript_type	n_genes	n_transcripts	n_exons	mean_exon_length	max_exon_length	n_introns	mean_intron_length	min_intron_length	max_intron_length	mean_transcript_length	min_transcript_length	max_transcript_length	mean_spliced_length	min_spliced_length	max_spliced_length	n_cds	mean_cds_length	top_biotype
-Lycaena_thersamon_265360.2_lncRNA.lnc_RNA	source	filtered	lnc_RNA	74	74	168	164.12	1187	94	3460.85	24	40924	4768.82	299	41297	372.61	203	1407	NA	NA	lncRNA

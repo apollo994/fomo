@@ -54,7 +54,7 @@ workflow FOMO {
 
     CURATION(PROJECTION.out.allmodels_raw, ch_targets)
 
-    // The union of MultiQC inputs feeds both reports (Nextflow forks a channel read twice).
+    // The MultiQC inputs of the per-target reports, and the data records of the run summary.
     ch_all_mqc = PREPROCESSING.out.mqc_files
         .mix(PROJECTION.out.mqc_files)
         .mix(BENCHMARKING.out.mqc_files)
@@ -79,5 +79,10 @@ workflow FOMO {
         .collectFile(name: 'species_roles.csv', newLine: true, sort: true,
                      seed: 'species,role,has_gff3')
 
-    RUN_SUMMARY(ch_all_mqc, ch_roles, ch_versions)
+    ch_all_data = PREPROCESSING.out.data
+        .mix(PROJECTION.out.data)
+        .mix(BENCHMARKING.out.data)
+        .mix(CURATION.out.data)
+
+    RUN_SUMMARY(ch_all_data, ch_roles, ch_versions)
 }

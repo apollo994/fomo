@@ -2,17 +2,13 @@
 """
 Digest a whole FOMO run into run-level MultiQC sections.
 
-The per-target reports answer "how did this target do". This answers "what did this
-run do": species per role, how much annotation went in and how much survived
-filtering, how much each target gained, and which donors are worth using.
+The per-target reports answer "how did this target do". This answers "what did this run do":
+species per role, how much annotation went in and how much survived filtering, how much each
+target gained, and which donors are worth using.
 
-Everything is derived from artefacts the pipeline already produces — the
-`*_mqc.tsv` adapter tables (including the curation tables, plans/21) and the
-gffcompare `.stats` files — so this script adds no new measurement, only
-cross-target arithmetic. Identity
-comes from the `Sample` column (the ext.sample_name ladders in conf/modules.config
-encode target/source/class) and from the stats filename grammar in fomo_stats.py.
-Nothing here parses a GFF or a BAM.
+Everything comes from the run's data records (fomo-data/1, one directory) and the roles CSV, so
+this script adds no measurement, only cross-target arithmetic; identity comes from each record's
+identity, never from a file name or a row label. Nothing here parses a GFF or a BAM.
 
 Outputs, in report order (see assets/multiqc/run_summary_main.yml):
   run_overview_mqc.tsv            run overview: roles, pair counts, params
@@ -32,851 +28,711 @@ import json
 import statistics
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
 
-# Nextflow only puts bin/ on PATH, not on Python's import path — but it stages the
-# whole directory, so a __file__-relative insert finds the sibling module.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fomo_stats import AGGREGATE_IDS, f1, parse_identity, transcript_sn_pr  # noqa: E402
+import fomo_io  # noqa: E402
+import fomo_stats  # noqa: E402
+from fomo_stats import AGGREGATE_IDS, f1, fmt  # noqa: E402
 
-NA = "NA"
-
-# (feature_type, decoy) → the `ext.sample_name` order token that projection and
-# alignment rows carry. Defined in conf/modules.config, and deliberately sparse: a
-# disabled track simply produces no row, so a missing token is normal, never an error.
-# (The input-annotation side uses its own 1_raw / 2_lncRNA / 3_decoy_lncRNA /
-# 4_mRNA / 5_decoy_mRNA ladder, read straight off the Sample column.)
-PROJECTION_TOKEN = {
-    ("lnc_RNA", False): "1_lncRNA",
-    ("lnc_RNA", True): "2_decoy_lncRNA",
-    ("mRNA", False): "3_mRNA",
-    ("mRNA", True): "4_decoy_mRNA",
-}
-# transcript_type → the real (non-decoy) token carrying its projected models.
-TYPE_TO_TOKEN = {ft: PROJECTION_TOKEN[(ft, False)] for ft in ("lnc_RNA", "mRNA")}
+log = fomo_io.get_logger('run_summary')
+GENE_CATEGORIES = ('coding', 'pseudogene', 'non_coding')
 
 
 # ── small helpers ───────────────────────────────────────────────────────────────
-def num(value: Optional[str]) -> Optional[float]:
-    """A metric cell as a float, or None for NA/missing/unparseable."""
-    if value is None or value in (NA, "", "None"):
+def num(value) -> float | None:
+    """A table cell or record value as a float, or None for NA/missing/unparseable."""
+    if value is None or value in (fomo_stats.NA, '', 'None'):
         return None
     try:
         return float(value)
-    except ValueError:
+    except (TypeError, ValueError):
         return None
 
 
-def fmt(value) -> str:
-    """Render a metric for a MultiQC TSV: None → NA, integral floats without .0."""
-    if value is None:
-        return NA
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if isinstance(value, float):
-        if value != value:  # NaN
-            return NA
-        return str(int(value)) if value.is_integer() else f"{value:.2f}"
-    return str(value)
-
-
-def pct(part: Optional[float], whole: Optional[float]) -> Optional[float]:
+def pct(part: float | None, whole: float | None) -> float | None:
     if part is None or whole in (None, 0):
         return None
     return 100.0 * part / whole
 
 
-def add(*values: Optional[float]) -> Optional[float]:
-    """Sum that propagates None — 'unknown + 5' is unknown, not 5."""
+def add(*values: float | None) -> float | None:
+    """Sum that propagates None: 'unknown + 5' is unknown, not 5."""
     if any(v is None for v in values):
         return None
-    return sum(values)  # type: ignore[arg-type]
+    return sum(values)
 
 
-def split_sample(sample: str) -> Optional[tuple]:
-    """`<prefix>.<order_token>.<type>` → (prefix, order_token, type).
-
-    Species ids and transcript types contain no '.', so splitting from the right is
-    exact. Returns None if the cell has too few parts to be one of ours.
-    """
-    parts = sample.split(".")
-    if len(parts) < 3:
-        return None
-    return ".".join(parts[:-2]), parts[-2], parts[-1]
+def track_of(feature_type: str, decoy: bool) -> str:
+    return feature_type + ('.decoy' if decoy else '')
 
 
-def read_tsvs(paths: Sequence[Path]) -> List[dict]:
-    rows: List[dict] = []
-    for path in paths:
-        with path.open(encoding="utf-8") as fh:
-            for row in csv.DictReader(fh, delimiter="\t"):
-                row["__file"] = path.name
-                rows.append(row)
-    return rows
-
-
-def write_tsv(name: str, header: Sequence[str], rows: Sequence[Sequence]) -> None:
-    with open(name, "w", encoding="utf-8") as fh:
-        fh.write("\t".join(header) + "\n")
+def write_tsv(name: str, header, rows) -> None:
+    with open(name, 'w', encoding='utf-8') as fh:
+        fh.write('\t'.join(header) + '\n')
         for row in rows:
-            fh.write("\t".join(fmt(cell) for cell in row) + "\n")
-    print(f"run_summary: wrote {name} ({len(rows)} rows)", file=sys.stderr)
+            fh.write('\t'.join(fmt(cell) for cell in row) + '\n')
+    log.info(f'wrote {name} ({len(rows)} rows)')
 
 
 def write_json(name: str, doc: dict) -> None:
-    with open(name, "w", encoding="utf-8") as fh:
+    with open(name, 'w', encoding='utf-8') as fh:
         json.dump(doc, fh, indent=2)
-    print(f"run_summary: wrote {name}", file=sys.stderr)
+    log.info(f'wrote {name}')
 
 
-# ── input collection ────────────────────────────────────────────────────────────
-class Inputs:
-    """Everything the run produced, indexed by identity rather than by filename."""
+# ── inputs ──────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class RunContext:
+    """The run's species roles and switches, derived once."""
 
-    def __init__(self, mqc_dir: Path, roles_csv: Path):
-        files = sorted(p for p in mqc_dir.rglob("*") if p.is_file())
-        self._assert_unique(files)
+    roles: dict
+    feature_types: tuple
+    include_decoy: bool
+    psauron_min: float
 
-        def pick(suffix: str) -> List[Path]:
-            return [p for p in files if p.name.endswith(suffix)]
+    @property
+    def sources(self) -> list[str]:
+        return sorted(s for s, r in self.roles.items() if r['is_source'])
 
-        # role/kind/transcript-type tables of the INPUT annotations (source + target)
-        self.input_rows = read_tsvs(pick("_gffstats_input_mqc.tsv"))
-        self.gene_rows = read_tsvs(pick("_gffstats_genes_mqc.tsv"))
-        self.projection_rows = read_tsvs(pick("_gffstats_projection_mqc.tsv"))
-        self.td2_rows = read_tsvs(pick("_td2_coding_mqc.tsv"))
-        # FILTER_TRANSCRIPT's own funnel (n_transcripts / n_spliced / n_selected),
-        # one row per (source, feature_type), Sample = <species>.<feature_type>.
-        self.filter_rows = read_tsvs(pick("_transcript_filter_mqc.tsv"))
-        self.align_rows = read_tsvs(pick("_samtools_align_mqc.tsv"))
-        self.stats_files = pick(".gffcompare.stats")
-        # CURATE_MODELS (plans/21): one row per (target, track); Sample = <target>.<ft>[.decoy]
-        self.curation_novel_rows = read_tsvs(pick("_curation_novel_mqc.tsv"))
-        self.curation_observed_rows = read_tsvs(pick("_curation_observed_mqc.tsv"))
+    @property
+    def targets(self) -> list[str]:
+        return sorted(s for s, r in self.roles.items() if r['is_target'])
 
-        self.roles = self._read_roles(roles_csv)
 
-        print(
-            "run_summary: staged "
-            f"{len(self.input_rows)} input, {len(self.gene_rows)} gene, "
-            f"{len(self.projection_rows)} projection, {len(self.td2_rows)} TD2, "
-            f"{len(self.filter_rows)} transcript-filter, "
-            f"{len(self.align_rows)} alignment rows; "
-            f"{len(self.stats_files)} gffcompare stats; "
-            f"{len(self.curation_novel_rows)} curation tracks",
-            file=sys.stderr,
-        )
+def read_roles(path: Path) -> dict:
+    roles = {}
+    with path.open(encoding='utf-8') as fh:
+        for row in csv.DictReader(fh):
+            role = row['role']
+            roles[row['species']] = {
+                'role': role,
+                'has_gff3': row['has_gff3'] == 'yes',
+                'is_source': role in ('source', 'both'),
+                'is_target': role in ('target', 'both'),
+            }
+    if not roles:
+        fomo_io.die(f'no species rows in {path}')
+    return roles
 
-    @staticmethod
-    def _assert_unique(files: Sequence[Path]) -> None:
-        """Basenames are unique across the whole pipeline by construction (every
-        target-scoped ext.prefix starts with the target id, source-side ones are
-        species-keyed). A duplicate means a naming contract broke upstream and two
-        different measurements are about to be read as one — fail, loudly."""
-        seen: Dict[str, Path] = {}
-        for path in files:
-            if path.name in seen:
-                sys.exit(
-                    f"ERROR: duplicate staged basename '{path.name}' "
-                    f"({seen[path.name]} vs {path}). Two stat files claim the same "
-                    "identity — check the ext.prefix closures in conf/modules.config."
+
+class RecordIndex:
+    """The run's records, indexed by identity. Every index is built once, on first use."""
+
+    def __init__(self, directory: Path):
+        self.by_section = defaultdict(list)
+        for record in fomo_stats.read_records(directory):
+            self.by_section[record['section']].append(record)
+        log.info('staged ' + ', '.join(f'{len(v)} {k}' for k, v in sorted(self.by_section.items())) + ' records')
+
+    @cached_property
+    def _gffstats(self) -> dict:
+        """(species, side, kind, track) -> record, for the annotation (not projected) stats."""
+        index = {}
+        for rec in self.by_section['gffstats']:
+            ident = rec['identity']
+            if ident['kind'] != 'projected':
+                index[(ident['species'], ident['side'], ident['kind'], ident.get('track'))] = rec
+        return index
+
+    def _annotation_record(self, species: str, side: str, kind: str, track: str | None):
+        """A target's raw annotation may only have been measured on the source side."""
+        rec = self._gffstats.get((species, side, kind, track))
+        if rec is None and side == 'target' and kind == 'raw':
+            rec = self._gffstats.get((species, 'source', kind, track))
+        return rec
+
+    def transcript_rows(self, species: str, side: str, kind: str, track: str | None = None) -> dict:
+        """{transcript type: table row} of an annotation's gff-feature-stats."""
+        rec = self._annotation_record(species, side, kind, track)
+        if rec is None:
+            return {}
+        rows = fomo_stats.gffstats_transcript_rows(rec['data'], side, kind)
+        return {row['transcript_type']: row for row in rows}
+
+    def gene_rows(self, species: str, side: str, kind: str) -> dict:
+        """{gene category: table row} of an annotation's gff-feature-stats."""
+        rec = self._annotation_record(species, side, kind, None)
+        if rec is None:
+            return {}
+        return {row['gene_category']: row for row in fomo_stats.gffstats_gene_rows(rec['data'], side, kind)}
+
+    @cached_property
+    def projected_models(self) -> dict:
+        """(target, model, track) -> projected transcripts (every transcript type)."""
+        index = {}
+        for rec in self.by_section['gffstats']:
+            ident = rec['identity']
+            if ident['kind'] == 'projected':
+                rows = fomo_stats.gffstats_transcript_rows(rec['data'], 'projection', 'projected')
+                index[(ident['target'], ident['source'], ident['track'])] = add(
+                    *[num(r.get('n_transcripts')) or 0.0 for r in rows]
                 )
-            seen[path.name] = path
-
-    @staticmethod
-    def _read_roles(path: Path) -> Dict[str, dict]:
-        roles: Dict[str, dict] = {}
-        with path.open(encoding="utf-8") as fh:
-            for row in csv.DictReader(fh):
-                species = row["species"]
-                role = row["role"]
-                roles[species] = {
-                    "role": role,
-                    "has_gff3": row["has_gff3"] == "yes",
-                    "is_source": role in ("source", "both"),
-                    "is_target": role in ("target", "both"),
-                }
-        if not roles:
-            sys.exit(f"ERROR: no species rows in {path}")
-        return roles
-
-    @staticmethod
-    def _curation_key(sample: str) -> Optional[tuple]:
-        """`<target>.<feature_type>[.decoy]` → (target, feature_type, decoy), suffixes
-        stripped by length (species ids may contain anything but '.')."""
-        decoy = sample.endswith(".decoy")
-        rest = sample[: -len(".decoy")] if decoy else sample
-        for ft in ("lnc_RNA", "mRNA"):
-            if rest.endswith("." + ft):
-                return rest[: -len(ft) - 1], ft, decoy
-        return None
-
-    def curation_index(self) -> Dict[tuple, dict]:
-        """{(target, feature_type, decoy): {"observed": row, "novel": row}}. The two tables share
-        column names with different meanings (e.g. `genes`), so they are kept apart."""
-        index: Dict[tuple, dict] = {}
-        for table, rows in (("observed", self.curation_observed_rows), ("novel", self.curation_novel_rows)):
-            for row in rows:
-                key = self._curation_key(row["Sample"])
-                if key is None:
-                    sys.exit(f"ERROR: unparseable curation Sample '{row['Sample']}' in {row['__file']}")
-                index.setdefault(key, {})[table] = row
         return index
 
-    # ── indexed views ──────────────────────────────────────────────────────────
-    def annotation_index(self) -> Dict[tuple, dict]:
-        """{(species, token, transcript_type): row} over the input annotations.
+    @cached_property
+    def td2(self) -> dict:
+        """(stage, species) -> counts; the species is the target for the projected stage."""
+        return {(r['identity']['stage'], r['identity']['species']): r['data'] for r in self.by_section['td2_coding']}
 
-        Target-side rows carry a `_target` suffix on the token so a `role: both`
-        species does not clobber its own source row (conf/modules.config adds it for
-        exactly that reason); it is stripped here and the row's `role` column keeps
-        the two apart.
-        """
-        index: Dict[tuple, dict] = {}
-        for row in self.input_rows:
-            parsed = split_sample(row["Sample"])
-            if parsed is None:
-                sys.exit(f"ERROR: unparseable Sample '{row['Sample']}' in {row['__file']}")
-            species, token, ttype = parsed
-            token = token[: -len("_target")] if token.endswith("_target") else token
-            index[(species, row.get("role", "source"), token, ttype)] = row
-        return index
+    @cached_property
+    def transcript_filter(self) -> dict:
+        """(species, track) -> FILTER_TRANSCRIPT funnel."""
+        return {
+            (r['identity']['species'], r['identity']['track']): r['data'] for r in self.by_section['transcript_filter']
+        }
 
-    def gene_index(self) -> Dict[tuple, dict]:
-        index: Dict[tuple, dict] = {}
-        for row in self.gene_rows:
-            parsed = split_sample(row["Sample"])
-            if parsed is None:
-                sys.exit(f"ERROR: unparseable Sample '{row['Sample']}' in {row['__file']}")
-            species, token, category = parsed
-            token = token[: -len("_target")] if token.endswith("_target") else token
-            index[(species, row.get("role", "source"), token, category)] = row
-        return index
+    @cached_property
+    def alignment(self) -> dict:
+        """(target, track) -> samtools stats."""
+        return {(r['identity']['target'], r['identity']['track']): r['data'] for r in self.by_section['alignment']}
 
-    def projection_index(self) -> Dict[tuple, List[dict]]:
-        """{(target, model, token): [rows]} — one row per transcript type, so the
-        model count for a class is the sum over its rows."""
-        index: Dict[tuple, List[dict]] = defaultdict(list)
-        for row in self.projection_rows:
-            parsed = split_sample(row["Sample"])
-            if parsed is None:
-                sys.exit(f"ERROR: unparseable Sample '{row['Sample']}' in {row['__file']}")
-            prefix, token, _ttype = parsed
-            if ".from_" not in prefix:
-                sys.exit(f"ERROR: no '.from_' in projection Sample '{row['Sample']}'")
-            target, model = prefix.split(".from_", 1)
-            index[(target, model, token)].append(row)
-        return index
-
-    def td2_index(self) -> Dict[tuple, dict]:
-        """{(sample, stage): row}; sample is the species for stage=input and
-        `<target>.allModels` for stage=projected (one TD2 pass per target since the
-        single-mapping redesign)."""
-        return {(row["Sample"], row["stage"]): row for row in self.td2_rows}
-
-    def filter_index(self) -> Dict[tuple, dict]:
-        """{(species, feature_type): row}. Sample is `<species>.<feature_type>`; the
-        species is recovered by stripping the KNOWN `.<feature>` suffix by length, not
-        by splitting on '.', so a species id containing dots still round-trips."""
-        index: Dict[tuple, dict] = {}
-        for row in self.filter_rows:
-            sample, feature = row["Sample"], row["feature"]
-            suffix = f".{feature}"
-            species = sample[: -len(suffix)] if sample.endswith(suffix) else sample
-            index[(species, feature)] = row
-        return index
-
-    def alignment_index(self) -> Dict[tuple, dict]:
-        """{(target, token): row} from `<target>.allModels.<token>`."""
-        index: Dict[tuple, dict] = {}
-        for row in self.align_rows:
-            parts = row["Sample"].split(".")
-            if len(parts) < 3:
+    @cached_property
+    def accuracy(self) -> dict:
+        """(target, source, track) -> {sn, pr, f1} at transcript level."""
+        acc = {}
+        for rec in self.by_section['accuracy']:
+            ident, cell = rec['identity'], rec['data']['levels'].get('Transcript')
+            if cell is None:
+                log.warning(f'no Transcript level in the accuracy record of {ident}, skipping')
                 continue
-            index[(".".join(parts[:-2]), parts[-1])] = row
-        return index
-
-    def accuracy(self) -> Dict[tuple, dict]:
-        """{(target, source, feature_type, decoy): {sn, pr, f1}} at Transcript level."""
-        acc: Dict[tuple, dict] = {}
-        for path in self.stats_files:
-            ident = parse_identity(str(path))
-            if ident is None:
-                print(f"WARNING: cannot parse identity from '{path}', skipping", file=sys.stderr)
-                continue
-            sn_pr = transcript_sn_pr(str(path))
-            if sn_pr is None:
-                print(f"WARNING: no Transcript level in '{path}', skipping", file=sys.stderr)
-                continue
-            sn, pr = sn_pr
-            acc[(ident.target, ident.source, ident.feature_type, ident.decoy)] = {
-                "sn": sn,
-                "pr": pr,
-                "f1": f1(sn, pr),
+            acc[(ident['target'], ident['source'], ident['track'])] = {
+                'sn': cell['sn'],
+                'pr': cell['pr'],
+                'f1': f1(cell['sn'], cell['pr']),
             }
         return acc
 
+    @cached_property
+    def curation(self) -> dict:
+        """(target, track) -> curation report (observed / discarded / novel)."""
+        return {(r['identity']['target'], r['identity']['track']): r['data'] for r in self.by_section['curation']}
 
-# ── section builders ────────────────────────────────────────────────────────────
-def section_overview(inp: Inputs, args, summary: dict) -> None:
-    roles = inp.roles
-    sources = sorted(s for s, r in roles.items() if r["is_source"])
-    targets = sorted(s for s, r in roles.items() if r["is_target"])
-    # Benchmarked = donor AND target with a gff3 (role 'both'): the gffcompare reference is the
-    # species' filtered annotation, which only donors have. A pure target may carry a gff3 too
-    # (plans/22) — it is then that target's curation reference, but not benchmarked.
-    annotated = [t for t in targets if roles[t]["has_gff3"] and roles[t]["is_source"]]
-    with_reference = [t for t in targets if roles[t]["has_gff3"]]
-    # No self-projection (plans/23): a 'both' species is never projected onto itself.
+
+# ── sections: compute (pure) and emit ──────────────────────────────────────────
+def compute_overview(ctx: RunContext) -> tuple[list, dict]:
+    roles = ctx.roles
+    sources, targets = ctx.sources, ctx.targets
+    # Benchmarked = donor AND target with a gff3 (role both): the gffcompare reference is the
+    # species' filtered annotation, which only donors have. A pure target may carry a gff3 as its
+    # curation reference only.
+    annotated = [t for t in targets if roles[t]['has_gff3'] and roles[t]['is_source']]
+    with_reference = [t for t in targets if roles[t]['has_gff3']]
+    # A species is never projected onto itself.
     n_pairs = len(sources) * len(targets) - sum(1 for s in sources if s in targets)
-
-    feature_types = ["lnc_RNA"] + (["mRNA"] if args.include_mrna else [])
-
+    n_role = {role: sum(1 for r in roles.values() if r['role'] == role) for role in ('source', 'target', 'both')}
+    feature_types = list(ctx.feature_types)
     metrics = [
-        ("Species in samplesheet", len(roles)),
-        ("… role source (donor only)", sum(1 for r in roles.values() if r["role"] == "source")),
-        ("… role target (projected onto, not a donor)", sum(1 for r in roles.values() if r["role"] == "target")),
-        ("… role both (donor and target)", sum(1 for r in roles.values() if r["role"] == "both")),
-        ("Sources (S)", len(sources)),
-        ("Targets (T)", len(targets)),
-        ("Targets with a reference annotation (curation)", len(with_reference)),
-        ("Targets benchmarked (role both)", len(annotated)),
-        ("Source × target pairs (no self-projection)", n_pairs),
-        ("Feature types transferred", ", ".join(feature_types)),
-        ("Decoy track (--include_decoy)", args.include_decoy),
-        ("PSAURON cutoff (--td2_psauron_min)", args.psauron_min),
+        ('Species in samplesheet', len(roles)),
+        ('… role source (donor only)', n_role['source']),
+        ('… role target (projected onto, not a donor)', n_role['target']),
+        ('… role both (donor and target)', n_role['both']),
+        ('Sources (S)', len(sources)),
+        ('Targets (T)', len(targets)),
+        ('Targets with a reference annotation (curation)', len(with_reference)),
+        ('Targets benchmarked (role both)', len(annotated)),
+        ('Source × target pairs (no self-projection)', n_pairs),
+        ('Feature types transferred', ', '.join(feature_types)),
+        ('Decoy track (--include_decoy)', ctx.include_decoy),
+        ('PSAURON cutoff (--td2_psauron_min)', ctx.psauron_min),
     ]
-    write_tsv("run_overview_mqc.tsv", ["Metric", "Value"], metrics)
-
-    summary["overview"] = {
-        "n_species": len(roles),
-        "n_source_only": sum(1 for r in roles.values() if r["role"] == "source"),
-        "n_target_only": sum(1 for r in roles.values() if r["role"] == "target"),
-        "n_both": sum(1 for r in roles.values() if r["role"] == "both"),
-        "n_sources": len(sources),
-        "n_targets": len(targets),
-        "n_targets_annotated": len(annotated),
-        "n_targets_with_reference": len(with_reference),
-        "n_pairs": n_pairs,
-        "feature_types": feature_types,
-        "include_mrna": args.include_mrna,
-        "include_decoy": args.include_decoy,
-        "td2_psauron_min": args.psauron_min,
+    overview = {
+        'n_species': len(roles),
+        'n_source_only': n_role['source'],
+        'n_target_only': n_role['target'],
+        'n_both': n_role['both'],
+        'n_sources': len(sources),
+        'n_targets': len(targets),
+        'n_targets_annotated': len(annotated),
+        'n_targets_with_reference': len(with_reference),
+        'n_pairs': n_pairs,
+        'feature_types': feature_types,
+        'include_mrna': 'mRNA' in feature_types,
+        'include_decoy': ctx.include_decoy,
+        'td2_psauron_min': ctx.psauron_min,
     }
-    summary["sources"] = sources
-    summary["targets"] = targets
+    return metrics, overview
 
 
-def _own_annotation(species: str, role_info: dict, ann: Dict[tuple, dict], genes: Dict[tuple, dict]) -> dict:
-    """A species' own input-annotation numbers, read from whichever side ran the
-    stats: the source side if it donates, else the target side. A `role: both`
-    species has both, and they are the same annotation."""
-    side = "source" if role_info["is_source"] else "target"
-    raw = ann.get((species, side, "1_raw", "lnc_RNA"))
-    kept = ann.get((species, side, "2_lncRNA", "lnc_RNA"))
-    gene_total = None
-    for category in ("coding", "pseudogene", "non_coding"):
-        row = genes.get((species, side, "1_raw", category))
-        if row is not None:
-            gene_total = add(gene_total or 0.0, num(row.get("n_genes")))
-    return {
-        "raw_row": raw,
-        "kept_row": kept,
-        "genes_total": gene_total,
-    }
+SPECIES_HEADER = [
+    'Sample',
+    'role',
+    'has_gff3',
+    'is_source',
+    'is_target',
+    'benchmarked',
+    'input_genes_total',
+    'input_lncRNA_transcripts_raw',
+    'spliced_kept',
+    'td2_coding_dropped',
+    'lncRNA_donated',
+]
 
 
-def section_species(inp: Inputs, args, summary: dict) -> None:
-    ann, genes, td2 = inp.annotation_index(), inp.gene_index(), inp.td2_index()
+def own_annotation(idx: RecordIndex, species: str, info: dict) -> tuple[dict, float | None]:
+    """A species' own raw lncRNA row and gene total, from the source side if it donates, else
+    the target side (a both species has both, and they are the same annotation)."""
+    side = 'source' if info['is_source'] else 'target'
+    genes = idx.gene_rows(species, side, 'raw')
+    total = None
+    for category in GENE_CATEGORIES:
+        if category in genes:
+            total = add(total or 0.0, num(genes[category].get('n_genes')))
+    return idx.transcript_rows(species, side, 'raw').get('lnc_RNA'), total
 
-    header = [
-        "Sample",
-        "role",
-        "has_gff3",
-        "is_source",
-        "is_target",
-        "benchmarked",
-        "input_genes_total",
-        "input_lncRNA_transcripts_raw",
-        "spliced_kept",
-        "td2_coding_dropped",
-        "lncRNA_donated",
-    ]
-    rows, records = [], {}
-    for species in sorted(inp.roles):
-        info = inp.roles[species]
-        own = _own_annotation(species, info, ann, genes)
-        td2_row = td2.get((species, "input"))
-        record = {
-            "role": info["role"],
-            "has_gff3": info["has_gff3"],
-            "is_source": info["is_source"],
-            "is_target": info["is_target"],
-            "benchmarked": info["is_target"] and info["is_source"] and info["has_gff3"],
-            "input_genes_total": own["genes_total"],
-            "input_lncRNA_transcripts_raw": num((own["raw_row"] or {}).get("n_transcripts")),
-            "spliced_kept": num((td2_row or {}).get("n_in")),
-            "td2_coding_dropped": num((td2_row or {}).get("n_coding")),
-            "lncRNA_donated": num((td2_row or {}).get("n_kept")),
+
+def compute_species(ctx: RunContext, idx: RecordIndex) -> dict:
+    records = {}
+    for species in sorted(ctx.roles):
+        info = ctx.roles[species]
+        raw_row, genes_total = own_annotation(idx, species, info)
+        td2 = idx.td2.get(('input', species)) or {}
+        records[species] = {
+            'role': info['role'],
+            'has_gff3': info['has_gff3'],
+            'is_source': info['is_source'],
+            'is_target': info['is_target'],
+            'benchmarked': info['is_target'] and info['is_source'] and info['has_gff3'],
+            'input_genes_total': genes_total,
+            'input_lncRNA_transcripts_raw': num((raw_row or {}).get('n_transcripts')),
+            'spliced_kept': num(td2.get('n_in')),
+            'td2_coding_dropped': num(td2.get('n_coding')),
+            'lncRNA_donated': num(td2.get('n_kept')),
         }
-        records[species] = record
-        rows.append([species] + [record[k] for k in header[1:]])
-
-    write_tsv("run_species_mqc.tsv", header, rows)
-    summary["species"] = records
+    return records
 
 
-def section_source_funnel(inp: Inputs, args, summary: dict) -> None:
-    ann, td2, filt = inp.annotation_index(), inp.td2_index(), inp.filter_index()
-    sources = [s for s, r in inp.roles.items() if r["is_source"]]
+FUNNEL_HEADER = [
+    'Sample',
+    'raw_lncRNA_transcripts',
+    'dropped_unstranded',
+    'dropped_single_exon',
+    'dropped_non_longest',
+    'dropped_coding',
+    'kept',
+    'pct_kept',
+    'n_genes_raw',
+    'n_genes_kept',
+    'mean_transcript_length_kept',
+    'mean_spliced_length_kept',
+    'mean_exon_length_kept',
+    'exons_per_transcript_kept',
+]
 
-    header = [
-        "Sample",
-        "raw_lncRNA_transcripts",
-        "dropped_unstranded",
-        "dropped_single_exon",
-        "dropped_non_longest",
-        "dropped_coding",
-        "kept",
-        "pct_kept",
-        "n_genes_raw",
-        "n_genes_kept",
-        "mean_transcript_length_kept",
-        "mean_spliced_length_kept",
-        "mean_exon_length_kept",
-        "exons_per_transcript_kept",
-    ]
-    rows, plot, records = [], {}, {}
-    for species in sorted(sources):
-        raw_row = ann.get((species, "source", "1_raw", "lnc_RNA"))
-        kept_row = ann.get((species, "source", "2_lncRNA", "lnc_RNA"))
-        td2_row = td2.get((species, "input"))
 
-        filt_row = filt.get((species, "lnc_RNA"))
+def difference(a: float | None, b: float | None) -> float | None:
+    return None if a is None or b is None else a - b
 
-        raw = num((raw_row or {}).get("n_transcripts"))
-        coding = num((td2_row or {}).get("n_coding"))
-        kept = num((td2_row or {}).get("n_kept"))
-        # FILTER_TRANSCRIPT's funnel separates its three structural filters — strand
-        # consistency (drops "?"/trans-spliced models), multi-exon, longest isoform
-        # (plans/20). TD2's own n_in is what is LEFT after all three, so `raw - n_in`
-        # alone would lump them together.
-        n_tx = num((filt_row or {}).get("n_transcripts"))
-        stranded = num((filt_row or {}).get("n_stranded"))
-        spliced = num((filt_row or {}).get("n_spliced"))
-        selected = num((filt_row or {}).get("n_selected"))
-        unstranded = None if (n_tx is None or stranded is None) else n_tx - stranded
-        single_exon = None if (stranded is None or spliced is None) else stranded - spliced
-        non_longest = None if (spliced is None or selected is None) else spliced - selected
 
-        # Each step must hand the next exactly what it says it kept. A mismatch means
-        # two artefacts stopped describing the same set — worth saying out loud.
-        td2_in = num((td2_row or {}).get("n_in"))
-        if selected is not None and td2_in is not None and abs(selected - td2_in) > 0.5:
-            print(
-                f"WARNING: {species}: FILTER_TRANSCRIPT selected {selected:.0f} lncRNA but TD2 received {td2_in:.0f}",
-                file=sys.stderr,
-            )
-        if n_tx is not None and raw is not None and abs(n_tx - raw) > 0.5:
-            print(
-                f"WARNING: {species}: FILTER_TRANSCRIPT saw {n_tx:.0f} lncRNA but the raw GFF stats count {raw:.0f}",
-                file=sys.stderr,
-            )
-        # FILTER_ANNOTATION builds the filtered GFF3 from exactly the FASTA TD2 kept,
-        # so this should be impossible now — kept as a regression check.
-        gff_kept = num((kept_row or {}).get("n_transcripts"))
-        if kept is not None and gff_kept is not None and abs(kept - gff_kept) > 0.5:
-            print(
-                f"WARNING: {species}: TD2 kept {kept:.0f} lncRNA but the filtered "
-                f"GFF3 has {gff_kept:.0f} — the two filters have diverged",
-                file=sys.stderr,
-            )
+def check_funnel_consistency(species: str, raw, n_tx, selected, td2_in, kept, gff_kept) -> None:
+    """Each step must hand the next exactly what it says it kept; a mismatch means two artefacts
+    stopped describing the same set."""
+    checks = (
+        (selected, td2_in, f'FILTER_TRANSCRIPT selected {selected} lncRNA but TD2 received {td2_in}'),
+        (n_tx, raw, f'FILTER_TRANSCRIPT saw {n_tx} lncRNA but the raw GFF stats count {raw}'),
+        (kept, gff_kept, f'TD2 kept {kept} lncRNA but the filtered GFF3 has {gff_kept}'),
+    )
+    for a, b, message in checks:
+        if a is not None and b is not None and abs(a - b) > 0.5:
+            log.warning(f'{species}: {message}')
 
-        n_exons = num((kept_row or {}).get("n_exons"))
-        record = {
-            "raw_lncRNA_transcripts": raw,
-            "dropped_unstranded": unstranded,
-            "dropped_single_exon": single_exon,
-            "dropped_non_longest": non_longest,
-            "dropped_coding": coding,
-            "kept": kept,
-            "pct_kept": pct(kept, raw),
-            "n_genes_raw": num((raw_row or {}).get("n_genes")),
-            "n_genes_kept": num((kept_row or {}).get("n_genes")),
-            "mean_transcript_length_kept": num((kept_row or {}).get("mean_transcript_length")),
-            "mean_spliced_length_kept": num((kept_row or {}).get("mean_spliced_length")),
-            "mean_exon_length_kept": num((kept_row or {}).get("mean_exon_length")),
-            "exons_per_transcript_kept": (None if (n_exons is None or not gff_kept) else n_exons / gff_kept),
+
+def compute_source_funnel(ctx: RunContext, idx: RecordIndex) -> tuple[dict, dict]:
+    records, plot = {}, {}
+    for species in ctx.sources:
+        raw_row = idx.transcript_rows(species, 'source', 'raw').get('lnc_RNA') or {}
+        kept_row = idx.transcript_rows(species, 'source', 'filtered', 'lnc_RNA').get('lnc_RNA') or {}
+        td2 = idx.td2.get(('input', species)) or {}
+        funnel = idx.transcript_filter.get((species, 'lnc_RNA')) or {}
+        raw, coding, kept = num(raw_row.get('n_transcripts')), num(td2.get('n_coding')), num(td2.get('n_kept'))
+        n_tx, stranded = num(funnel.get('n_transcripts')), num(funnel.get('n_stranded'))
+        spliced, selected = num(funnel.get('n_spliced')), num(funnel.get('n_selected'))
+        unstranded, single_exon = difference(n_tx, stranded), difference(stranded, spliced)
+        non_longest = difference(spliced, selected)
+        gff_kept = num(kept_row.get('n_transcripts'))
+        check_funnel_consistency(species, raw, n_tx, selected, num(td2.get('n_in')), kept, gff_kept)
+        n_exons = num(kept_row.get('n_exons'))
+        records[species] = {
+            'raw_lncRNA_transcripts': raw,
+            'dropped_unstranded': unstranded,
+            'dropped_single_exon': single_exon,
+            'dropped_non_longest': non_longest,
+            'dropped_coding': coding,
+            'kept': kept,
+            'pct_kept': pct(kept, raw),
+            'n_genes_raw': num(raw_row.get('n_genes')),
+            'n_genes_kept': num(kept_row.get('n_genes')),
+            'mean_transcript_length_kept': num(kept_row.get('mean_transcript_length')),
+            'mean_spliced_length_kept': num(kept_row.get('mean_spliced_length')),
+            'mean_exon_length_kept': num(kept_row.get('mean_exon_length')),
+            'exons_per_transcript_kept': None if (n_exons is None or not gff_kept) else n_exons / gff_kept,
         }
-        records[species] = record
-        rows.append([species] + [record[k] for k in header[1:]])
-
         # Stacked bars only make sense when the whole funnel resolved.
         if None not in (kept, unstranded, single_exon, non_longest, coding):
             plot[species] = {
-                "kept": kept,
-                "dropped_unstranded": unstranded,
-                "dropped_single_exon": single_exon,
-                "dropped_non_longest": non_longest,
-                "dropped_coding": coding,
+                'kept': kept,
+                'dropped_unstranded': unstranded,
+                'dropped_single_exon': single_exon,
+                'dropped_non_longest': non_longest,
+                'dropped_coding': coding,
             }
+    return records, plot
 
-    write_tsv("run_source_funnel_mqc.tsv", header, rows)
+
+def emit_source_funnel(records: dict, plot: dict) -> None:
+    write_tsv(
+        'run_source_funnel_mqc.tsv',
+        FUNNEL_HEADER,
+        [[s] + [r[k] for k in FUNNEL_HEADER[1:]] for s, r in records.items()],
+    )
     write_json(
-        "run_source_funnel_mqc.json",
+        'run_source_funnel_mqc.json',
         {
-            "id": "run_source_funnel_plot",
-            "section_name": "Source lncRNA — what survived filtering",
-            "description": (
-                "Per source species: lncRNA transcripts donated (kept) and the four "
-                "reasons the rest were dropped — no consistent strand (\"?\" or "
-                "trans-spliced across both strands; almost always zero), single-exon (FOMO transfers spliced "
-                "models only), not the longest spliced isoform of its gene (one "
-                "transcript per gene; zero with --longest_isoform false) and coding "
-                "potential (a complete ORF with PSAURON score at or above the cutoff). "
-                "Bars sum to the raw lncRNA count."
+            'id': 'run_source_funnel_plot',
+            'section_name': 'Source lncRNA — what survived filtering',
+            'description': (
+                'Per source species: lncRNA transcripts donated (kept) and the four '
+                'reasons the rest were dropped — no consistent strand ("?" or '
+                'trans-spliced across both strands; almost always zero), single-exon (FOMO transfers spliced '
+                'models only), not the longest spliced isoform of its gene (one '
+                'transcript per gene; zero with --longest_isoform false) and coding '
+                'potential (a complete ORF with PSAURON score at or above the cutoff). '
+                'Bars sum to the raw lncRNA count.'
             ),
-            "plot_type": "bargraph",
-            "pconfig": {
-                "id": "run_source_funnel_bargraph",
-                "title": "FOMO: source lncRNA filtering funnel",
-                "ylab": "transcripts",
-                "cpswitch_counts_label": "Transcripts",
+            'plot_type': 'bargraph',
+            'pconfig': {
+                'id': 'run_source_funnel_bargraph',
+                'title': 'FOMO: source lncRNA filtering funnel',
+                'ylab': 'transcripts',
+                'cpswitch_counts_label': 'Transcripts',
             },
-            "data": plot,
+            'data': plot,
         },
     )
-    summary["source_funnel"] = records
 
 
-def section_targets(inp: Inputs, args, summary: dict) -> None:
-    """Per (target × transcript type): genes already annotated, curated genes FOMO adds
-    (plans/21: intron chains shared by >= 2 species, none overlapping the reference), and
-    the sum. Counted in GENES on both sides — a curated gene is one representative model,
-    and the reference count is its gene count (isoforms would inflate 'before')."""
-    ann, cur, align = inp.annotation_index(), inp.curation_index(), inp.alignment_index()
-    targets = sorted(s for s, r in inp.roles.items() if r["is_target"])
-    # Only the ENABLED tracks are curated. A type FOMO does not transfer gains a known
-    # zero; an enabled type without a curation row is a genuine unknown (NA).
-    enabled = {"lnc_RNA"} | ({"mRNA"} if args.include_mrna else set())
+def target_header(ctx: RunContext) -> list[str]:
+    header = ['Sample', 'target', 'transcript_type', 'genes_before', 'curated_genes', 'genes_after', 'pct_increase']
+    header.append('reads_mapped_percent')
+    if ctx.include_decoy:
+        # A decoy curated gene is a chance cross-species agreement; normalised per multi-exon
+        # input model, because decoy_cap makes the decoy and real inputs different sizes.
+        header += ['curated_decoy_genes', 'est_curated_fdr_pct']
+    return header
 
-    def curated(target: str, ft: str, decoy: bool, key: str = "genes", table: str = "novel") -> Optional[float]:
-        row = cur.get((target, ft, decoy), {}).get(table)
-        return None if row is None else num(row.get(key))
 
-    header = [
-        "Sample",
-        "target",
-        "transcript_type",
-        "genes_before",
-        "curated_genes",
-        "genes_after",
-        "pct_increase",
-        "reads_mapped_percent",
-    ]
-    if args.include_decoy:
-        # Decoys are relocated per source into intergenic space, so a decoy curated gene is
-        # a chance cross-species agreement. Normalised per multi-exon input model, because
-        # decoy_cap makes the decoy and real inputs different sizes.
-        header += ["curated_decoy_genes", "est_curated_fdr_pct"]
-    rows, records = [], defaultdict(dict)
-    bar = {}
+def curated(idx: RecordIndex, target: str, track: str, table: str = 'novel', key: str = 'genes') -> float | None:
+    report = idx.curation.get((target, track))
+    return None if report is None else num(report[table].get(key, 0))
 
-    for target in targets:
-        has_ref = inp.roles[target]["has_gff3"]
-        types = {key[3] for key in ann if key[0] == target and key[1] == "target" and key[2] == "1_raw"}
-        types |= {ft for (t, ft, d) in cur if t == target and not d}
+
+def decoy_columns(idx: RecordIndex, target: str, ttype: str, added: float | None, enabled: bool) -> dict:
+    decoy = curated(idx, target, track_of(ttype, True)) if enabled else None
+    real_in = curated(idx, target, ttype, 'observed', 'multi_exon_models')
+    decoy_in = curated(idx, target, track_of(ttype, True), 'observed', 'multi_exon_models')
+    rate_real = None if added is None or not real_in else added / real_in
+    rate_decoy = None if decoy is None or not decoy_in else decoy / decoy_in
+    fdr = None if rate_real in (None, 0) or rate_decoy is None else 100.0 * rate_decoy / rate_real
+    return {'curated_decoy_genes': decoy, 'est_curated_fdr_pct': fdr}
+
+
+def compute_targets(ctx: RunContext, idx: RecordIndex) -> dict:
+    """Per (target × transcript type): genes already annotated, curated genes FOMO adds and the
+    sum, counted in genes on both sides. Only the enabled tracks are curated: a type FOMO does not
+    transfer gains a known zero, an enabled type without a curation report is unknown (NA)."""
+    records = {}
+    for target in ctx.targets:
+        records[target] = {}  # every target appears, even one without any transcript type
+        has_ref = ctx.roles[target]['has_gff3']
+        raw = idx.transcript_rows(target, 'target', 'raw')
+        types = set(raw) | {track for (t, track) in idx.curation if t == target and not track.endswith('.decoy')}
         for ttype in sorted(types):
-            before = num((ann.get((target, "target", "1_raw", ttype)) or {}).get("n_genes")) if has_ref else None
-            if ttype not in enabled:
-                added = 0.0
-            else:
-                added = curated(target, ttype, False)
-            token = TYPE_TO_TOKEN.get(ttype) if ttype in enabled else None
-            mapped = num((align.get((target, token)) or {}).get("reads_mapped_percent")) if token else None
+            enabled = ttype in ctx.feature_types
+            before = num((raw.get(ttype) or {}).get('n_genes')) if has_ref else None
+            added = curated(idx, target, ttype) if enabled else 0.0
+            mapped = num((idx.alignment.get((target, ttype)) or {}).get('reads_mapped_percent')) if enabled else None
             record = {
-                "target": target,
-                "transcript_type": ttype,
-                "genes_before": before,
-                "curated_genes": added,
-                "genes_after": add(before, added) if has_ref else added,
-                "pct_increase": pct(added, before),
-                "reads_mapped_percent": mapped,
+                'target': target,
+                'transcript_type': ttype,
+                'genes_before': before,
+                'curated_genes': added,
+                'genes_after': add(before, added) if has_ref else added,
+                'pct_increase': pct(added, before),
+                'reads_mapped_percent': mapped,
             }
-            if args.include_decoy:
-                decoy = curated(target, ttype, True) if ttype in enabled else None
-                real_in = curated(target, ttype, False, "multi_exon_models", "observed")
-                decoy_in = curated(target, ttype, True, "multi_exon_models", "observed")
-                rate_real = None if added is None or not real_in else added / real_in
-                rate_decoy = None if decoy is None or not decoy_in else decoy / decoy_in
-                record["curated_decoy_genes"] = decoy
-                record["est_curated_fdr_pct"] = (
-                    None if rate_real in (None, 0) or rate_decoy is None else 100.0 * rate_decoy / rate_real
-                )
+            if ctx.include_decoy:
+                record |= decoy_columns(idx, target, ttype, added, enabled)
             records[target][ttype] = record
-            rows.append([f"{target}.{ttype}"] + [record[k] for k in header[1:]])
+    return records
 
-        lnc = records[target].get("lnc_RNA", {})
-        if lnc.get("curated_genes") is not None:
+
+def emit_targets(ctx: RunContext, records: dict) -> None:
+    header = target_header(ctx)
+    rows = [[f'{t}.{tt}'] + [r[k] for k in header[1:]] for t, by_type in records.items() for tt, r in by_type.items()]
+    write_tsv('run_target_types_mqc.tsv', header, rows)
+    bar = {}
+    for target, by_type in records.items():
+        lnc = by_type.get('lnc_RNA', {})
+        if lnc.get('curated_genes') is not None:
             bar[target] = {
-                "existing_lncRNA_genes": lnc.get("genes_before") or 0.0,
-                "curated_lncRNA_genes": lnc["curated_genes"],
+                'existing_lncRNA_genes': lnc.get('genes_before') or 0.0,
+                'curated_lncRNA_genes': lnc['curated_genes'],
             }
-
-    write_tsv("run_target_types_mqc.tsv", header, rows)
     write_json(
-        "run_target_before_after_mqc.json",
+        'run_target_before_after_mqc.json',
         {
-            "id": "run_target_before_after",
-            "section_name": "Targets — lncRNA genes before and after FOMO",
-            "description": (
-                "Per target: lncRNA genes already in its reference annotation versus the curated "
-                "lncRNA genes FOMO adds — intron chains shared exactly by at least "
-                "--curate_min_species source species, none overlapping a reference exon. A "
-                "target without a reference annotation starts at zero."
+            'id': 'run_target_before_after',
+            'section_name': 'Targets — lncRNA genes before and after FOMO',
+            'description': (
+                'Per target: lncRNA genes already in its reference annotation versus the curated '
+                'lncRNA genes FOMO adds — intron chains shared exactly by at least '
+                '--curate_min_species source species, none overlapping a reference exon. A '
+                'target without a reference annotation starts at zero.'
             ),
-            "plot_type": "bargraph",
-            "pconfig": {
-                "id": "run_target_before_after_bargraph",
-                "title": "FOMO: target lncRNA genes before and after curation",
-                "ylab": "genes",
+            'plot_type': 'bargraph',
+            'pconfig': {
+                'id': 'run_target_before_after_bargraph',
+                'title': 'FOMO: target lncRNA genes before and after curation',
+                'ylab': 'genes',
             },
-            "data": bar,
+            'data': bar,
         },
     )
-    summary["targets_before_after"] = {t: dict(v) for t, v in records.items()}
 
 
-def section_heatmap(inp: Inputs, args, summary: dict) -> None:
-    acc = inp.accuracy()
-    sources = sorted(s for s, r in inp.roles.items() if r["is_source"])
-    targets = sorted(s for s, r in inp.roles.items() if r["is_target"])
+# One section per metric, not one plot with a dataset switcher: MultiQC 1.35 accepts
+# multi-dataset bargraphs but not heatmaps.
+HEATMAP_METRICS = [
+    ('f1', 'F1', 'F1 (the harmonic mean of the two below)'),
+    ('sn', 'Sensitivity', "Sensitivity — how much of the target's real annotation the projection recovered"),
+    ('pr', 'Precision', 'Precision — how much of the projection is real annotation rather than noise'),
+]
+HEATMAP_NOTE = (
+    'lncRNA transcript-level gffcompare accuracy for each source → target '
+    'projection. A blank cell means that pair was not benchmarked — the target '
+    'is not benchmarked (only role `both` targets are). The diagonal is always '
+    'blank: a species is never projected onto itself (plans/23).'
+)
 
-    # One section per metric, not one plot with a dataset switcher: MultiQC 1.35 accepts
-    # multi-dataset bargraphs but not heatmaps (a list of matrices fails the whole report
-    # with "No analysis results found").
-    METRICS = [
-        ("f1", "F1", "F1 (the harmonic mean of the two below)"),
-        ("sn", "Sensitivity", "Sensitivity — how much of the target's real annotation the projection recovered"),
-        ("pr", "Precision", "Precision — how much of the projection is real annotation rather than noise"),
-    ]
-    shared = (
-        "lncRNA transcript-level gffcompare accuracy for each source → target "
-        "projection. A blank cell means that pair was not benchmarked — the target "
-        "is not benchmarked (only role `both` targets are). The diagonal is always "
-        "blank: a species is never projected onto itself (plans/23)."
-    )
 
-    records: Dict[str, dict] = {}
-    for metric, label, blurb in METRICS:
-        matrix = []
-        for source in sources:
-            row = []
-            for target in targets:
-                cell = acc.get((target, source, "lnc_RNA", False))
-                value = None if cell is None else round(cell[metric], 2)
-                row.append(value)
-                if metric == "f1":
-                    records.setdefault(source, {})[target] = value
-            matrix.append(row)
+def compute_heatmap(ctx: RunContext, idx: RecordIndex) -> dict:
+    """metric -> source × target matrix (None where not benchmarked)."""
+    matrices = {}
+    for metric, _, _ in HEATMAP_METRICS:
+        matrices[metric] = [
+            [
+                None if cell is None else round(cell[metric], 2)
+                for cell in (idx.accuracy.get((target, source, 'lnc_RNA')) for target in ctx.targets)
+            ]
+            for source in ctx.sources
+        ]
+    return matrices
 
+
+def emit_heatmap(ctx: RunContext, matrices: dict) -> None:
+    for metric, label, blurb in HEATMAP_METRICS:
         write_json(
-            f"run_accuracy_heatmap_{metric}_mqc.json",
+            f'run_accuracy_heatmap_{metric}_mqc.json',
             {
-                "id": f"run_accuracy_heatmap_{metric}",
-                "section_name": f"Accuracy {label} — every source against every target",
-                "description": f"{blurb}. {shared}",
-                "plot_type": "heatmap",
-                "xcats": targets,
-                "ycats": sources,
-                "pconfig": {
-                    "id": f"run_accuracy_heatmap_{metric}_plot",
-                    "title": f"FOMO: source × target lncRNA {label}",
-                    "xlab": "target",
-                    "ylab": "source",
-                    "min": 0,
-                    "max": 100,
+                'id': f'run_accuracy_heatmap_{metric}',
+                'section_name': f'Accuracy {label} — every source against every target',
+                'description': f'{blurb}. {HEATMAP_NOTE}',
+                'plot_type': 'heatmap',
+                'xcats': ctx.targets,
+                'ycats': ctx.sources,
+                'pconfig': {
+                    'id': f'run_accuracy_heatmap_{metric}_plot',
+                    'title': f'FOMO: source × target lncRNA {label}',
+                    'xlab': 'target',
+                    'ylab': 'source',
+                    'min': 0,
+                    'max': 100,
                 },
-                "data": matrix,
+                'data': matrices[metric],
             },
         )
-    summary["accuracy_f1"] = records
 
 
-def section_aggregates(inp: Inputs, args, summary: dict) -> None:
-    acc, projections = inp.accuracy(), inp.projection_index()
-    targets = sorted(s for s, r in inp.roles.items() if r["is_target"])
-    feature_types = ["lnc_RNA"] + (["mRNA"] if args.include_mrna else [])
+def aggregate_header(ctx: RunContext) -> list[str]:
+    header = ['Sample', 'target', 'feature_type', 'model', 'best_source', 'sn', 'pr', 'f1', 'n_models']
+    header.append('delta_f1_vs_best_single')
+    return header + (['decoy_models', 'decoy_f1', 'est_fdr_pct'] if ctx.include_decoy else [])
 
-    def models(target: str, model: str, ft: str, decoy: bool) -> Optional[float]:
-        rows = projections.get((target, model, PROJECTION_TOKEN[(ft, decoy)]))
-        if not rows:
-            return None
-        return add(*[num(r.get("n_transcripts")) or 0.0 for r in rows])
 
-    header = [
-        "Sample",
-        "target",
-        "feature_type",
-        "model",
-        "best_source",
-        "sn",
-        "pr",
-        "f1",
-        "n_models",
-        "delta_f1_vs_best_single",
-    ]
-    decoy_header = ["decoy_models", "decoy_f1", "est_fdr_pct"]
-    any_decoy = args.include_decoy
-    if any_decoy:
-        header = header + decoy_header
+def best_single_source(idx: RecordIndex, target: str, ft: str):
+    candidates = {
+        source: cell['f1']
+        for (tgt, source, track), cell in idx.accuracy.items()
+        if tgt == target and track == ft and source not in AGGREGATE_IDS and source != target
+    }
+    best = max(candidates, key=lambda s: (candidates[s], s), default=None)
+    return best, candidates.get(best) if best else None
 
-    rows, plot, records = [], {}, defaultdict(dict)
-    for target in targets:
-        for ft in feature_types:
-            # Baseline: the best real donor. (`source != target` only matters for a pre-23
-            # run that still carried self-projections — a near-perfect copy of itself.)
-            candidates = {
-                source: cell["f1"]
-                for (tgt, source, feat, decoy), cell in acc.items()
-                if tgt == target and feat == ft and not decoy and source not in AGGREGATE_IDS and source != target
-            }
-            best_source = max(candidates, key=lambda s: (candidates[s], s), default=None)
-            best_f1 = candidates.get(best_source) if best_source else None
 
-            # (row label, the model id whose stats to read). The label is a category
-            # name in the bargraph, so it must NOT carry the species — otherwise every
-            # target contributes a differently-named bar and nothing is comparable.
-            # Which species won goes in its own column instead.
-            entries = []
-            if best_source:
-                entries.append(("best_single_source", best_source))
-            entries += [(m, m) for m in AGGREGATE_IDS]
+def aggregate_record(
+    ctx: RunContext, idx: RecordIndex, target: str, ft: str, label: str, model: str, best
+) -> dict | None:
+    best_source, best_f1 = best
+    cell = idx.accuracy.get((target, model, ft))
+    if cell is None:
+        return None
+    real_models = idx.projected_models.get((target, model, ft))
+    record = {
+        'target': target,
+        'feature_type': ft,
+        'model': label,
+        'best_source': best_source,
+        'sn': cell['sn'],
+        'pr': cell['pr'],
+        'f1': cell['f1'],
+        'n_models': real_models,
+        'delta_f1_vs_best_single': None if best_f1 is None else cell['f1'] - best_f1,
+    }
+    if ctx.include_decoy:
+        decoy_models = idx.projected_models.get((target, model, track_of(ft, True)))
+        decoy_cell = idx.accuracy.get((target, model, track_of(ft, True)))
+        record['decoy_models'] = decoy_models
+        record['decoy_f1'] = None if decoy_cell is None else decoy_cell['f1']
+        record['est_fdr_pct'] = pct(decoy_models, real_models)
+    return record
 
+
+def compute_aggregates(ctx: RunContext, idx: RecordIndex) -> dict:
+    """Per (target, feature type): the best real donor and each pooled model, side by side. The
+    row label is a category name in the bargraph, so it does not carry the species."""
+    records = defaultdict(dict)
+    for target in ctx.targets:
+        for ft in ctx.feature_types:
+            best = best_single_source(idx, target, ft)
+            entries = ([('best_single_source', best[0])] if best[0] else []) + [(m, m) for m in AGGREGATE_IDS]
             for label, model in entries:
-                cell = acc.get((target, model, ft, False))
-                if cell is None:
-                    continue
-                real_models = models(target, model, ft, False)
-                decoy_models = models(target, model, ft, True) if any_decoy else None
-                decoy_cell = acc.get((target, model, ft, True)) if any_decoy else None
-                record = {
-                    "target": target,
-                    "feature_type": ft,
-                    "model": label,
-                    "best_source": best_source,
-                    "sn": cell["sn"],
-                    "pr": cell["pr"],
-                    "f1": cell["f1"],
-                    "n_models": real_models,
-                    "delta_f1_vs_best_single": (None if best_f1 is None else cell["f1"] - best_f1),
-                }
-                if any_decoy:
-                    record["decoy_models"] = decoy_models
-                    record["decoy_f1"] = None if decoy_cell is None else decoy_cell["f1"]
-                    record["est_fdr_pct"] = pct(decoy_models, real_models)
-                records[target][f"{ft}.{label}"] = record
-                rows.append([f"{target}.{ft}.{label}"] + [record[k] for k in header[1:]])
+                record = aggregate_record(ctx, idx, target, ft, label, model, best)
+                if record is not None:
+                    records[target][f'{ft}.{label}'] = record
+    return records
 
-                if ft == "lnc_RNA":
-                    plot.setdefault(target, {})[label] = round(cell["f1"], 2)
 
-    write_tsv("run_aggregate_accuracy_mqc.tsv", header, rows)
+def emit_aggregates(ctx: RunContext, records: dict) -> None:
+    header = aggregate_header(ctx)
+    rows = [[f'{t}.{key}'] + [r[k] for k in header[1:]] for t, by_key in records.items() for key, r in by_key.items()]
+    write_tsv('run_aggregate_accuracy_mqc.tsv', header, rows)
+    plot = {}
+    for target, by_key in records.items():
+        for record in by_key.values():
+            if record['feature_type'] == 'lnc_RNA':
+                plot.setdefault(target, {})[record['model']] = round(record['f1'], 2)
     write_json(
-        "run_aggregate_accuracy_mqc.json",
+        'run_aggregate_accuracy_mqc.json',
         {
-            "id": "run_aggregate_accuracy_plot",
-            "section_name": "allModels vs best single donor — lncRNA F1 per target",
-            "description": (
-                "lncRNA transcript-level F1 per target for the best single donor and for "
-                "allModels (every source pooled, raw), side by side: does pooling every "
-                "donor beat the best single one?"
+            'id': 'run_aggregate_accuracy_plot',
+            'section_name': 'allModels vs best single donor — lncRNA F1 per target',
+            'description': (
+                'lncRNA transcript-level F1 per target for the best single donor and for '
+                'allModels (every source pooled, raw), side by side: does pooling every '
+                'donor beat the best single one?'
             ),
-            "plot_type": "bargraph",
-            "pconfig": {
-                "id": "run_aggregate_accuracy_bargraph",
-                "title": "FOMO: aggregate model accuracy (lncRNA, transcript level)",
-                "ylab": "F1",
-                "stacking": None,
-                "cpswitch": False,
+            'plot_type': 'bargraph',
+            'pconfig': {
+                'id': 'run_aggregate_accuracy_bargraph',
+                'title': 'FOMO: aggregate model accuracy (lncRNA, transcript level)',
+                'ylab': 'F1',
+                'stacking': None,
+                'cpswitch': False,
             },
-            "data": plot,
+            'data': plot,
         },
     )
-    summary["aggregates"] = {t: dict(v) for t, v in records.items()}
 
 
-def section_donors(inp: Inputs, args, summary: dict) -> None:
-    """Per source: lncRNA transcript F1 across the benchmarked targets, and how many
-    models it projects per target (a species is never projected onto itself)."""
-    acc, projections = inp.accuracy(), inp.projection_index()
-    sources = sorted(s for s, r in inp.roles.items() if r["is_source"])
+DONOR_HEADER = ['Sample', 'mean_f1', 'median_f1', 'best_f1', 'n_targets_scored', 'mean_models_projected']
 
-    header = ["Sample", "mean_f1", "median_f1", "best_f1", "n_targets_scored", "mean_models_projected"]
-    rows, records = [], {}
-    for source in sources:
+
+def compute_donors(ctx: RunContext, idx: RecordIndex) -> dict:
+    """Per source: lncRNA transcript F1 across the benchmarked targets, and how many models it
+    projects per target."""
+    records = {}
+    for source in ctx.sources:
         scores = [
-            cell["f1"]
-            for (target, src, ft, decoy), cell in acc.items()
-            if src == source and ft == "lnc_RNA" and not decoy and target != source
+            cell['f1']
+            for (target, src, track), cell in idx.accuracy.items()
+            if src == source and track == 'lnc_RNA' and target != source
         ]
         counts = [
-            add(*[num(r.get("n_transcripts")) or 0.0 for r in rows_])
-            for (target, model, token), rows_ in projections.items()
-            if model == source and token == "1_lncRNA" and target != source
+            n
+            for (target, model, track), n in idx.projected_models.items()
+            if model == source and track == 'lnc_RNA' and target != source and n is not None
         ]
-        counts = [c for c in counts if c is not None]
-        record = {
-            "mean_f1": statistics.fmean(scores) if scores else None,
-            "median_f1": statistics.median(scores) if scores else None,
-            "best_f1": max(scores) if scores else None,
-            "n_targets_scored": len(scores),
-            "mean_models_projected": statistics.fmean(counts) if counts else None,
+        records[source] = {
+            'mean_f1': statistics.fmean(scores) if scores else None,
+            'median_f1': statistics.median(scores) if scores else None,
+            'best_f1': max(scores) if scores else None,
+            'n_targets_scored': len(scores),
+            'mean_models_projected': statistics.fmean(counts) if counts else None,
         }
-        records[source] = record
-        rows.append([source] + [record[k] for k in header[1:]])
-
-    write_tsv("run_donor_ranking_mqc.tsv", header, rows)
-    summary["donors"] = records
+    return records
 
 
 # ── entry point ─────────────────────────────────────────────────────────────────
 def bool_arg(value: str) -> bool:
-    return str(value).lower() in ("true", "1", "yes")
+    return str(value).lower() in ('true', '1', 'yes')
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
-        "--mqc-dir", required=True, type=Path, help="directory holding the staged pipeline-wide MultiQC inputs"
-    )
-    p.add_argument("--roles", required=True, type=Path, help="species_roles.csv (species,role,has_gff3)")
-    p.add_argument("--include-mrna", type=bool_arg, default=False)
-    p.add_argument("--include-decoy", type=bool_arg, default=False)
-    p.add_argument("--psauron-min", type=float, default=0.5)
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--records', required=True, type=Path, help='directory holding the run\'s *.data.json records')
+    p.add_argument('--roles', required=True, type=Path, help='species_roles.csv (species,role,has_gff3)')
+    p.add_argument('--include-mrna', type=bool_arg, default=False)
+    p.add_argument('--include-decoy', type=bool_arg, default=False)
+    p.add_argument('--psauron-min', type=float, default=0.5)
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    if not args.mqc_dir.is_dir():
-        sys.exit(f"ERROR: --mqc-dir '{args.mqc_dir}' is not a directory")
+    if not args.records.is_dir():
+        fomo_io.die(f"--records '{args.records}' is not a directory")
+    feature_types = ('lnc_RNA',) + (('mRNA',) if args.include_mrna else ())
+    ctx = RunContext(read_roles(args.roles), feature_types, args.include_decoy, args.psauron_min)
+    idx = RecordIndex(args.records)
 
-    inp = Inputs(args.mqc_dir, args.roles)
-    summary: dict = {}
+    metrics, overview = compute_overview(ctx)
+    write_tsv('run_overview_mqc.tsv', ['Metric', 'Value'], metrics)
+    species = compute_species(ctx, idx)
+    write_tsv(
+        'run_species_mqc.tsv', SPECIES_HEADER, [[s] + [r[k] for k in SPECIES_HEADER[1:]] for s, r in species.items()]
+    )
+    funnel, funnel_plot = compute_source_funnel(ctx, idx)
+    emit_source_funnel(funnel, funnel_plot)
+    targets = compute_targets(ctx, idx)
+    emit_targets(ctx, targets)
+    heatmap = compute_heatmap(ctx, idx)
+    emit_heatmap(ctx, heatmap)
+    aggregates = compute_aggregates(ctx, idx)
+    emit_aggregates(ctx, aggregates)
+    donors = compute_donors(ctx, idx)
+    write_tsv(
+        'run_donor_ranking_mqc.tsv', DONOR_HEADER, [[s] + [r[k] for k in DONOR_HEADER[1:]] for s, r in donors.items()]
+    )
 
-    section_overview(inp, args, summary)
-    section_species(inp, args, summary)
-    section_source_funnel(inp, args, summary)
-    section_targets(inp, args, summary)
-    section_heatmap(inp, args, summary)
-    section_aggregates(inp, args, summary)
-    section_donors(inp, args, summary)
-
-    write_json("run_summary.json", summary)
+    accuracy_f1 = {
+        source: dict(zip(ctx.targets, row, strict=True)) for source, row in zip(ctx.sources, heatmap['f1'], strict=True)
+    }
+    summary = {
+        'overview': overview,
+        'sources': ctx.sources,
+        'targets': ctx.targets,
+        'species': species,
+        'source_funnel': funnel,
+        'targets_before_after': {t: dict(v) for t, v in targets.items()},
+        'accuracy_f1': accuracy_f1,
+        'aggregates': {t: dict(v) for t, v in aggregates.items()},
+        'donors': donors,
+    }
+    write_json('run_summary.json', summary)
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == '__main__':
+    fomo_io.run(main)

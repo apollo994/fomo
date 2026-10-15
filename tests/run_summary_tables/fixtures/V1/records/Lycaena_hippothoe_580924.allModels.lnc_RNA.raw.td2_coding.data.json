@@ -1,0 +1,19 @@
+{
+ "schema": "fomo-data/1",
+ "section": "td2_coding",
+ "identity": {
+  "species": "Lycaena_hippothoe_580924",
+  "side": "target",
+  "target": "Lycaena_hippothoe_580924",
+  "track": "lnc_RNA",
+  "label": "lncRNA",
+  "order": 1,
+  "stage": "projected"
+ },
+ "data": {
+  "n_in": 114,
+  "n_coding": 0,
+  "n_kept": 114,
+  "psauron_min": 0.5
+ }
+}

@@ -1,0 +1,63 @@
+{"schema":"fomo-data/1","section":"gffstats","identity":{"source":"Lycaena_thersamon_265360","species":"Lycaena_hippothoe_580924","side":"target","target":"Lycaena_hippothoe_580924","track":"mRNA.decoy","label":"decoy_mRNA","order":4,"kind":"projected"},"data":{
+  "gene_category_stats": {
+    "non_coding": {
+      "total_count": 737,
+      "length_stats": {
+        "min": 166,
+        "max": 1397346,
+        "mean": 60795.44
+      },
+      "biotype_counts": {
+        "biotype_missing": 737
+      },
+      "transcript_type_counts": {
+        "transcript": 737
+      }
+    }
+  },
+  "transcript_type_stats": {
+    "transcript": {
+      "length_stats": {
+        "min": 166,
+        "max": 1397346,
+        "mean": 60795.44
+      },
+      "total_count": 737,
+      "biotype_counts": {
+        "biotype_missing": 737
+      },
+      "associated_genes": {
+        "total_count": 737,
+        "gene_categories": {
+          "non_coding": 737
+        }
+      },
+      "exon_stats": {
+        "total_count": 4161,
+        "length": {
+          "min": 3,
+          "max": 4700,
+          "mean": 204.21
+        },
+        "concatenated_length": {
+          "min": 98,
+          "max": 9307,
+          "mean": 1152.95
+        }
+      },
+      "intron_stats": {
+        "total_count": 3424,
+        "length": {
+          "min": 37,
+          "max": 411374,
+          "mean": 12837.77
+        },
+        "concatenated_length": {
+          "min": 44,
+          "max": 1395114,
+          "mean": 59642.49
+        }
+      }
+    }
+  }
+}}

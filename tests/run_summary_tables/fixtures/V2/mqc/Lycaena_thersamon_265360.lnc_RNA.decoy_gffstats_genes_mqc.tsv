@@ -1,2 +1,0 @@
-Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
-Lycaena_thersamon_265360.3_decoy_lncRNA.non_coding	source	decoy	non_coding	77	4698.90	299	41297	1	biotype_missing

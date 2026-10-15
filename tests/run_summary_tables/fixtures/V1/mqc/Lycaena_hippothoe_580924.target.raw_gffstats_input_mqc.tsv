@@ -1,5 +1,0 @@
-Sample	role	kind	transcript_type	n_genes	n_transcripts	n_exons	mean_exon_length	max_exon_length	n_introns	mean_intron_length	min_intron_length	max_intron_length	mean_transcript_length	min_transcript_length	max_transcript_length	mean_spliced_length	min_spliced_length	max_spliced_length	n_cds	mean_cds_length	top_biotype
-Lycaena_hippothoe_580924.1_raw_target.mRNA	target	raw	mRNA	920	1439	11676	232.18	10891	10237	2098.65	21	124466	16813.62	390	303734	1883.88	225	26739	11533	208.77	protein_coding
-Lycaena_hippothoe_580924.1_raw_target.lnc_RNA	target	raw	lnc_RNA	64	68	154	176.51	905	86	2856.02	24	37140	4011.78	317	37341	399.75	201	1122	NA	NA	lncRNA
-Lycaena_hippothoe_580924.1_raw_target.tRNA	target	raw	tRNA	53	53	53	75.32	92	NA	NA	NA	NA	75.32	71	92	NA	NA	NA	NA	NA	tRNA
-Lycaena_hippothoe_580924.1_raw_target.snRNA	target	raw	snRNA	16	16	16	149.88	193	NA	NA	NA	NA	149.88	106	193	NA	NA	NA	NA	NA	snRNA

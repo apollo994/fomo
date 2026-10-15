@@ -2,19 +2,19 @@ include { RUN_SUMMARY_TABLES        } from '../../modules/local/run_summary_tabl
 include { MULTIQC as MULTIQC_RUN_SUMMARY } from '../../modules/local/multiqc'
 
 // One run-level report: species per role, what survived filtering, what each target gained,
-// which donors are worth using. Aggregate-only: one task digests the pipeline-wide union into
+// which donors are worth using. Aggregate-only: one task digests the run's data records into
 // run-level tables, and only those reach its MultiQC. A top-level subworkflow, so the
 // per-target `FOMO:REPORTING:MULTIQC$` settings cannot match its MultiQC alias.
 workflow RUN_SUMMARY {
     take:
-    ch_all_mqc      // [ meta, path | List<path> ]: the pipeline-wide union
+    ch_records      // [ meta, *.data.json | List ]: every data record of the run
     ch_roles        // species_roles.csv
     ch_versions     // path: the software versions YAML
 
     main:
 
-    // One task; the script selects files by suffix from the staged directory.
-    ch_files = ch_all_mqc
+    // One task over every record; identity comes from inside each record.
+    ch_files = ch_records
         .flatMap { _meta, p -> [p].flatten() }
         .collect()
 

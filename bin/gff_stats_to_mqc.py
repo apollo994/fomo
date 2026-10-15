@@ -25,147 +25,17 @@ multi-exon transcript, and `cds_stats` for a non-coding type.
 import argparse
 import json
 import sys
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List
 
-NA = "NA"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fomo_stats  # noqa: E402
 
-# Column order for the per-transcript-type table.
-TRANSCRIPT_COLUMNS: List[str] = [
-    "role",
-    "kind",
-    "transcript_type",
-    "n_genes",
-    "n_transcripts",
-    "n_exons",
-    "mean_exon_length",
-    "max_exon_length",
-    "n_introns",
-    "mean_intron_length",
-    "min_intron_length",
-    "max_intron_length",
-    "mean_transcript_length",
-    "min_transcript_length",
-    "max_transcript_length",
-    "mean_spliced_length",
-    "min_spliced_length",
-    "max_spliced_length",
-    "n_cds",
-    "mean_cds_length",
-    "top_biotype",
-]
-
-# Column order for the per-gene-category table.
-GENE_COLUMNS: List[str] = [
-    "role",
-    "kind",
-    "gene_category",
-    "n_genes",
-    "mean_gene_length",
-    "min_gene_length",
-    "max_gene_length",
-    "n_transcript_types",
-    "top_biotype",
-]
-
-
-def fmt(v: Any) -> str:
-    """Render a metric for the TSV. None → NA; integral floats lose the .0."""
-    if v is None:
-        return NA
-    if isinstance(v, bool):
-        return "yes" if v else "no"
-    if isinstance(v, float):
-        return str(int(v)) if v.is_integer() else f"{v:.2f}"
-    return str(v)
-
-
-def length_field(block: Optional[Dict[str, Any]], key: str) -> Optional[Any]:
-    """Pull min/max/mean out of a `{min, max, mean}` sub-object, or None."""
-    if not isinstance(block, dict):
-        return None
-    value = block.get(key)
-    return value if isinstance(value, (int, float)) else None
-
-
-def top_key(counts: Any) -> Optional[str]:
-    """Highest-count key of a `{name: count}` map, ties broken by name."""
-    if not isinstance(counts, dict) or not counts:
-        return None
-    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-
-
-def transcript_rows(stats: Dict[str, Any], role: str, kind: str) -> List[Dict[str, str]]:
-    """Build one row per transcript type, in the JSON's own (count-desc) order."""
-    rows: List[Dict[str, str]] = []
-    for ttype, ts in (stats.get("transcript_type_stats") or {}).items():
-        length_stats = ts.get("length_stats")
-        exon = ts.get("exon_stats") or {}
-        exon_len = exon.get("length")
-        spliced = exon.get("concatenated_length")
-        intron = ts.get("intron_stats") or {}
-        intron_len = intron.get("length")
-        cds = ts.get("cds_stats") or {}
-        cds_len = cds.get("length")
-        assoc = ts.get("associated_genes") or {}
-
-        rows.append(
-            {
-                "role": role,
-                "kind": kind,
-                "transcript_type": ttype,
-                "n_genes": fmt(assoc.get("total_count")),
-                "n_transcripts": fmt(ts.get("total_count")),
-                "n_exons": fmt(exon.get("total_count")),
-                "mean_exon_length": fmt(length_field(exon_len, "mean")),
-                "max_exon_length": fmt(length_field(exon_len, "max")),
-                "n_introns": fmt(intron.get("total_count")),
-                "mean_intron_length": fmt(length_field(intron_len, "mean")),
-                "min_intron_length": fmt(length_field(intron_len, "min")),
-                "max_intron_length": fmt(length_field(intron_len, "max")),
-                "mean_transcript_length": fmt(length_field(length_stats, "mean")),
-                "min_transcript_length": fmt(length_field(length_stats, "min")),
-                "max_transcript_length": fmt(length_field(length_stats, "max")),
-                "mean_spliced_length": fmt(length_field(spliced, "mean")),
-                "min_spliced_length": fmt(length_field(spliced, "min")),
-                "max_spliced_length": fmt(length_field(spliced, "max")),
-                "n_cds": fmt(cds.get("total_count")),
-                "mean_cds_length": fmt(length_field(cds_len, "mean")),
-                "top_biotype": fmt(top_key(ts.get("biotype_counts"))),
-            }
-        )
-
-    if not rows:
-        placeholder = {c: NA for c in TRANSCRIPT_COLUMNS}
-        placeholder.update({"role": role, "kind": kind, "transcript_type": "none"})
-        rows.append(placeholder)
-    return rows
-
-
-def gene_rows(stats: Dict[str, Any], role: str, kind: str) -> List[Dict[str, str]]:
-    """Build one row per gene category (coding / pseudogene / non_coding)."""
-    rows: List[Dict[str, str]] = []
-    for category, gc in (stats.get("gene_category_stats") or {}).items():
-        length_stats = gc.get("length_stats")
-        ttype_counts = gc.get("transcript_type_counts")
-        rows.append(
-            {
-                "role": role,
-                "kind": kind,
-                "gene_category": category,
-                "n_genes": fmt(gc.get("total_count")),
-                "mean_gene_length": fmt(length_field(length_stats, "mean")),
-                "min_gene_length": fmt(length_field(length_stats, "min")),
-                "max_gene_length": fmt(length_field(length_stats, "max")),
-                "n_transcript_types": fmt(len(ttype_counts) if isinstance(ttype_counts, dict) else None),
-                "top_biotype": fmt(top_key(gc.get("biotype_counts"))),
-            }
-        )
-
-    if not rows:
-        placeholder = {c: NA for c in GENE_COLUMNS}
-        placeholder.update({"role": role, "kind": kind, "gene_category": "none"})
-        rows.append(placeholder)
-    return rows
+NA = fomo_stats.NA
+TRANSCRIPT_COLUMNS = fomo_stats.GFFSTATS_TRANSCRIPT_COLUMNS
+GENE_COLUMNS = fomo_stats.GFFSTATS_GENE_COLUMNS
+transcript_rows = fomo_stats.gffstats_transcript_rows
+gene_rows = fomo_stats.gffstats_gene_rows
 
 
 def write_tsv(path: str, base_name: str, name_suffix_col: str, columns: List[str], rows: List[Dict[str, str]]) -> None:

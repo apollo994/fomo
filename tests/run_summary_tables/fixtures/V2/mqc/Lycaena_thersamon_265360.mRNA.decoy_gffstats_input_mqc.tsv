@@ -1,2 +1,0 @@
-Sample	role	kind	transcript_type	n_genes	n_transcripts	n_exons	mean_exon_length	max_exon_length	n_introns	mean_intron_length	min_intron_length	max_intron_length	mean_transcript_length	min_transcript_length	max_transcript_length	mean_spliced_length	min_spliced_length	max_spliced_length	n_cds	mean_cds_length	top_biotype
-Lycaena_thersamon_265360.5_decoy_mRNA.mRNA	source	decoy	mRNA	851	851	6550	236.63	5836	5699	1558.80	30	82071	12260.35	329	154244	1821.31	252	14493	NA	NA	protein_coding

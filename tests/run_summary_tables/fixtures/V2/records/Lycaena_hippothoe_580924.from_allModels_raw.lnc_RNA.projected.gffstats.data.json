@@ -1,0 +1,63 @@
+{"schema":"fomo-data/1","section":"gffstats","identity":{"source":"allModels_raw","species":"Lycaena_hippothoe_580924","side":"target","target":"Lycaena_hippothoe_580924","track":"lnc_RNA","label":"lncRNA","order":1,"kind":"projected"},"data":{
+  "gene_category_stats": {
+    "non_coding": {
+      "total_count": 114,
+      "length_stats": {
+        "min": 295,
+        "max": 121998,
+        "mean": 7038.8
+      },
+      "biotype_counts": {
+        "biotype_missing": 114
+      },
+      "transcript_type_counts": {
+        "transcript": 114
+      }
+    }
+  },
+  "transcript_type_stats": {
+    "transcript": {
+      "length_stats": {
+        "min": 295,
+        "max": 121998,
+        "mean": 7038.8
+      },
+      "total_count": 114,
+      "biotype_counts": {
+        "biotype_missing": 114
+      },
+      "associated_genes": {
+        "total_count": 114,
+        "gene_categories": {
+          "non_coding": 114
+        }
+      },
+      "exon_stats": {
+        "total_count": 257,
+        "length": {
+          "min": 16,
+          "max": 1191,
+          "mean": 169.53
+        },
+        "concatenated_length": {
+          "min": 201,
+          "max": 1409,
+          "mean": 382.18
+        }
+      },
+      "intron_stats": {
+        "total_count": 143,
+        "length": {
+          "min": 60,
+          "max": 121684,
+          "mean": 5306.68
+        },
+        "concatenated_length": {
+          "min": 82,
+          "max": 121684,
+          "mean": 6656.62
+        }
+      }
+    }
+  }
+}}

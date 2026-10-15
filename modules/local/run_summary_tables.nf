@@ -4,9 +4,9 @@ process RUN_SUMMARY_TABLES {
     label 'img_python'
 
     input:
-    // The pipeline-wide union of MultiQC inputs in one flat directory: basenames are unique
-    // (target- or species-prefixed), so a collision means a naming contract broke.
-    path(mqc_files, stageAs: 'mqc/*')
+    // Every data record of the run in one flat directory: basenames are unique (target- or
+    // species-prefixed), so a collision means a naming contract broke.
+    path(records, stageAs: 'records/*')
     path roles_csv
 
     output:
@@ -18,7 +18,7 @@ process RUN_SUMMARY_TABLES {
     def args = task.ext.args ?: ''
     """
     run_summary_tables.py \\
-        --mqc-dir mqc \\
+        --records records \\
         --roles ${roles_csv} \\
         ${args}
     """

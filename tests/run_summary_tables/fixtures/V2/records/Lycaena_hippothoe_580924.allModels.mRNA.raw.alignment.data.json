@@ -1,0 +1,1 @@
+{"schema":"fomo-data/1","section":"alignment","identity":{"species":"Lycaena_hippothoe_580924","side":"target","target":"Lycaena_hippothoe_580924","track":"mRNA","label":"mRNA","order":3},"data":{"raw_total_sequences":1751,"reads_mapped":1727,"reads_mapped_percent":98.63,"non_primary_alignments":47,"error_rate":4.072469e-02,"average_quality":255.0,"average_length":1872}}

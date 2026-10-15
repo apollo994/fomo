@@ -1,2 +1,0 @@
-Sample	genes	transcripts	genes_2sp	genes_3sp	genes_4sp	genes_ge5sp	genes_1chain	genes_2chain	genes_ge3chain	location:intergenic	location:divergent	location:antisense_exonic	location:antisense_intronic	location:intronic	location:sense_span_overlap	location:no_reference	median_n_exons	median_transcript_length	median_gene_span	median_intron_length	median_de	median_intergenic_distance
-Lycaena_hippothoe_580924.lnc_RNA.decoy	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	NA	NA	NA	NA	NA	NA

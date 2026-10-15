@@ -1,0 +1,17 @@
+{
+ "schema": "fomo-data/1",
+ "section": "transcript_filter",
+ "identity": {
+  "species": "Lycaena_alciphron_282377",
+  "side": "source",
+  "track": "mRNA",
+  "label": "mRNA",
+  "order": 3
+ },
+ "data": {
+  "n_transcripts": 1418,
+  "n_stranded": 1418,
+  "n_spliced": 1392,
+  "n_selected": 887
+ }
+}

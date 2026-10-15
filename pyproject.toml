@@ -25,7 +25,6 @@ max-complexity = 15
 "bin/gffcompare_accuracy_mqc.py" = ["UP006", "UP035"]  # deleted in plans/27i
 "bin/gff_stats_to_mqc.py" = ["UP006", "UP007", "UP015", "UP035", "UP038"]  # deleted in plans/27i
 "bin/samtools_to_mqc.py" = ["UP006", "UP015", "UP035"]  # deleted in plans/27i
-"bin/run_summary_tables.py" = ["C901", "N806", "SIM108", "UP006", "UP007", "UP035"]  # rewritten in plans/27h
 
 [tool.ruff.format]
 quote-style = "preserve"

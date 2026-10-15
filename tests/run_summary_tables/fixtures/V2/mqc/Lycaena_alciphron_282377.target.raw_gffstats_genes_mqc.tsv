@@ -1,3 +1,0 @@
-Sample	role	kind	gene_category	n_genes	mean_gene_length	min_gene_length	max_gene_length	n_transcript_types	top_biotype
-Lycaena_alciphron_282377.1_raw_target.coding	target	raw	coding	913	15019.13	168	224567	1	protein_coding
-Lycaena_alciphron_282377.1_raw_target.non_coding	target	raw	non_coding	125	3789.35	71	58082	4	lncrna

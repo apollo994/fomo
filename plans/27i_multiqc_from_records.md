@@ -56,7 +56,7 @@ summary stay identical.
 
 - [ ] **C1. Delete the modules:** GFF_STATS_TO_MQC (both aliases), SAMTOOLS_TO_MQC, SEQKIT_TO_MQC,
   GFFCOMPARE_TO_SCATTER.
-- [ ] **C2. Delete the scripts:** `gff_stats_to_mqc.py`, `samtools_to_mqc.py`, `seqkit` adapter
+- [ ] **C2. Delete the scripts:** `gff_stats_to_mqc.py` (its row builders live in `fomo_stats.py`; updated by D27h-1), `samtools_to_mqc.py`, `seqkit` adapter
   awk, `curation_to_mqc.py`, `gffcompare_accuracy_mqc.py`. Delete `fomo_stats.FNAME_RE` and
   `parse_identity` if nothing else uses them; the accuracy identity now comes from records.
 - [ ] **C3. Producers stop writing `*_mqc.tsv`:** FILTER_TRANSCRIPT (`--counts`), TD2_CODING_FILTER
