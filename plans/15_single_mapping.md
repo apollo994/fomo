@@ -1,5 +1,8 @@
 # 15 — Single mapping: one all-sources alignment per target
 
+> **Status:** Implemented · **Date:** 2026-09-22
+> **Decision:** Every source's spliced FASTA of a gene type is merged and aligned once per target (F·D·T alignments instead of F·S·D·T), then split back per source on `source=`.
+
 ## Problem
 
 FOMO aligns **every source separately onto every target**: `F·S·D·T` minimap2 runs, each

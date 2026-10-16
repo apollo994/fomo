@@ -1,5 +1,8 @@
 # Plan: replace AGAT statistics with `bin/gff_stats_standalone.py`
 
+> **Status:** Superseded by 11 · **Date:** 2026-09-22
+> **Decision:** Replace `agat_sp_statistics.pl` with a Python statistics script.
+
 ## Context
 
 `agat_sp_statistics.pl` is the pipeline's slowest and hungriest stat producer. It runs

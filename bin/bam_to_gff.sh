@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 # Convert a minimap2 spliced-alignment BAM into a GFF3 of projected transcripts.
 #
-# Read names are expected in the form  <tid>|<gene_class>|<source>
-# (produced by RENAME_FASTA_HEADERS). The transcript ID in the GFF is
-# <tid>|<source> — NOT the bare <tid> alone: source transcript ids are not
-# guaranteed unique across species (seen for real: two Drosophila species both
-# used "lnc_RNA1412" as their own id), and every source's models land in one
-# merged GFF3 downstream (plans/15), so bare tid would collide. <source> and
-# <gene_class> are also promoted to 9th-column attributes as before. NM, AS
-# and de tags from the BAM are also copied onto the transcript row.
+# Read names must be <tid>|<gene_class>|<source> (RENAME_FASTA_HEADERS); any other shape is
+# an error. The transcript ID is <tid>|<source>: transcript ids are not unique across species,
+# and every source's models share one merged GFF3. <source> and <gene_class> become
+# attributes; the NM, AS and de tags are copied onto the transcript row.
 #
 # By default, single-exon projected models (alignments with no N/splice gap,
 # i.e. one exon block) are discarded — the source annotations are spliced
@@ -74,10 +70,13 @@ awk -v OFS='\t' -v include_single_exon="$include_single_exon" '
         strand = (int(flag / 16) % 2 == 1 ? "-" : "+")
 
         # ---- read-name → (tid, gene_class, source) -------------------------
-        np = split(qname, parts, "|")
+        if (split(qname, parts, "|") != 3) {
+            print "Error: read name is not <tid>|<gene_class>|<source>: " qname > "/dev/stderr"
+            exit 1
+        }
         tid    = parts[1]
-        gclass = (np >= 2 ? parts[2] : ".")
-        src    = (np >= 3 ? parts[3] : ".")
+        gclass = parts[2]
+        src    = parts[3]
         if (tid ~ /[;=]/) {
             print "Error: tid contains ; or = which would corrupt GFF attributes: " tid > "/dev/stderr"
             exit 1
@@ -93,7 +92,7 @@ awk -v OFS='\t' -v include_single_exon="$include_single_exon" '
 
         # ---- walk CIGAR to derive exon blocks ------------------------------
         # Block accumulator in genomic (reference) coordinates, plus three
-        # running totals used to derive the size/coverage attributes:
+        # running totals for the size/coverage attributes:
         #   query_len     = ∑ M, I, S, =, X       (read length)
         #   aligned_bases = ∑ M, =, X             (query bases matched on ref)
         #   projected_len = ∑ M, D, =, X          (exon-block bases on ref)

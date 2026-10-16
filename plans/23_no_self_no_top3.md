@@ -1,5 +1,8 @@
 # 23 — Remove self-projection, the top-N consensus and allModels_collapsed
 
+> **Status:** Implemented · **Date:** 2026-10-07
+> **Decision:** A species is never projected onto itself; the top-N consensus and the collapsed pooled model are removed.
+
 ## Status: implemented — merged to `main` @ `3dc0ce4` (squashed; detailed commit in tag `archive/plans-21-23`) — see **Results**
 
 ## Decisions (2026-10-07)

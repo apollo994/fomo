@@ -1,5 +1,8 @@
 # Plan: keep genomes compressed — decompress on node-local disk, never on NFS
 
+> **Status:** Implemented · **Date:** 2026-10-14
+> **Decision:** Genomes stay compressed: gffread stages its genome on node-local scratch, there is no gunzip task and no `samtools faidx`.
+
 **Status: implemented** — see **Verification** for what was checked here and what is
 left for the full mollusca OctVul run.
 

@@ -1,16 +1,17 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://raw.githubusercontent.com/fomo/master/assets/schema_input.json",
+    "$id": "https://raw.githubusercontent.com/apollo994/fomo/main/assets/schema_input.json",
     "title": "FOMO samplesheet schema",
     "description": "Schema for the FOMO pipeline samplesheet",
     "type": "array",
+    "uniqueEntries": ["species"],
     "items": {
         "type": "object",
         "properties": {
             "species": {
                 "type": "string",
-                "pattern": "^\\S+$",
-                "errorMessage": "Species name must be a non-empty string with no spaces",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "errorMessage": "Species id may contain only letters, digits, '_' and '-': it is used in file names and in the '>tid|type|species' sequence headers",
                 "meta": ["id"]
             },
             "role": {

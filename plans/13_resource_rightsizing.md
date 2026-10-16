@@ -1,5 +1,8 @@
 # Plan: Resource right-sizing from execution-trace evidence
 
+> **Status:** Partially superseded by 24 and 27 · **Date:** 2026-09-22
+> **Decision:** Resource labels were cut to what execution traces showed (smaller memory and CPU tiers, TD2 on the low tier). The audit script is `dev/resource_audit.py`.
+
 ## Context
 
 FOMO's resource tiers in `conf/base.config` were set before any profiling existed. Two

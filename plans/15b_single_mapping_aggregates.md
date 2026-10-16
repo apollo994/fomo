@@ -1,5 +1,8 @@
 # 15b — Phase B: raw and collapsed aggregates
 
+> **Status:** Partially superseded by 23 · **Date:** 2026-09-22
+> **Decision:** Phase B of 15: the pooled models are built from the single allModels file (raw and gffcompare-collapsed), and the top-3 set is a subset of it.
+
 Sub-plan of [`15_single_mapping.md`](15_single_mapping.md). Requires Phase A
 ([`15a`](15a_single_mapping_align.md)) checkpoint to have passed.
 

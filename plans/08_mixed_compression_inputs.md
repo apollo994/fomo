@@ -1,5 +1,8 @@
 # Plan: Accept both compressed (.gz) and uncompressed FASTA / GFF3 inputs
 
+> **Status:** Superseded by 26 · **Date:** 2026-05-27
+> **Decision:** Inputs could be plain or gzipped; gzipped ones were decompressed by a gunzip step wherever a tool needed plain files.
+
 > **Partly superseded by `plans/17_scheduling_efficiency.md`.** `MAYBE_GUNZIP` itself
 > stands, but two premises of the "Current state" section below have since gone stale:
 > **minimap2 reads gzip natively** (so `MINIMAP2_INDEX` is now fed the gzipped assembly

@@ -18,3 +18,7 @@ commands
 *commands.txt
 *command.txt
 /prompts/
+.nf-test/
+.nf-test.log
+.pytest_cache/
+.ruff_cache/

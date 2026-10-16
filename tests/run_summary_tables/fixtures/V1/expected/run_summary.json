@@ -1,0 +1,236 @@
+{
+  "overview": {
+    "n_species": 3,
+    "n_source_only": 1,
+    "n_target_only": 1,
+    "n_both": 1,
+    "n_sources": 2,
+    "n_targets": 2,
+    "n_targets_annotated": 1,
+    "n_targets_with_reference": 2,
+    "n_pairs": 3,
+    "feature_types": [
+      "lnc_RNA"
+    ],
+    "include_mrna": false,
+    "include_decoy": false,
+    "td2_psauron_min": 0.5
+  },
+  "sources": [
+    "Lycaena_alciphron_282377",
+    "Lycaena_thersamon_265360"
+  ],
+  "targets": [
+    "Lycaena_alciphron_282377",
+    "Lycaena_hippothoe_580924"
+  ],
+  "species": {
+    "Lycaena_alciphron_282377": {
+      "role": "both",
+      "has_gff3": true,
+      "is_source": true,
+      "is_target": true,
+      "benchmarked": true,
+      "input_genes_total": 1038.0,
+      "input_lncRNA_transcripts_raw": 67.0,
+      "spliced_kept": 62.0,
+      "td2_coding_dropped": 3.0,
+      "lncRNA_donated": 59.0
+    },
+    "Lycaena_hippothoe_580924": {
+      "role": "target",
+      "has_gff3": true,
+      "is_source": false,
+      "is_target": true,
+      "benchmarked": false,
+      "input_genes_total": 1053.0,
+      "input_lncRNA_transcripts_raw": 68.0,
+      "spliced_kept": null,
+      "td2_coding_dropped": null,
+      "lncRNA_donated": null
+    },
+    "Lycaena_thersamon_265360": {
+      "role": "source",
+      "has_gff3": true,
+      "is_source": true,
+      "is_target": false,
+      "benchmarked": false,
+      "input_genes_total": 1030.0,
+      "input_lncRNA_transcripts_raw": 85.0,
+      "spliced_kept": 77.0,
+      "td2_coding_dropped": 3.0,
+      "lncRNA_donated": 74.0
+    }
+  },
+  "source_funnel": {
+    "Lycaena_alciphron_282377": {
+      "raw_lncRNA_transcripts": 67.0,
+      "dropped_unstranded": 0.0,
+      "dropped_single_exon": 0.0,
+      "dropped_non_longest": 5.0,
+      "dropped_coding": 3.0,
+      "kept": 59.0,
+      "pct_kept": 88.05970149253731,
+      "n_genes_raw": 62.0,
+      "n_genes_kept": 59.0,
+      "mean_transcript_length_kept": 7828.34,
+      "mean_spliced_length_kept": 377.64,
+      "mean_exon_length_kept": 170.08,
+      "exons_per_transcript_kept": 2.2203389830508473
+    },
+    "Lycaena_thersamon_265360": {
+      "raw_lncRNA_transcripts": 85.0,
+      "dropped_unstranded": 0.0,
+      "dropped_single_exon": 0.0,
+      "dropped_non_longest": 8.0,
+      "dropped_coding": 3.0,
+      "kept": 74.0,
+      "pct_kept": 87.05882352941177,
+      "n_genes_raw": 77.0,
+      "n_genes_kept": 74.0,
+      "mean_transcript_length_kept": 4768.82,
+      "mean_spliced_length_kept": 372.61,
+      "mean_exon_length_kept": 164.12,
+      "exons_per_transcript_kept": 2.27027027027027
+    }
+  },
+  "targets_before_after": {
+    "Lycaena_alciphron_282377": {
+      "lnc_RNA": {
+        "target": "Lycaena_alciphron_282377",
+        "transcript_type": "lnc_RNA",
+        "genes_before": 62.0,
+        "curated_genes": 0.0,
+        "genes_after": 62.0,
+        "pct_increase": 0.0,
+        "reads_mapped_percent": 87.84
+      },
+      "mRNA": {
+        "target": "Lycaena_alciphron_282377",
+        "transcript_type": "mRNA",
+        "genes_before": 913.0,
+        "curated_genes": 0.0,
+        "genes_after": 913.0,
+        "pct_increase": 0.0,
+        "reads_mapped_percent": null
+      },
+      "rRNA": {
+        "target": "Lycaena_alciphron_282377",
+        "transcript_type": "rRNA",
+        "genes_before": 1.0,
+        "curated_genes": 0.0,
+        "genes_after": 1.0,
+        "pct_increase": 0.0,
+        "reads_mapped_percent": null
+      },
+      "snRNA": {
+        "target": "Lycaena_alciphron_282377",
+        "transcript_type": "snRNA",
+        "genes_before": 14.0,
+        "curated_genes": 0.0,
+        "genes_after": 14.0,
+        "pct_increase": 0.0,
+        "reads_mapped_percent": null
+      },
+      "tRNA": {
+        "target": "Lycaena_alciphron_282377",
+        "transcript_type": "tRNA",
+        "genes_before": 48.0,
+        "curated_genes": 0.0,
+        "genes_after": 48.0,
+        "pct_increase": 0.0,
+        "reads_mapped_percent": null
+      }
+    },
+    "Lycaena_hippothoe_580924": {
+      "lnc_RNA": {
+        "target": "Lycaena_hippothoe_580924",
+        "transcript_type": "lnc_RNA",
+        "genes_before": 64.0,
+        "curated_genes": 3.0,
+        "genes_after": 67.0,
+        "pct_increase": 4.6875,
+        "reads_mapped_percent": 93.23
+      },
+      "mRNA": {
+        "target": "Lycaena_hippothoe_580924",
+        "transcript_type": "mRNA",
+        "genes_before": 920.0,
+        "curated_genes": 0.0,
+        "genes_after": 920.0,
+        "pct_increase": 0.0,
+        "reads_mapped_percent": null
+      },
+      "snRNA": {
+        "target": "Lycaena_hippothoe_580924",
+        "transcript_type": "snRNA",
+        "genes_before": 16.0,
+        "curated_genes": 0.0,
+        "genes_after": 16.0,
+        "pct_increase": 0.0,
+        "reads_mapped_percent": null
+      },
+      "tRNA": {
+        "target": "Lycaena_hippothoe_580924",
+        "transcript_type": "tRNA",
+        "genes_before": 53.0,
+        "curated_genes": 0.0,
+        "genes_after": 53.0,
+        "pct_increase": 0.0,
+        "reads_mapped_percent": null
+      }
+    }
+  },
+  "accuracy_f1": {
+    "Lycaena_alciphron_282377": {
+      "Lycaena_alciphron_282377": null,
+      "Lycaena_hippothoe_580924": null
+    },
+    "Lycaena_thersamon_265360": {
+      "Lycaena_alciphron_282377": 28.55,
+      "Lycaena_hippothoe_580924": null
+    }
+  },
+  "aggregates": {
+    "Lycaena_alciphron_282377": {
+      "lnc_RNA.best_single_source": {
+        "target": "Lycaena_alciphron_282377",
+        "feature_type": "lnc_RNA",
+        "model": "best_single_source",
+        "best_source": "Lycaena_thersamon_265360",
+        "sn": 28.8,
+        "pr": 28.3,
+        "f1": 28.54781085814361,
+        "n_models": 60.0,
+        "delta_f1_vs_best_single": 0.0
+      },
+      "lnc_RNA.allModels_raw": {
+        "target": "Lycaena_alciphron_282377",
+        "feature_type": "lnc_RNA",
+        "model": "allModels_raw",
+        "best_source": "Lycaena_thersamon_265360",
+        "sn": 28.8,
+        "pr": 28.3,
+        "f1": 28.54781085814361,
+        "n_models": 60.0,
+        "delta_f1_vs_best_single": 0.0
+      }
+    }
+  },
+  "donors": {
+    "Lycaena_alciphron_282377": {
+      "mean_f1": null,
+      "median_f1": null,
+      "best_f1": null,
+      "n_targets_scored": 0,
+      "mean_models_projected": 53.0
+    },
+    "Lycaena_thersamon_265360": {
+      "mean_f1": 28.54781085814361,
+      "median_f1": 28.54781085814361,
+      "best_f1": 28.54781085814361,
+      "n_targets_scored": 1,
+      "mean_models_projected": 60.5
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "run_target_before_after",
+  "section_name": "Targets \u2014 lncRNA genes before and after FOMO",
+  "description": "Per target: lncRNA genes already in its reference annotation versus the curated lncRNA genes FOMO adds \u2014 intron chains shared exactly by at least --curate_min_species source species, none overlapping a reference exon. A target without a reference annotation starts at zero.",
+  "plot_type": "bargraph",
+  "pconfig": {
+    "id": "run_target_before_after_bargraph",
+    "title": "FOMO: target lncRNA genes before and after curation",
+    "ylab": "genes"
+  },
+  "data": {
+    "Lycaena_alciphron_282377": {
+      "existing_lncRNA_genes": 62.0,
+      "curated_lncRNA_genes": 0.0
+    },
+    "Lycaena_hippothoe_580924": {
+      "existing_lncRNA_genes": 64.0,
+      "curated_lncRNA_genes": 3.0
+    }
+  }
+}

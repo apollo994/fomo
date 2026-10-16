@@ -1,0 +1,17 @@
+{
+ "schema": "fomo-data/1",
+ "section": "transcript_filter",
+ "identity": {
+  "species": "Lycaena_thersamon_265360",
+  "side": "source",
+  "track": "mRNA",
+  "label": "mRNA",
+  "order": 3
+ },
+ "data": {
+  "n_transcripts": 1414,
+  "n_stranded": 1414,
+  "n_spliced": 1388,
+  "n_selected": 864
+ }
+}

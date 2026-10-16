@@ -1,0 +1,5 @@
+Sample	target	feature_type	model	best_source	sn	pr	f1	n_models	delta_f1_vs_best_single	decoy_models	decoy_f1	est_fdr_pct
+Lycaena_alciphron_282377.lnc_RNA.best_single_source	Lycaena_alciphron_282377	lnc_RNA	best_single_source	Lycaena_thersamon_265360	28.80	28.30	28.55	60	0	40	0	66.67
+Lycaena_alciphron_282377.lnc_RNA.allModels_raw	Lycaena_alciphron_282377	lnc_RNA	allModels_raw	Lycaena_thersamon_265360	28.80	28.30	28.55	60	0	40	0	66.67
+Lycaena_alciphron_282377.mRNA.best_single_source	Lycaena_alciphron_282377	mRNA	best_single_source	Lycaena_thersamon_265360	45	48.10	46.50	830	0	755	0	90.96
+Lycaena_alciphron_282377.mRNA.allModels_raw	Lycaena_alciphron_282377	mRNA	allModels_raw	Lycaena_thersamon_265360	45	48.10	46.50	830	0	755	0	90.96

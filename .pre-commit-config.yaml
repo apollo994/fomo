@@ -1,0 +1,50 @@
+# Local hooks only: the tools come from dev/environment.yml (conda env fomo-dev), so the hooks run
+# offline and with the same versions as CI.
+exclude: '^(assets/test_data/|ablation/|plans/27_refactor_original/|tests/.*/fixtures/|tests/golden/.*\.tsv$|bin/gff-feature-stats$)'
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: ruff check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format --check
+        language: system
+        types: [python]
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        types: [shell]
+      - id: nextflow-lint
+        name: nextflow lint
+        entry: dev/nextflow_lint.sh
+        language: system
+        files: '\.(nf|config)$'
+        pass_filenames: false
+      - id: comment-budget
+        name: comment budget
+        entry: python3 dev/code_metrics.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: doc-links
+        name: documentation links
+        entry: python3 dev/check_links.py
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: trailing-whitespace
+        name: no trailing whitespace
+        entry: '[ \t]+$'
+        language: pygrep
+        types: [text]
+        exclude: '\.(md|tsv)$'
+      - id: end-of-file
+        name: one newline at end of file
+        entry: python3 dev/end_of_file.py
+        language: system
+        types: [text]

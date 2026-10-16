@@ -1,5 +1,8 @@
 # Plan: FOMO Preprocessing — Step 00 (incremental)
 
+> **Status:** Partially superseded by 20 and 27 · **Date:** 2026-05-24
+> **Decision:** Preprocessing filters each source annotation to spliced transcripts of a feature type (FILTER_TRANSCRIPT) and extracts their sequences with gffread rather than AGAT; the test data is one subsampled chromosome per species.
+
 ## Context
 
 FOMO transfers lncRNA annotations from source species onto a target assembly. The preprocessing stage prepares spliced FASTAs that the projection stage (minimap2) consumes. This plan covers **only step 00** ("extract lncRNA/mRNA spliced FASTA") plus the project skeleton needed to run it end-to-end on subsampled test data. Steps 02–05 (intergenic intervals, decoy relocation, decoy FASTA, statistics) come in follow-up work.

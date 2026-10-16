@@ -1,0 +1,10 @@
+Sample	target	transcript_type	genes_before	curated_genes	genes_after	pct_increase	reads_mapped_percent
+Lycaena_alciphron_282377.lnc_RNA	Lycaena_alciphron_282377	lnc_RNA	62	0	62	0	87.84
+Lycaena_alciphron_282377.mRNA	Lycaena_alciphron_282377	mRNA	913	0	913	0	NA
+Lycaena_alciphron_282377.rRNA	Lycaena_alciphron_282377	rRNA	1	0	1	0	NA
+Lycaena_alciphron_282377.snRNA	Lycaena_alciphron_282377	snRNA	14	0	14	0	NA
+Lycaena_alciphron_282377.tRNA	Lycaena_alciphron_282377	tRNA	48	0	48	0	NA
+Lycaena_hippothoe_580924.lnc_RNA	Lycaena_hippothoe_580924	lnc_RNA	64	3	67	4.69	93.23
+Lycaena_hippothoe_580924.mRNA	Lycaena_hippothoe_580924	mRNA	920	0	920	0	NA
+Lycaena_hippothoe_580924.snRNA	Lycaena_hippothoe_580924	snRNA	16	0	16	0	NA
+Lycaena_hippothoe_580924.tRNA	Lycaena_hippothoe_580924	tRNA	53	0	53	0	NA

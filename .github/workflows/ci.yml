@@ -1,0 +1,100 @@
+# Gates of plans/27_refactor.md §5: lint (G2), unit tests (G1), stub matrix (G3) and the golden
+# test-profile variants (G4). Tools come from dev/environment.yml; containers run under Docker.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  NXF_VER: 25.10.4
+  NXF_ANSI_LOG: false
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: dev/environment.yml
+          cache-environment: true
+      - name: cache the Nextflow framework and plugins
+        uses: actions/cache@v4
+        with:
+          path: ~/.nextflow
+          key: nextflow-${{ env.NXF_VER }}-${{ hashFiles('nextflow.config') }}
+      - uses: nf-core/setup-nextflow@v2
+        with:
+          version: ${{ env.NXF_VER }}
+      - name: pre-commit
+        shell: bash -el {0}
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: dev/environment.yml
+          cache-environment: true
+      - name: pytest
+        shell: bash -el {0}
+        run: pytest -q
+
+  nf-test-stub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: dev/environment.yml
+          cache-environment: true
+      - name: cache the Nextflow framework and plugins
+        uses: actions/cache@v4
+        with:
+          path: ~/.nextflow
+          key: nextflow-${{ env.NXF_VER }}-${{ hashFiles('nextflow.config') }}
+      - uses: nf-core/setup-nextflow@v2
+        with:
+          version: ${{ env.NXF_VER }}
+      - name: nf-test stub matrix
+        shell: bash -el {0}
+        run: nf-test test tests/pipeline --profile +docker
+
+  golden:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [V1, V2, V3, V4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: dev/environment.yml
+          cache-environment: true
+      - name: cache the Nextflow framework and plugins
+        uses: actions/cache@v4
+        with:
+          path: ~/.nextflow
+          key: nextflow-${{ env.NXF_VER }}-${{ hashFiles('nextflow.config') }}
+      - uses: nf-core/setup-nextflow@v2
+        with:
+          version: ${{ env.NXF_VER }}
+      - name: run ${{ matrix.variant }}
+        shell: bash -el {0}
+        run: tests/golden/run_variant.sh ${{ matrix.variant }} "$RUNNER_TEMP/${{ matrix.variant }}" test,docker
+      - name: compare with the golden snapshot
+        shell: bash -el {0}
+        run: python3 tests/golden/compare.py tests/golden/${{ matrix.variant }}.tsv "$RUNNER_TEMP/${{ matrix.variant }}/snapshot.tsv"
+      - name: keep the run log, snapshot and deliverables on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-${{ matrix.variant }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.variant }}/nextflow.stdout
+            ${{ runner.temp }}/${{ matrix.variant }}/snapshot.tsv
+            ${{ runner.temp }}/${{ matrix.variant }}/results

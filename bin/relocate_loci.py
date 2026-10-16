@@ -1,15 +1,34 @@
 #!/usr/bin/env python3
+"""
+Relocate spliced transcript models into intergenic intervals: the decoy track.
+
+Each decoy keeps a source model's shape (exon and intron lengths, strand) and moves to a random
+position inside one intergenic interval, chosen with a chromosome probability proportional to its
+eligible intergenic length (intervals at least as long as the model). A used stretch leaves its
+interval, so decoys never overlap. Models with fewer than two exons are not relocated; with
+--decoy-cap N a random sample of N models is. The same --seed gives the same decoys.
+
+IDs: transcript <tid>.reloc, gene <tid>.gene.reloc, exon <exon ID>.reloc (or <tid>.reloc.exon<i>);
+every gene and transcript carries decoy=true. The output is grouped by seqid, as gff-feature-stats
+requires, with a header that records the relocated and skipped counts.
+
+Usage: relocate_loci.py --gff models.gff3 --bed intergenic.bed --output decoys.gff3 [--seed N]
+"""
+
 import argparse
 import random
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fomo_io  # noqa: E402
+
+Interval = tuple[int, int]
+log = fomo_io.get_logger('relocate_loci')
 
 
-# ----------------------------
-# Data structures
-# ----------------------------
-@dataclass
+@dataclass(slots=True)
 class Feature:
     seqid: str
     source: str
@@ -19,345 +38,182 @@ class Feature:
     score: str
     strand: str
     phase: str
-    attrs_raw: str
-    attrs: Dict[str, str]
+    attrs: dict[str, str]
 
     def to_gff3(self) -> str:
-        attr_str = format_gff3_attrs(self.attrs)
-        return "\t".join([
-            self.seqid,
-            self.source,
-            self.ftype,
-            str(self.start),
-            str(self.end),
-            self.score,
-            self.strand,
-            self.phase,
-            attr_str
-        ])
+        cols = [self.seqid, self.source, self.ftype, str(self.start), str(self.end)]
+        return '\t'.join(cols + [self.score, self.strand, self.phase, format_attrs(self.attrs)])
 
 
-@dataclass
+@dataclass(slots=True)
 class TranscriptModel:
     tid: str
     transcript: Feature
-    exons: List[Feature]
-    gene: Optional[Feature] = None
+    exons: list[Feature]
+    gene: Feature | None = None
 
 
-# ----------------------------
-# GFF3 attribute parsing
-# ----------------------------
-def parse_gff3_attrs(attr_str: str) -> Dict[str, str]:
-    d: Dict[str, str] = {}
-    attr_str = attr_str.strip()
-    if not attr_str or attr_str == ".":
-        return d
-    for part in attr_str.split(";"):
-        part = part.strip()
-        if not part:
-            continue
-        if "=" in part:
-            k, v = part.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            if k and k not in d:
-                d[k] = v
-        else:
-            toks = part.split()
-            if len(toks) >= 2 and toks[0] not in d:
-                d[toks[0]] = toks[1]
-    return d
-
-
-def format_gff3_attrs(attrs: Dict[str, str]) -> str:
+def format_attrs(attrs: dict[str, str]) -> str:
+    """ID, Parent and Name first, then the other keys sorted; '.' when empty."""
     if not attrs:
-        return "."
-    keys = list(attrs.keys())
-    preferred = []
-    for k in ["ID", "Parent", "Name"]:
-        if k in attrs:
-            preferred.append(k)
-    rest = sorted([k for k in keys if k not in set(preferred)])
-    out_keys = preferred + rest
-    return ";".join([f"{k}={attrs[k]}" for k in out_keys])
+        return '.'
+    first = [k for k in ('ID', 'Parent', 'Name') if k in attrs]
+    keys = first + sorted(k for k in attrs if k not in first)
+    return ';'.join(f'{k}={attrs[k]}' for k in keys)
 
 
-# ----------------------------
-# Intergenic interval handling
-# ----------------------------
-def bed_to_gff_interval(bed_start0: int, bed_end: int) -> Tuple[int, int]:
-    return bed_start0 + 1, bed_end
-
-
-def interval_len(iv: Tuple[int, int]) -> int:
+def interval_len(iv: Interval) -> int:
     return iv[1] - iv[0] + 1
 
 
-def remove_subinterval(intervals: List[Tuple[int, int]], idx: int, used: Tuple[int, int]) -> None:
-    s, e = intervals[idx]
-    us, ue = used
-    new_ivs: List[Tuple[int, int]] = []
-    if us > s:
-        new_ivs.append((s, us - 1))
-    if ue < e:
-        new_ivs.append((ue + 1, e))
-    intervals.pop(idx)
-    for iv in new_ivs:
-        intervals.append(iv)
+def remove_subinterval(intervals: list[Interval], idx: int, used: Interval) -> None:
+    """Replace interval idx by what remains of it around `used` (appended at the end)."""
+    s, e = intervals.pop(idx)
+    if used[0] > s:
+        intervals.append((s, used[0] - 1))
+    if used[1] < e:
+        intervals.append((used[1] + 1, e))
 
 
-def choose_region_for_length(intervals: List[Tuple[int, int]], length: int) -> Optional[int]:
+def choose_region(intervals: list[Interval], length: int, rng: random.Random) -> int | None:
+    """Index of a random interval at least `length` long, or None."""
     candidates = [i for i, iv in enumerate(intervals) if interval_len(iv) >= length]
-    if not candidates:
-        return None
-    return random.choice(candidates)
+    return rng.choice(candidates) if candidates else None
 
 
-# ----------------------------
-# Model shape calculation and relocation
-# ----------------------------
-def transcript_span(exons: List[Feature]) -> Tuple[int, int]:
+def transcript_span(exons: list[Feature]) -> Interval:
     return min(e.start for e in exons), max(e.end for e in exons)
 
 
-def build_shape(exons: List[Feature]) -> List[Tuple[int, int]]:
-    exons_sorted = sorted(exons, key=lambda f: f.start)
-    t_start = exons_sorted[0].start
-    return [(ex.start - t_start, ex.end - t_start) for ex in exons_sorted]
-
-
-def relocate_model(model: TranscriptModel, new_seqid: str, new_t_start: int, new_source: str = "relocated") -> TranscriptModel:
-    t_old_start, t_old_end = transcript_span(model.exons)
-    t_len = t_old_end - t_old_start + 1
-    new_t_end = new_t_start + t_len - 1
-
-    t_feat = model.transcript
-    new_t_attrs = dict(t_feat.attrs)
-    old_tid = model.tid
-    new_tid = f"{old_tid}.reloc"
-    new_gid = f"{old_tid}.gene.reloc"
-    new_t_attrs["ID"] = new_tid
-    new_t_attrs["Parent"] = new_gid
-
-    new_gene = Feature(
-        seqid=new_seqid, source=new_source, ftype="gene",
-        start=new_t_start, end=new_t_end,
-        score=t_feat.score, strand=t_feat.strand, phase=".",
-        attrs_raw="", attrs={"ID": new_gid, "decoy": "true"}
-    )
-
-    new_t_attrs["decoy"] = "true"
-    new_transcript = Feature(
-        seqid=new_seqid, source=new_source, ftype=t_feat.ftype,
-        start=new_t_start, end=new_t_end,
-        score=t_feat.score, strand=t_feat.strand, phase=t_feat.phase,
-        attrs_raw=t_feat.attrs_raw, attrs=new_t_attrs
-    )
-
-    new_exons: List[Feature] = []
+def relocate_model(model: TranscriptModel, seqid: str, start: int, source: str = 'relocated') -> TranscriptModel:
+    """The model moved to seqid:start, with decoy IDs and attributes."""
+    old_start, old_end = transcript_span(model.exons)
+    end = start + old_end - old_start
+    t = model.transcript
+    tid, gid = f'{model.tid}.reloc', f'{model.tid}.gene.reloc'
+    gene = Feature(seqid, source, 'gene', start, end, t.score, t.strand, '.', {'ID': gid, 'decoy': 'true'})
+    t_attrs = dict(t.attrs) | {'ID': tid, 'Parent': gid, 'decoy': 'true'}
+    transcript = Feature(seqid, source, t.ftype, start, end, t.score, t.strand, t.phase, t_attrs)
+    exons = []
     for i, ex in enumerate(model.exons, start=1):
-        ex_off_s = ex.start - t_old_start
-        ex_off_e = ex.end - t_old_start
-        new_ex_s = new_t_start + ex_off_s
-        new_ex_e = new_t_start + ex_off_e
-
-        new_e_attrs = dict(ex.attrs)
-        new_e_attrs["Parent"] = new_tid
-        if "ID" in new_e_attrs:
-            new_e_attrs["ID"] = f"{new_e_attrs['ID']}.reloc"
-        else:
-            new_e_attrs["ID"] = f"{new_tid}.exon{i}"
-
-        new_exons.append(Feature(
-            seqid=new_seqid, source=new_source, ftype=ex.ftype,
-            start=new_ex_s, end=new_ex_e,
-            score=ex.score, strand=ex.strand, phase=ex.phase,
-            attrs_raw=ex.attrs_raw, attrs=new_e_attrs
-        ))
-
-    new_exons.sort(key=lambda f: f.start)
-    return TranscriptModel(tid=new_tid, transcript=new_transcript, exons=new_exons, gene=new_gene)
+        e_attrs = dict(ex.attrs) | {'Parent': tid}
+        e_attrs['ID'] = f'{e_attrs["ID"]}.reloc' if 'ID' in e_attrs else f'{tid}.exon{i}'
+        shift = start - old_start
+        exons.append(
+            Feature(seqid, source, ex.ftype, ex.start + shift, ex.end + shift, ex.score, ex.strand, ex.phase, e_attrs)
+        )
+    exons.sort(key=lambda f: f.start)
+    return TranscriptModel(tid=tid, transcript=transcript, exons=exons, gene=gene)
 
 
-# ----------------------------
-# Parsing input files
-# ----------------------------
-def read_intergenic_bed(path: str, min_length: int = 0) -> Dict[str, List[Tuple[int, int]]]:
-    per_chr: Dict[str, List[Tuple[int, int]]] = {}
-    with open(path, "r", encoding="utf-8") as fh:
+def read_intergenic_bed(path: str, min_length: int = 0) -> dict[str, list[Interval]]:
+    """Chromosome -> sorted 1-based closed intervals of a BED file."""
+    per_chr: dict[str, list[Interval]] = {}
+    with fomo_io.open_text(path) as fh:
         for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
             parts = line.split()
-            if len(parts) < 3:
+            if len(parts) < 3 or line.startswith('#'):
                 continue
-            chrom = parts[0]
-            start0 = int(parts[1])
-            end = int(parts[2])
-            s1, e1 = bed_to_gff_interval(start0, end)
-            if e1 < s1:
+            iv = (int(parts[1]) + 1, int(parts[2]))
+            if iv[1] < iv[0] or (min_length > 0 and interval_len(iv) < min_length):
                 continue
-            if min_length > 0 and interval_len((s1, e1)) < min_length:
-                continue
-            per_chr.setdefault(chrom, []).append((s1, e1))
-    for chrom in per_chr:
-        per_chr[chrom].sort()
+            per_chr.setdefault(parts[0], []).append(iv)
+    for ivs in per_chr.values():
+        ivs.sort()
     return per_chr
 
 
-def read_gff3_models(path: str, transcript_type: str = "lnc_RNA", exon_type: str = "exon") -> List[TranscriptModel]:
-    transcripts: Dict[str, Feature] = {}
-    exons_by_parent: Dict[str, List[Feature]] = {}
-
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            if not line.strip() or line.startswith("#"):
-                continue
-            fields = line.rstrip("\n").split("\t")
-            if len(fields) < 9:
-                continue
-
-            seqid, source, ftype, start, end, score, strand, phase, attrs_raw = fields
-            start_i = int(start)
-            end_i = int(end)
-            attrs = parse_gff3_attrs(attrs_raw)
-
-            feat = Feature(
-                seqid=seqid, source=source, ftype=ftype,
-                start=start_i, end=end_i,
-                score=score, strand=strand, phase=phase,
-                attrs_raw=attrs_raw, attrs=attrs
-            )
-
-            if ftype == transcript_type:
-                tid = attrs.get("ID")
-                if tid:
-                    transcripts[tid] = feat
-            elif ftype == exon_type:
-                parent = attrs.get("Parent")
-                if parent:
-                    for p in parent.split(","):
-                        p = p.strip()
-                        if p:
-                            exons_by_parent.setdefault(p, []).append(feat)
-
-    models: List[TranscriptModel] = []
+def read_gff3_models(path: str, transcript_type: str, exon_type: str) -> list[TranscriptModel]:
+    """The transcripts of `transcript_type` with at least two exons, in file order."""
+    transcripts: dict[str, Feature] = {}
+    exons_by_parent: dict[str, list[Feature]] = {}
+    for _, cols in fomo_io.iter_gff(path):
+        seqid, source, ftype, start, end, score, strand, phase, col9 = cols[:9]
+        attrs = fomo_io.parse_attrs(col9)
+        feat = Feature(seqid, source, ftype, int(start), int(end), score, strand, phase, attrs)
+        if ftype == transcript_type and attrs.get('ID'):
+            transcripts[attrs['ID']] = feat
+        elif ftype == exon_type:
+            for parent in fomo_io.split_ids(attrs.get('Parent', '')):
+                exons_by_parent.setdefault(parent, []).append(feat)
+    models = []
     for tid, tfeat in transcripts.items():
-        exs = exons_by_parent.get(tid, [])
-        if len(exs) < 2:
-            continue
-        exs_sorted = sorted(exs, key=lambda f: f.start)
-        models.append(TranscriptModel(tid=tid, transcript=tfeat, exons=exs_sorted))
-
+        exons = exons_by_parent.get(tid, [])
+        if len(exons) >= 2:
+            models.append(TranscriptModel(tid=tid, transcript=tfeat, exons=sorted(exons, key=lambda f: f.start)))
     return models
 
 
-# ----------------------------
-# CLI
-# ----------------------------
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Relocate transcript models into intergenic intervals of a target genome"
-    )
-    p.add_argument("--input-gff",            required=True,  metavar="GFF3",
-                   help="Source filtered GFF3 (plain, not gzipped)")
-    p.add_argument("--intergenic-bed",        required=True,  metavar="BED",
-                   help="Target intergenic intervals in BED format")
-    p.add_argument("--output-gff",           required=True,  metavar="GFF3",
-                   help="Output decoy GFF3")
-    p.add_argument("--seed",                 type=int, default=None,
-                   help="Random seed for reproducible placement")
-    p.add_argument("--feature-type",         default="lnc_RNA",
-                   help="Transcript feature type to relocate (default: lnc_RNA)")
-    p.add_argument("--exon-type",            default="exon",
-                   help="Exon feature type (default: exon)")
-    p.add_argument("--min-intergenic-length", type=int, default=0, metavar="BP",
-                   help="Skip intergenic intervals shorter than this (default: 0)")
-    p.add_argument("--decoy-cap",            type=int, default=1000, metavar="N",
-                   help="Randomly sample at most N models before relocation "
-                        "(default: 1000). Use 0 to disable the cap.")
-    return p.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-
-    if args.seed is not None:
-        random.seed(args.seed)
-
-    intergenic = read_intergenic_bed(args.intergenic_bed, min_length=args.min_intergenic_length)
-    models = read_gff3_models(args.input_gff, transcript_type=args.feature_type, exon_type=args.exon_type)
-    random.shuffle(models)
-
-    if args.decoy_cap > 0 and len(models) > args.decoy_cap:
-        models = models[:args.decoy_cap]
-
-    relocated: List[TranscriptModel] = []
-    skipped = 0
-
-    for m in models:
-        old_span_s, old_span_e = transcript_span(m.exons)
-        t_len = old_span_e - old_span_s + 1
-
-        # Weight chromosome selection by total eligible intergenic length so
-        # large chromosomes receive proportionally more decoys (instead of
-        # uniform sampling, which oversamples small contigs).
-        chrom_weights = []
+def relocate_all(
+    models: list[TranscriptModel], intergenic: dict[str, list[Interval]], rng: random.Random
+) -> tuple[list[TranscriptModel], int]:
+    """-> (relocated models grouped by seqid, number skipped for lack of space)."""
+    relocated, skipped = [], 0
+    for model in models:
+        span_start, span_end = transcript_span(model.exons)
+        length = span_end - span_start + 1
+        weights = []
         for chrom, ivs in intergenic.items():
-            eligible_len = sum(interval_len(iv) for iv in ivs if interval_len(iv) >= t_len)
-            if eligible_len > 0:
-                chrom_weights.append((chrom, eligible_len))
-
-        if not chrom_weights:
+            eligible = sum(interval_len(iv) for iv in ivs if interval_len(iv) >= length)
+            if eligible > 0:
+                weights.append((chrom, eligible))
+        if not weights:
             skipped += 1
             continue
-
-        chroms, weights = zip(*chrom_weights)
-        tgt_chrom = random.choices(chroms, weights=weights, k=1)[0]
-
-        idx = choose_region_for_length(intergenic[tgt_chrom], t_len)
+        chroms, chrom_weights = zip(*weights, strict=True)
+        chrom = rng.choices(chroms, weights=chrom_weights, k=1)[0]
+        idx = choose_region(intergenic[chrom], length, rng)
         if idx is None:
             skipped += 1
             continue
+        region_start, region_end = intergenic[chrom][idx]
+        start = rng.randint(region_start, region_end - length + 1)
+        remove_subinterval(intergenic[chrom], idx, (start, start + length - 1))
+        relocated.append(relocate_model(model, chrom, start))
+    # Each model picks its chromosome independently; a stable sort on seqid groups the output
+    # (gff-feature-stats rejects interleaved seqids) and keeps every model's lines together.
+    relocated.sort(key=lambda m: m.transcript.seqid)
+    return relocated, skipped
 
-        region_s, region_e = intergenic[tgt_chrom][idx]
-        new_start = random.randint(region_s, region_e - t_len + 1)
-        used = (new_start, new_start + t_len - 1)
 
-        remove_subinterval(intergenic[tgt_chrom], idx, used)
-        relocated.append(relocate_model(m, new_seqid=tgt_chrom, new_t_start=new_start, new_source="relocated"))
+def write_decoys(path: str, relocated: list[TranscriptModel], skipped: int, feature_type: str) -> None:
+    with fomo_io.open_text(path, 'wt') as out:
+        out.write('##gff-version 3\n##source=relocate_loci\n')
+        out.write(f'##feature_type={feature_type}\n##relocated_models={len(relocated)}\n##skipped_models={skipped}\n')
+        for model in relocated:
+            out.write(model.gene.to_gff3() + '\n')
+            out.write(model.transcript.to_gff3() + '\n')
+            out.writelines(ex.to_gff3() + '\n' for ex in model.exons)
 
-    # Group the output by target chromosome. Each model picks its chromosome
-    # independently above, so writing in model order interleaves seqids — and
-    # gff-feature-stats (GFF_STATS) requires every seqid's records to be
-    # contiguous, rejecting interleaved input above its 200k-line batch
-    # threshold. That only bites for large decoy sets (decoy_cap 0 or ≳20k),
-    # but grouping here keeps the decoy GFF3 valid at any cap. The sort is
-    # stable and keyed on seqid alone, so each model's gene/transcript/exon
-    # lines stay together and in order; only the order of models changes.
-    relocated.sort(key=lambda rm: rm.transcript.seqid)
 
-    with open(args.output_gff, "w", encoding="utf-8") as out:
-        out.write("##gff-version 3\n")
-        out.write("##source=relocate_loci\n")
-        out.write(f"##feature_type={args.feature_type}\n")
-        out.write(f"##relocated_models={len(relocated)}\n")
-        out.write(f"##skipped_models={skipped}\n")
-        for rm in relocated:
-            if rm.gene is not None:
-                out.write(rm.gene.to_gff3() + "\n")
-            out.write(rm.transcript.to_gff3() + "\n")
-            for ex in rm.exons:
-                out.write(ex.to_gff3() + "\n")
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--gff', required=True, help='GFF3 of the models to relocate')
+    p.add_argument('--bed', required=True, help='intergenic intervals (BED)')
+    p.add_argument('--output', required=True, help='decoy GFF3')
+    p.add_argument('--seed', type=int, default=None, help='random seed for reproducible placement')
+    p.add_argument('--feature-type', default='lnc_RNA', help='transcript feature type to relocate (lnc_RNA)')
+    p.add_argument('--exon-type', default='exon', help='exon feature type (exon)')
+    p.add_argument('--min-intergenic-length', type=int, default=0, help='skip shorter intervals (bp, 0)')
+    p.add_argument('--decoy-cap', type=int, default=1000, help='relocate at most N random models (1000; 0: all)')
+    return p.parse_args()
 
-    print(f"Relocated models: {len(relocated)}", file=sys.stderr)
-    print(f"Skipped models:   {skipped}", file=sys.stderr)
 
+def main() -> int:
+    args = parse_args()
+    rng = random.Random(args.seed)
+    intergenic = read_intergenic_bed(args.bed, min_length=args.min_intergenic_length)
+    models = read_gff3_models(args.gff, args.feature_type, args.exon_type)
+    rng.shuffle(models)
+    if args.decoy_cap > 0:
+        models = models[: args.decoy_cap]
+    relocated, skipped = relocate_all(models, intergenic, rng)
+    write_decoys(args.output, relocated, skipped, args.feature_type)
+    log.info(f'relocated {len(relocated)} models, skipped {skipped}')
     if not relocated:
-        print("WARNING: zero models were relocated — check input GFF3 and intergenic BED", file=sys.stderr)
+        log.warning('no model was relocated: check the input GFF3 and the intergenic BED')
+    return 0
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    fomo_io.run(main)

@@ -1,232 +1,106 @@
 include { MERGE_FASTA as MERGE_SOURCE_FASTA        } from '../../modules/local/merge_fasta'
-include { MINIMAP2_INDEX                           } from '../../modules/nf-core/minimap2/index/main'
-include { MINIMAP2_ALIGN                           } from '../../modules/nf-core/minimap2/align/main'
-include { SAMTOOLS_STATS                           } from '../../modules/nf-core/samtools/stats/main.nf'
-include { SAMTOOLS_TO_MQC                          } from '../../modules/local/samtools_to_mqc'
+include { MINIMAP2_INDEX                           } from '../../modules/local/minimap2_index'
+include { MINIMAP2_ALIGN                           } from '../../modules/local/minimap2_align'
+include { SAMTOOLS_STATS                           } from '../../modules/local/samtools_stats'
 include { BAM_TO_GFF                               } from '../../modules/local/bam_to_gff'
-include { GFF_STATS_PROJECTED_BATCH                } from '../../modules/local/gff_stats_projected_batch'
-include { GFFREAD           as EXTRACT_PROJECTED_LNC } from '../../modules/nf-core/gffread/main'
+include { GFF_STATS as GFF_STATS_PROJECTED         } from '../../modules/local/gff_stats'
+include { EXTRACT_TRANSCRIPTS as EXTRACT_PROJECTED_LNC } from '../../modules/local/extract_transcripts'
 include { TD2_NONCODING     as TD2_NONCODING_PROJ  } from './td2_noncoding'
 include { FILTER_GFF_BY_ID  as FILTER_ALLMODELS    } from '../../modules/local/filter_gff_by_id'
 include { GFF_BY_SOURCE     as SPLIT_GFF_BY_SOURCE } from '../../modules/local/gff_by_source'
+include { withTrack; pairBy                        } from './fomo_utils'
 
 workflow PROJECTION {
     take:
     ch_target            // [ meta(role:'target'|'both'), fasta[.gz], gff3[.gz]|[] ] × T
-    ch_spliced_fasta     // [ meta(decoy:false, feature_type), fasta ] × F·S
-    ch_decoy_spliced     // [ meta(decoy:true,  feature_type), fasta ] × F·S
+    ch_spliced_fasta     // [ meta(track), fasta ] × F·S
+    ch_decoy_spliced     // [ meta(track, decoy:true), fasta ] × F·S
 
     main:
 
-    // Build one .mmi index per target (ext.args = '-x splice' set in conf/modules.config).
-    // Fed the samplesheet FASTA directly, still gzipped: minimap2 gzopen's its input.
-    // Note the nf-core module names its output
-    // ${fasta.baseName}.mmi and never reads task.ext.prefix, so the .mmi is named after
-    // the assembly file rather than the species; nothing keys off that name.
     MINIMAP2_INDEX(ch_target.map { meta, fa, _gff3 -> tuple(meta, fa) })
 
-    // Per-target reference bundle, keyed by target id: [ target_id, is_source, mmi ].
-    // MINIMAP2_ALIGN takes only the index, so no genome travels with it. `is_source` marks a
-    // 'both' target, whose own sequences are in the merged FASTA and must be dropped at
-    // alignment (no self-projection, plans/23).
+    // [ target_id, is_source, mmi ]: a 'both' target's own records are dropped at alignment.
     ch_ref = MINIMAP2_INDEX.out.index.map { meta, mmi -> tuple(meta.id, meta.role == 'both', mmi) }
 
-    // ── Merge every source's spliced transcripts, per feature class ───────────
-    // One FASTA per gene type — {lnc_RNA, mRNA, lnc_RNA_decoy, mRNA_decoy}, of which
-    // only lnc_RNA exists by default — so a target is aligned ONCE per class instead
-    // of once per (source, class). No information is lost: every record already
-    // carries its species in the header (`>tid|type|species`, RENAME_FASTA_HEADERS),
-    // minimap2 copies that into the BAM QNAME, and bam_to_gff.sh turns it into a
-    // `source=` GFF attribute — which is how the per-source view is recovered below.
-    //
-    // Classes stay separate rather than merging into one global FASTA because every
-    // downstream grouping (curation, benchmarking, MultiQC ordering) is keyed on
-    // gene type; splitting them back out would need a second demux dimension.
-    //
-    // This is target-independent — F·D tasks, NOT F·D·T. Do not fan it out per target.
+    // One all-sources FASTA per gene type (F·D tasks, target-independent). Every record carries
+    // its species (`>tid|type|species`), which the split below recovers.
     ch_merged = ch_spliced_fasta
         .mix(ch_decoy_spliced)
-        .map { meta, fa ->
-            def gtype = meta.feature_type + (meta.decoy ? '_decoy' : '')
-            tuple([id: gtype, feature_type: meta.feature_type, decoy: meta.decoy, gtype: gtype], fa)
-        }
+        .map { meta, fa -> tuple(withTrack([id: meta.track, feature_type: meta.feature_type, decoy: meta.decoy]), fa) }
         .groupTuple()
-        .map { meta, fas -> tuple(meta, fas.sort { it.name }) }   // deterministic concat order
+        .map { meta, fas -> tuple(meta, fas.sort { fa -> fa.name }) }   // deterministic concat order
 
     MERGE_SOURCE_FASTA(ch_merged)
 
-    // Fan the merged tracks out over targets: F·D·T alignments. combine() without
-    // `by` is a full cartesian product and buffers the right-hand side, so each of
-    // the T references is reused across all F·D tracks.
-    //
-    // NO SELF-PROJECTION (plans/23): the merged FASTA is shared by every target, so a
-    // 'both' target's own records are in it; `exclude_self` makes MINIMAP2_ALIGN drop them
-    // (by the species field of the header) before aligning. A species is never projected
-    // onto itself — not in allModels, not in the per-source split, not in any decoy track.
-    // When a target's only source is itself the query is empty, minimap2 writes a
-    // header-only BAM, and the "nothing projected" path below takes over.
-    //
-    // multiMap, not a value channel: with T > 1 the reference must be paired with
-    // its own reads task-by-task. A broadcast/.first() reference would silently
-    // align every source onto whichever target's index materialised first.
-    ch_align = MERGE_SOURCE_FASTA.out.fasta
-        .combine(ch_ref)
-        .multiMap { meta, reads, tid, is_source, mmi ->
-            reads:     tuple(meta + [id: 'allModels', target_id: tid, exclude_self: is_source], reads)
-            reference: tuple([id: tid], mmi)
-        }
-
+    // One alignment per (target, gene type): F·D·T, each against its target's index.
+    // exclude_self drops the target's own records from the query, so a species is never
+    // projected onto itself.
     MINIMAP2_ALIGN(
-        ch_align.reads,
-        ch_align.reference,
-        true,    // bam_format
-        'csi',   // bam_index_extension — NOT 'bai': BAI's fixed binning scheme caps
-                 // reference-sequence coordinates at 2^29-1 = 536,870,911 bp,
-                 // which real targets exceed (e.g. a tick chromosome at 560,970,318 bp
-                 // died with "cannot be stored in a bai index" — samtools' own suggested
-                 // fix). CSI has no such ceiling and is transparently auto-detected by
-                 // every modern samtools/htslib-based tool, so switch uniformly rather
-                 // than branch per-target on chromosome length.
-        false,   // cigar_paf_format
-        false    // cigar_bam
+        MERGE_SOURCE_FASTA.out.fasta
+            .combine(ch_ref)
+            .map { meta, reads, tid, is_source, mmi ->
+                tuple(meta + [id: tid, target_id: tid, exclude_self: is_source], reads, mmi)
+            }
     )
 
-    // Join BAM + CSI into a single 3-element tuple [meta, bam, csi]
-    ch_bam_bai = MINIMAP2_ALIGN.out.bam
-        .join(MINIMAP2_ALIGN.out.index)
+    // One alignment row per (target, track): the merged BAM has no per-source breakdown.
+    SAMTOOLS_STATS(MINIMAP2_ALIGN.out.bam)
 
-    SAMTOOLS_STATS(
-        ch_bam_bai,
-        [[:], [], []]       // no reference FASTA needed for basic alignment stats
-    )
+    BAM_TO_GFF(MINIMAP2_ALIGN.out.bam.map { meta, bam, _csi -> tuple(meta, bam) })
 
-    // Parse `*.stats` into a curated 7-column MultiQC custom-content TSV that
-    // surfaces as a section under Samtools (MultiQC's native samtools-stats
-    // module hard-codes which columns appear in its Alignment Stats violin
-    // plot and can't be customised via config). One row per (target, gene type)
-    // — the merged BAM has no per-source breakdown; per-source model counts come
-    // from GFF_STATS_PROJECTED instead.
-    SAMTOOLS_TO_MQC(SAMTOOLS_STATS.out.stats)
-
-    BAM_TO_GFF(MINIMAP2_ALIGN.out.bam)
-
-    // ── TD2 coding-potential filter on the projected lncRNA ──────────────────
-    // Runs ONCE per target (T tasks, not S·T) on the whole all-sources model set —
-    // the split happens after it, so every per-source GFF3 and the curated set inherit
-    // the same filtering. Real mRNA and all decoys pass through untouched (they still
-    // go through FILTER_ALLMODELS with an empty drop list, so that a single process
-    // produces every allModels.*.raw.gff3).
+    // TD2 runs once per target on the pooled lncRNA models; the other tracks pass untouched.
     BAM_TO_GFF.out.gff3
         .branch { meta, _g ->
-            lnc:  !meta.decoy && meta.feature_type == 'lnc_RNA'
+            lnc:  meta.td2
             rest: true
         }
         .set { ch_proj }
 
-    // The transcript FASTA must be extracted from ITS OWN target genome — hence the
-    // join on target_id rather than a broadcast FASTA. Getting this wrong is silent:
-    // gffread would happily read the coordinates of target B out of target A's
-    // sequence and hand TD2 nonsense to score.
-    //
-    // The genome goes in still gzipped (plans/26): gffread's `-g` reader has no gzip
-    // path, so the FOMO-local branch of modules/nf-core/gffread decompresses it into
-    // node-local scratch inside the task. There is no GUNZIP_TARGET any more — its plain
-    // copy on NFS was read twice per gffread task. Do not reach for a samtools-faidx
-    // shortcut either: faidx accepts bgzip but hard-errors on the plain gzip real
-    // Ensembl/NCBI assemblies use (the committed test FASTAs are bgzip, so such a
-    // shortcut passes -profile test and fails on the cluster).
+    // Transcripts are extracted from the target's own genome (joined on target_id).
     ch_target_fa = ch_target.map { meta, fa, _gff3 -> tuple(meta.id, fa) }
 
-    ch_lnc_extract = ch_proj.lnc
-        .map { meta, gff -> tuple(meta.target_id, meta, gff) }
-        .combine(ch_target_fa, by: 0)
-        .multiMap { _tid, meta, gff, fa ->
-            gff:   tuple(meta, gff)
-            fasta: fa
-        }
+    EXTRACT_PROJECTED_LNC(pairBy(ch_proj.lnc, ch_target_fa, { meta -> meta.target_id }))
 
-    EXTRACT_PROJECTED_LNC(ch_lnc_extract.gff, ch_lnc_extract.fasta)
+    TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.fasta.map { meta, fa -> tuple(meta + [stage: 'projected'], fa) })
 
-    TD2_NONCODING_PROJ(EXTRACT_PROJECTED_LNC.out.gffread_fasta)
+    // Every track goes through FILTER_ALLMODELS, so one process writes every
+    // `allModels.<track>.raw.gff3`; only lncRNA has a drop list (one per target).
+    ch_coding_ids = TD2_NONCODING_PROJ.out.coding_ids.map { meta, ids -> tuple(meta.target_id, ids) }
 
-    // lncRNA gets TD2's coding ids; every other class gets an empty drop list so it
-    // travels the same path and comes out of the same process under the same naming
-    // convention. filter_gff_by_id.py treats an empty file as "drop nothing".
-    ch_filter_in = ch_proj.lnc
-        .join(TD2_NONCODING_PROJ.out.coding_ids)
-        .mix(
-            ch_proj.rest.map { meta, gff ->
-                tuple(meta, gff, file("${projectDir}/assets/empty_ids.txt", checkIfExists: true))
-            }
-        )
+    ch_filter_in = pairBy(ch_proj.lnc, ch_coding_ids, { meta -> meta.target_id })
+        .map { meta, gff, ids -> tuple(meta, gff, ids, []) }
+        .mix(ch_proj.rest.map { meta, gff -> tuple(meta, gff, [], []) })
 
     FILTER_ALLMODELS(ch_filter_in)
 
-    ch_allmodels_raw = FILTER_ALLMODELS.out.gff3   // [ meta(id:'allModels'), gff3 ] × F·D·T
+    ch_allmodels_raw = FILTER_ALLMODELS.out.gff3   // [ meta(id = target_id, track), gff3 ] × F·D·T
 
-    // ── Recover the per-source view ──────────────────────────────────────────
-    // A pure attribute filter on `source=`, so each output is byte-for-byte the
-    // subset of allModels belonging to that species — and, because the input is
-    // coordinate-sorted, still grouped by seqid as gff-feature-stats requires.
+    // Back to one GFF3 per source, by the `source=` attribute.
     SPLIT_GFF_BY_SOURCE(ch_allmodels_raw)
 
-    // ── One list per (target, feature_type, decoy): every source's split GFF3 +
-    // the allModels aggregate ─────────────────────────────────────────────────────
-    // Never transposed into individual per-source items — that is the entire point of
-    // plans/18_per_target_batching.md. GFF_STATS_PROJECTED_BATCH and (via the `gff3`
-    // emit) BENCHMARKING's GFFCOMPARE_BATCH each do ONE task per (target, feature_type,
-    // decoy) that loops over the whole list internally, instead of one task per source.
-    //
-    // Joined on a string key rather than Nextflow's positional combine(by:...), because
-    // the two inputs disagree on tuple shape (SPLIT_GFF_BY_SOURCE's is a List, the
-    // aggregate a bare path) — simpler to normalise to (key, meta, List<path>) first.
-    // The key expression is repeated inline (not factored into a shared closure) since
-    // the two inputs' metas are structurally identical here but not guaranteed to stay
-    // that way independently — each `.map` states its own key on the meta it actually has.
-    //
-    // ch_allmodels_raw is the one side guaranteed present for every (target, feature_type,
-    // decoy): FILTER_ALLMODELS writes its output unconditionally (script-level, not a
-    // glob), even when the model set is empty. The split side is NOT guaranteed:
-    // SPLIT_GFF_BY_SOURCE emits nothing (optional, see gff_by_source.nf) when
-    // allModels.raw.gff3 has zero records — nothing from ANY source projected onto this
-    // target and survived TD2 filtering (seen on divergent targets in a large all-vs-all
-    // run; and, since plans/23, a 'both' target whose only source is itself).
-    // `join(..., remainder: true)` keeps this target's key anyway (filling the missing
-    // side with null) instead of the plain inner-join silently dropping it — which would
-    // otherwise make the target vanish from GFF_STATS_PROJECTED_BATCH and (via the `gff3`
-    // emit) benchmarking entirely, rather than surfacing an honest "0 models" result.
-    ch_split_list = SPLIT_GFF_BY_SOURCE.out.gff3
-        .map { meta, gffs -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", gffs instanceof List ? gffs : [gffs]) }
-
+    // One batch per (target, track): the aggregate plus every source's file, and the manifest
+    // that names each file's source (the aggregate is its first row). A target onto which nothing
+    // projected has no split GFF3; `remainder: true` keeps it, so it is reported with zero
+    // models instead of disappearing.
     ch_projected_batch = ch_allmodels_raw
-        .map { meta, gff -> tuple("${meta.target_id}|${meta.feature_type}|${meta.decoy}", meta, gff) }
-        .join(ch_split_list, remainder: true)
-        .map { _key, meta, rawGff, splitGffs ->
-            tuple(meta, ([rawGff] + (splitGffs ?: [])).findAll { it })
+        .join(SPLIT_GFF_BY_SOURCE.out.gff3, remainder: true)
+        .join(SPLIT_GFF_BY_SOURCE.out.manifest)
+        .map { meta, raw_gff, split_gffs, manifest ->
+            tuple(meta, ([raw_gff] + [split_gffs].flatten()).findAll { gff -> gff }, manifest)
         }
 
-    // ── Statistics on projected models ───────────────────────────────────────
-    GFF_STATS_PROJECTED_BATCH(
-        ch_projected_batch.map { meta, gffs -> tuple(meta + [kind: 'projected'], gffs) }
+    GFF_STATS_PROJECTED(
+        ch_projected_batch.map { meta, gffs, manifest -> tuple(meta + [kind: 'projected'], gffs, manifest) }
     )
 
-    // Keep SAMTOOLS_STATS.out.stats in the mix so MultiQC's native samtools
-    // module still runs (it renders the "Percent mapped" bar chart). Our
-    // curated 7-column TSV is rendered as a custom section nested under
-    // Samtools (see assets/multiqc/sections.yml: parent_id: samtools).
-    // GFF_STATS_PROJECTED_BATCH.out.tsv is List-valued (one row per source per task) —
-    // ch_all_mqc is already documented and handled as Channel<tuple(meta, path|List<path>)>
-    // (run_summary.nf, reporting.nf both flatMap it centrally), so no flatten needed here.
-    ch_mqc_files = GFF_STATS_PROJECTED_BATCH.out.tsv
-        .mix(SAMTOOLS_STATS.out.stats)
-        .mix(SAMTOOLS_TO_MQC.out.tsv)
-        .mix(TD2_NONCODING_PROJ.out.mqc)
+    ch_data = GFF_STATS_PROJECTED.out.data
+        .mix(SAMTOOLS_STATS.out.data)
+        .mix(TD2_NONCODING_PROJ.out.data)
 
-    // T = targets, S = sources, F = enabled feature types, D = 2 with --include_decoy else 1.
     emit:
-    bam                 = MINIMAP2_ALIGN.out.bam     // [ meta, *.bam     ] × F·D·T (all-sources)
-    index               = MINIMAP2_ALIGN.out.index   // [ meta, *.bam.csi ] × F·D·T
-    allmodels_raw       = ch_allmodels_raw           // [ meta(id:'allModels'), *.gff3 ] × F·D·T (every source but the target itself)
-    gff3                = ch_projected_batch         // [ meta, List<gff3> ] × F·D·T — per target: every source + allModels raw (plans/18)
-    mqc_files           = ch_mqc_files               // [ meta, *_mqc.tsv ] (one table per projected model + samtools + TD2)
+    allmodels_raw = ch_allmodels_raw     // [ meta(id = target_id, track), *.gff3 ] × F·D·T
+    gff3          = ch_projected_batch   // [ meta, List<gff3>, manifest ] × F·D·T: allModels + every source
+    mqc           = SAMTOOLS_STATS.out.stats   // [ meta, *.stats ]: MultiQC's native samtools module
+    data          = ch_data              // [ meta, *.data.json | List ]
 }

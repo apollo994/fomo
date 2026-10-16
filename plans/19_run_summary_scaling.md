@@ -1,5 +1,8 @@
 # 19 — RUN_SUMMARY_TABLES at scale: why it timed out, and what to do about it
 
+> **Status:** Superseded by 27 · **Date:** 2026-09-22
+> **Decision:** An analysis of RUN_SUMMARY_TABLES time-outs with options to speed it up; the run summary now reads indexed data records once.
+
 ## Problem, with numbers
 
 `FOMO:RUN_SUMMARY:RUN_SUMMARY_TABLES` (`bin/run_summary_tables.py`) is the pipeline's one

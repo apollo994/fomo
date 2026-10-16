@@ -1,5 +1,8 @@
 # Input validation with nf-schema
 
+> **Status:** Implemented · **Date:** 2026-05-24
+> **Decision:** The samplesheet is validated by nf-schema against `assets/schema_input.json` instead of a hand-written parser.
+
 Replace the hand-written samplesheet parser in `workflows/fomo.nf` with the
 nf-core standard `nf-schema` plugin.
 

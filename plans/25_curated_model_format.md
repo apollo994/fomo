@@ -1,5 +1,8 @@
 # 25 — Curated GFF3 format: content-hashed IDs, one transcript per supported chain
 
+> **Status:** Implemented · **Date:** 2026-10-08
+> **Decision:** Curated IDs are content hashes of the gene's intron chains; a gene has one transcript per supported chain, ranked by support.
+
 ## Status: implemented (2026-10-08), not yet committed — see **Results**
 
 ## Decisions (2026-10-08)

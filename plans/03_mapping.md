@@ -1,5 +1,8 @@
 # Plan: FOMO Mapping — Project spliced FASTAs onto target
 
+> **Status:** Superseded by 15 · **Date:** 2026-05-25
+> **Decision:** Each source's spliced FASTA was aligned to the target with minimap2 `-x splice`, one alignment per source, feature type and decoy flag.
+
 ## Context
 
 Preprocessing (subworkflow `PREPROCESSING`) currently produces, per source species, **three** spliced FASTAs:

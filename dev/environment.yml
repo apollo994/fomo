@@ -1,0 +1,19 @@
+# Development and CI environment: tests, linters and the pipeline's own tool versions for the
+# integration tests (the pipeline itself runs in containers, see conf/).
+#   conda env create -f dev/environment.yml   (or: micromamba create -f dev/environment.yml)
+name: fomo-dev
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pytest
+  - ruff=0.11
+  - pre-commit
+  - shellcheck
+  - pyyaml
+  - gffcompare=0.12.6
+  - gffread=0.12.7
+  - samtools=1.21
+  - nf-test=0.9.5
+  - openjdk=21

@@ -1,0 +1,91 @@
+// Stub-run scenarios of the whole pipeline: task count per process and the set of published files
+// are contracts (plans/27_refactor.md §4). Expected counts follow the cardinality formulas with
+// F feature types, D = 2 with decoys, S sources, T targets, T_g annotated 'both' targets, and
+// match the real test-profile runs. Published paths: tests/pipeline/expected/<scenario>.paths
+// (stub outputs name per-source files from_stub).
+nextflow_pipeline {
+
+    name "FOMO stub matrix"
+    script "../../main.nf"
+    options "-stub-run"
+
+    test("S1: default, lncRNA only (F=1, D=1, S=2, T=2, T_g=1)") {
+        when {
+            params {
+                input = FomoTest.sheet(baseDir, 'assets/samplesheet.csv', outputDir)
+                outdir = "${outputDir}/results"
+            }
+        }
+        then {
+            assert workflow.success
+            assert FomoTest.taskCounts(workflow.trace.tasks()) == [
+                BAM_TO_GFF: 2, CURATE_MODELS: 2, EXTRACT_PROJECTED_LNC: 2, EXTRACT_SEQUENCES: 2,
+                FILTER_ALLMODELS: 2, FILTER_ANNOTATION: 2, FILTER_TRANSCRIPT: 2, GFFCOMPARE_BATCH: 1,
+                GFF_STATS: 4, GFF_STATS_PROJECTED: 2, GFF_STATS_TARGET: 1, MERGE_SOURCE_FASTA: 1,
+                MINIMAP2_ALIGN: 2, MINIMAP2_INDEX: 2, MULTIQC: 2, MULTIQC_RUN_SUMMARY: 1,
+                RENAME_FASTA_HEADERS: 2, RUN_SUMMARY_TABLES: 1, SAMTOOLS_STATS: 2, SEQKIT_STATS: 2,
+                SPLIT_GFF_BY_SOURCE: 2, TD2_CODING_FILTER: 4, TD2_PREDICT: 4,
+            ]
+            assert FomoTest.published("${outputDir}/results") == FomoTest.expected(baseDir, 'S1')
+        }
+    }
+
+    test("S2: --include_mrna --include_decoy (F=2, D=2)") {
+        when {
+            params {
+                input = FomoTest.sheet(baseDir, 'assets/samplesheet.csv', outputDir)
+                outdir = "${outputDir}/results"
+                include_mrna = true
+                include_decoy = true
+            }
+        }
+        then {
+            assert workflow.success
+            assert FomoTest.taskCounts(workflow.trace.tasks()) == [
+                BAM_TO_GFF: 8, BEDTOOLS_COMPLEMENT: 2, CURATE_MODELS: 8, EXTRACT_DECOY_SEQUENCES: 4,
+                EXTRACT_PROJECTED_LNC: 2, EXTRACT_SEQUENCES: 4, FASTA_SIZES: 2, FILTER_ALLMODELS: 8,
+                FILTER_ANNOTATION: 4, FILTER_TRANSCRIPT: 4, GFFCOMPARE_BATCH: 4, GFF_STATS: 10,
+                GFF_STATS_PROJECTED: 8, GFF_STATS_TARGET: 1, GFF_TO_GENE_BED: 2, MERGE_SOURCE_FASTA: 4,
+                MINIMAP2_ALIGN: 8, MINIMAP2_INDEX: 2, MULTIQC: 2, MULTIQC_RUN_SUMMARY: 1, RELOCATE_LOCI: 4,
+                RENAME_FASTA_HEADERS: 8, RUN_SUMMARY_TABLES: 1, SAMTOOLS_STATS: 8, SEQKIT_STATS: 8,
+                SPLIT_GFF_BY_SOURCE: 8, TD2_CODING_FILTER: 4, TD2_PREDICT: 4,
+            ]
+            assert FomoTest.published("${outputDir}/results") == FomoTest.expected(baseDir, 'S2')
+        }
+    }
+
+    test("S3: reference-less pure target (no merged curated file for it)") {
+        when {
+            params {
+                input = FomoTest.sheet(baseDir, 'assets/samplesheet_target_noref.csv', outputDir)
+                outdir = "${outputDir}/results"
+            }
+        }
+        then {
+            assert workflow.success
+            assert FomoTest.taskCounts(workflow.trace.tasks()) == [
+                BAM_TO_GFF: 2, CURATE_MODELS: 2, EXTRACT_PROJECTED_LNC: 2, EXTRACT_SEQUENCES: 2,
+                FILTER_ALLMODELS: 2, FILTER_ANNOTATION: 2, FILTER_TRANSCRIPT: 2, GFFCOMPARE_BATCH: 1,
+                GFF_STATS: 4, GFF_STATS_PROJECTED: 2, MERGE_SOURCE_FASTA: 1, MINIMAP2_ALIGN: 2,
+                MINIMAP2_INDEX: 2, MULTIQC: 2, MULTIQC_RUN_SUMMARY: 1, RENAME_FASTA_HEADERS: 2,
+                RUN_SUMMARY_TABLES: 1, SAMTOOLS_STATS: 2, SEQKIT_STATS: 2, SPLIT_GFF_BY_SOURCE: 2,
+                TD2_CODING_FILTER: 4, TD2_PREDICT: 4,
+            ]
+            assert FomoTest.published("${outputDir}/results") == FomoTest.expected(baseDir, 'S3')
+        }
+    }
+
+    test("S4: a species id outside [A-Za-z0-9_-] fails at launch") {
+        when {
+            params {
+                input = FomoTest.sheetRenamed(baseDir, 'assets/samplesheet.csv', outputDir, 'Lycaena_thersamon_265360', 'Sp.1')
+                outdir = "${outputDir}/results"
+            }
+        }
+        then {
+            assert workflow.failed
+            assert workflow.trace.tasks().size() == 0
+            assert (workflow.stdout + workflow.stderr).any { line -> line.contains('Sp.1') && line.contains('does not match') }
+        }
+    }
+}

@@ -1,0 +1,24 @@
+# Tooling only: FOMO is a Nextflow pipeline, its Python lives in bin/ (run as scripts, stdlib only).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "integration: needs external tools (gffcompare, gffread, samtools)",
+    "slow: takes more than a few seconds",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["ablation", "plans", "work", "results"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "C90", "N", "UP", "SIM", "PLR0912", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.format]
+quote-style = "preserve"

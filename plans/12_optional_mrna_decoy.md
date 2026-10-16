@@ -1,5 +1,8 @@
 # Plan: make the mRNA and decoy tracks optional (`--include_mrna` / `--include_decoy`)
 
+> **Status:** Implemented · **Date:** 2026-09-22
+> **Decision:** Only lncRNA is transferred by default; `--include_mrna` adds the mRNA positive control and `--include_decoy` the decoy baseline; the feature-type list is derived once, in the top-level workflow.
+
 > **Implemented.** Sections below are as-written pre-implementation except where marked
 > *(revised during implementation)* — one design point (how the enabled feature-type list
 > crosses the subworkflow boundary) had to change after a stub run caught it.

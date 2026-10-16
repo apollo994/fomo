@@ -1,30 +1,23 @@
 process GFF_TO_GENE_BED {
-    tag "${meta.id}"
+    tag "${[meta.target_id, meta.id, meta.track].findAll().unique().join('.')}"
     label 'process_single'
-
-    container 'ubuntu:22.04'
+    label 'img_ubuntu'
 
     input:
     tuple val(meta), path(gff3), path(sizes)
 
     output:
     tuple val(meta), path("*.genes.bed"), emit: bed
-    tuple val("${task.process}"), val('awk'), eval('awk --version 2>&1 | head -n1'), topic: versions, emit: versions_awk
-
-    when:
-    task.ext.when == null || task.ext.when
+    tuple val("${task.process}"), val('mawk'), eval("awk -W version 2>&1 | sed '1!d;s/^mawk //'"), topic: versions, emit: versions_mawk
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
-    // Streamed, never written out uncompressed (plans/26): the GFF3 is read once, as
-    // awk's second input (`-`); pipefail surfaces a failed gzip.
+    // The GFF3 is streamed (awk's second input); pipefail surfaces a failed gzip.
     def stream = gff3.name.endsWith('.gz') ? "gzip -cd ${gff3}" : "cat ${gff3}"
     """
     set -euo pipefail
 
-    # Sort genes in the order in which chromosomes appear in the genome sizes
-    # file (NOT alphabetically) so bedtools complement downstream — which
-    # requires BED and genome-file chromosome orders to match — succeeds.
+    # Genes in the chromosome order of the sizes file, as bedtools complement requires.
     ${stream} \\
         | awk -F'\\t' 'BEGIN{OFS="\\t"} \\
         FNR==NR { order[\$1]=++rank; next } \\

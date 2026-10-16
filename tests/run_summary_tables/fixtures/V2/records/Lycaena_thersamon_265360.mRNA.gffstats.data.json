@@ -1,0 +1,76 @@
+{"schema":"fomo-data/1","section":"gffstats","identity":{"species":"Lycaena_thersamon_265360","side":"source","track":"mRNA","label":"mRNA","order":3,"kind":"filtered"},"data":{
+  "gene_category_stats": {
+    "coding": {
+      "total_count": 864,
+      "length_stats": {
+        "min": 329,
+        "max": 325258,
+        "mean": 15029.3
+      },
+      "biotype_counts": {
+        "protein_coding": 864
+      },
+      "transcript_type_counts": {
+        "mRNA": 864
+      }
+    }
+  },
+  "transcript_type_stats": {
+    "mRNA": {
+      "length_stats": {
+        "min": 329,
+        "max": 325064,
+        "mean": 13558.42
+      },
+      "total_count": 864,
+      "biotype_counts": {
+        "protein_coding": 864
+      },
+      "associated_genes": {
+        "total_count": 864,
+        "gene_categories": {
+          "coding": 864
+        }
+      },
+      "exon_stats": {
+        "total_count": 6770,
+        "length": {
+          "min": 2,
+          "max": 5836,
+          "mean": 235.02
+        },
+        "concatenated_length": {
+          "min": 252,
+          "max": 14493,
+          "mean": 1841.51
+        }
+      },
+      "cds_stats": {
+        "total_count": 6696,
+        "length": {
+          "min": 1,
+          "max": 5836,
+          "mean": 212.07
+        },
+        "concatenated_length": {
+          "min": 192,
+          "max": 14493,
+          "mean": 1643.55
+        }
+      },
+      "intron_stats": {
+        "total_count": 5906,
+        "length": {
+          "min": 30,
+          "max": 99836,
+          "mean": 1714.09
+        },
+        "concatenated_length": {
+          "min": 39,
+          "max": 322826,
+          "mean": 11716.91
+        }
+      }
+    }
+  }
+}}

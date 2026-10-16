@@ -1,0 +1,214 @@
+{"schema":"fomo-data/1","section":"gffstats","identity":{"species":"Lycaena_alciphron_282377","side":"target","target":"Lycaena_alciphron_282377","kind":"raw"},"data":{
+  "gene_category_stats": {
+    "coding": {
+      "total_count": 913,
+      "length_stats": {
+        "min": 168,
+        "max": 224567,
+        "mean": 15019.13
+      },
+      "biotype_counts": {
+        "protein_coding": 913
+      },
+      "transcript_type_counts": {
+        "mRNA": 1418
+      }
+    },
+    "non_coding": {
+      "total_count": 125,
+      "length_stats": {
+        "min": 71,
+        "max": 58082,
+        "mean": 3789.35
+      },
+      "biotype_counts": {
+        "lncrna": 62,
+        "rrna": 1,
+        "snrna": 14,
+        "trna": 48
+      },
+      "transcript_type_counts": {
+        "lnc_RNA": 67,
+        "rRNA": 1,
+        "snRNA": 14,
+        "tRNA": 48
+      }
+    }
+  },
+  "transcript_type_stats": {
+    "mRNA": {
+      "length_stats": {
+        "min": 168,
+        "max": 224567,
+        "mean": 17174.81
+      },
+      "total_count": 1418,
+      "biotype_counts": {
+        "protein_coding": 1418
+      },
+      "associated_genes": {
+        "total_count": 913,
+        "gene_categories": {
+          "coding": 913
+        }
+      },
+      "exon_stats": {
+        "total_count": 11721,
+        "length": {
+          "min": 2,
+          "max": 10894,
+          "mean": 232.73
+        },
+        "concatenated_length": {
+          "min": 168,
+          "max": 26925,
+          "mean": 1923.73
+        }
+      },
+      "cds_stats": {
+        "total_count": 11569,
+        "length": {
+          "min": 1,
+          "max": 10894,
+          "mean": 209.57
+        },
+        "concatenated_length": {
+          "min": 168,
+          "max": 26925,
+          "mean": 1709.79
+        }
+      },
+      "intron_stats": {
+        "total_count": 10303,
+        "length": {
+          "min": 27,
+          "max": 120460,
+          "mean": 2099.0
+        },
+        "concatenated_length": {
+          "min": 33,
+          "max": 221615,
+          "mean": 15535.94
+        }
+      }
+    },
+    "lnc_RNA": {
+      "length_stats": {
+        "min": 313,
+        "max": 58082,
+        "mean": 7308.87
+      },
+      "total_count": 67,
+      "biotype_counts": {
+        "lncRNA": 67
+      },
+      "associated_genes": {
+        "total_count": 62,
+        "gene_categories": {
+          "non_coding": 62
+        }
+      },
+      "exon_stats": {
+        "total_count": 152,
+        "length": {
+          "min": 21,
+          "max": 808,
+          "mean": 175.53
+        },
+        "concatenated_length": {
+          "min": 204,
+          "max": 1092,
+          "mean": 398.22
+        }
+      },
+      "intron_stats": {
+        "total_count": 85,
+        "length": {
+          "min": 21,
+          "max": 57798,
+          "mean": 5447.21
+        },
+        "concatenated_length": {
+          "min": 21,
+          "max": 57798,
+          "mean": 6910.64
+        }
+      }
+    },
+    "tRNA": {
+      "length_stats": {
+        "min": 71,
+        "max": 92,
+        "mean": 75.46
+      },
+      "total_count": 48,
+      "biotype_counts": {
+        "tRNA": 48
+      },
+      "associated_genes": {
+        "total_count": 48,
+        "gene_categories": {
+          "non_coding": 48
+        }
+      },
+      "exon_stats": {
+        "total_count": 48,
+        "length": {
+          "min": 71,
+          "max": 92,
+          "mean": 75.46
+        }
+      }
+    },
+    "snRNA": {
+      "length_stats": {
+        "min": 105,
+        "max": 193,
+        "mean": 141.71
+      },
+      "total_count": 14,
+      "biotype_counts": {
+        "snRNA": 14
+      },
+      "associated_genes": {
+        "total_count": 14,
+        "gene_categories": {
+          "non_coding": 14
+        }
+      },
+      "exon_stats": {
+        "total_count": 14,
+        "length": {
+          "min": 105,
+          "max": 193,
+          "mean": 141.71
+        }
+      }
+    },
+    "rRNA": {
+      "length_stats": {
+        "min": 119,
+        "max": 119,
+        "mean": 119.0
+      },
+      "total_count": 1,
+      "biotype_counts": {
+        "rRNA": 1
+      },
+      "associated_genes": {
+        "total_count": 1,
+        "gene_categories": {
+          "non_coding": 1
+        }
+      },
+      "exon_stats": {
+        "total_count": 1,
+        "length": {
+          "min": 119,
+          "max": 119,
+          "mean": 119.0
+        }
+      }
+    }
+  }
+}}

@@ -1,5 +1,8 @@
 # Plan: Scheduling efficiency — executor tuning + removing redundant gunzip tasks
 
+> **Status:** Implemented; partially superseded by 26 · **Date:** 2026-09-22
+> **Decision:** Executor settings for the cluster (polling, submission backlog) and the removal of redundant gunzip tasks.
+
 ## Context
 
 The Lepidoptera run `agitated_legentil` (Aug 20 2026, 15:58:15 → 16:59:53) aborted after

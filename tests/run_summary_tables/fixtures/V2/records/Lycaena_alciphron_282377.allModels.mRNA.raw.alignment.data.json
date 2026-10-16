@@ -1,0 +1,1 @@
+{"schema":"fomo-data/1","section":"alignment","identity":{"species":"Lycaena_alciphron_282377","side":"target","target":"Lycaena_alciphron_282377","track":"mRNA","label":"mRNA","order":3},"data":{"raw_total_sequences":864,"reads_mapped":857,"reads_mapped_percent":99.19,"non_primary_alignments":34,"error_rate":4.115240e-02,"average_quality":255.0,"average_length":1842}}

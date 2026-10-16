@@ -1,13 +1,8 @@
-# ---------------------------------------------------------------------------
-# Custom-content sections
-# ---------------------------------------------------------------------------
-# gffstats_input      — GFF stats on input GFFs (source + target, raw/filtered/decoy)
-# gffstats_genes      — gene-category breakdown of those same input GFFs
-# gffstats_projection — GFF stats on projected GFFs (minimap2-then-BAM_TO_GFF output)
-# seqkit_stats        — SeqKit FASTA length/composition stats
-# transcript_filter   — source transcripts kept by FILTER_TRANSCRIPT (spliced → longest isoform)
-# td2_coding          — TD2 coding-potential drops for real lncRNA (input + projected)
-# ---------------------------------------------------------------------------
+# Custom-content sections of the per-target report. bin/render_mqc.py writes them from the data
+# records, one TSV per record named <...>_<section>_mqc.tsv; the `sp` patterns below route them
+# (bin/fomo_sections.py is the registry; tests/test_multiqc_registry.py keeps the two in step).
+# A file found by both an `sp` pattern and an embedded `# id:` header renders twice, so the
+# rendered TSVs carry no header.
 custom_data:
   gffstats_input:
     file_format: "tsv"
@@ -16,7 +11,8 @@ custom_data:
       Per-transcript-type counts and length statistics from gff-feature-stats.
       One row per (species × kind × transcript type), where `kind` is one of
       raw / lncRNA / decoy_lncRNA / mRNA / decoy_mRNA — the mRNA and decoy rows
-      appear only with `--include_mrna` / `--include_decoy`. Transcript lengths are
+      appear only with `--include_mrna` / `--include_decoy`. A target that is not
+      also a source shows its own raw annotation (`_target`). Transcript lengths are
       genomic spans; spliced lengths are summed exon lengths. Introns are not
       encoded in GFF3 and are derived from the gaps between a transcript's
       exons (`next.start − prev.end − 1`), so a single-exon-only transcript
@@ -63,7 +59,7 @@ custom_data:
     section_name: "Samtools — Alignment statistics (curated)"
     description: >
       Curated set of alignment metrics parsed from `samtools stats` SN lines.
-      One row per projected (target, source, feature_type, decoy/not) tuple —
+      One row per (target, gene type): every source is aligned in one run —
       mRNA and decoy rows appear only with `--include_mrna` / `--include_decoy`.
     plot_type: "table"
     pconfig:
@@ -91,19 +87,13 @@ custom_data:
     description: >
       Real lncRNA dropped because TD2 (TransDecoder2) found a complete ORF with
       psauron_score >= the configured cutoff. One row per (sample × stage):
-      `input` = source lncRNA before projection, `projected` = per-source
-      projected lncRNA before consensus. mRNA and decoy tracks are never filtered
+      `input` = source lncRNA before projection, `projected` = each target's
+      pooled projected lncRNA. mRNA and decoy tracks are never filtered
       (and are absent unless `--include_mrna` / `--include_decoy` are set).
     plot_type: "table"
     pconfig:
       id: "td2_coding_table"
       namespace: "TD2"
-
-# Each section uses a unique filename suffix so MultiQC's sp pattern is
-# the single source of routing. The GFF stats TSVs deliberately do NOT carry
-# a `# id:` header — embedding one would cause MultiQC to discover the
-# section twice (once via sp, once via the embedded id) and render every
-# section twice in the report.
   curation_observed:
     file_format: "tsv"
     section_name: "Curation (1) — multi-species chains observed"
@@ -158,7 +148,7 @@ sp:
   gffstats_projection:
     fn: "*_gffstats_projection_mqc.tsv"
   seqkit_stats:
-    fn: "*_seqkit_mqc.tsv"
+    fn: "*_seqkit_stats_mqc.tsv"
   samtools_align:
     fn: "*_samtools_align_mqc.tsv"
   transcript_filter:

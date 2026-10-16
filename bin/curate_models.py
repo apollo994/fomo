@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Curate fomo projected models: report intron chains shared exactly by >= N species (plans/21).
+"""Curate fomo projected models: report intron chains shared exactly by >= N species.
 
-Input:  a fomo GFF3 (<target>.allModels.<gtype>.raw.gff3 or any per-source subset; .gz ok)
+Input:  a fomo GFF3 (<target>.allModels.<track>.raw.gff3 or any per-source subset; .gz ok)
         with gene / transcript / exon rows and source=<species> on the transcript, and optionally
         the target's reference annotation (GFF3 or GTF, .gz ok).
 
@@ -16,7 +16,7 @@ Method
      model with that chain (gffcompare drops same-species duplicates). A chain is supported when
      its models (after the filter) come from >= --min-species species.
   4. Genes: supported chains sharing >= 1 splice junction (identical intron), connected components.
-  5. One transcript per supported chain of the gene (plans/25). Its exons are those of the chain's
+  5. One transcript per supported chain of the gene. Its exons are those of the chain's
      representative: the longest exonic length among the chain's models (after the filter) -> lowest
      de -> ID. Transcripts are numbered t1, t2, ... by support: most species -> most SJs -> longest
      -> leftmost start -> rightmost end -> representative ID. Each lists the IDs of every model with
@@ -36,12 +36,12 @@ Method
      on either strand. Keys without a value are omitted (e.g. no ref_* key at all when the seqid has
      no reference transcript; no ref_gene_name for an unnamed gene).
 
-IDs (plans/25): H = first 12 hex of sha1('<track>|<seqid>|<strand>|<sorted intron chains>') of the
-gene; gene <P>_g_H, transcript <P>_t<n>_H, exon <P>_t<n>e<k>_H with k numbered 5'->3', where
-P = --id-prefix (default fomo_<tag>, tag = lncRNA | mRNA | decoy_lncRNA | decoy_mRNA, also the
-biotype). The same chains on the same assembly always give the same IDs, whatever the source set.
-Transcripts are typed by the track (lnc_RNA | mRNA; decoys as their real track); alignment metrics
-are not copied (they stay in the per-source projected GFF3s, keyed by supporting_transcripts).
+IDs: H = first 12 hex of sha1('<track>|<seqid>|<strand>|<sorted intron chains>') of the gene; gene
+<P>_g_H, transcript <P>_t<n>_H, exon <P>_t<n>e<k>_H with k numbered 5'->3', where P = --id-prefix
+(default fomo_<tag>, tag = lncRNA | mRNA | decoy_lncRNA | decoy_mRNA, also the biotype). The same
+chains on the same assembly always give the same IDs, whatever the source set. Transcripts are
+typed by the track (lnc_RNA | mRNA; decoys as their real track); alignment metrics are not copied
+(they stay in the per-source projected GFF3s, keyed by supporting_transcripts).
 
 Output (--prefix P)
   P.gff3.gz           curated genes (gene + one transcript per supported chain + exons)
@@ -49,11 +49,14 @@ Output (--prefix P)
                       reference line (with --ref only)
   P.curation.tsv      report: table / metric / value (observed, discarded_by_reference, novel)
   P.curation.json     the same numbers
+  P.curation.data.json  the same numbers as a `curation` data record (with --identity)
+
+Rationale: plans/21, plans/25.
 """
+
 import argparse
 import bisect
 import collections
-from array import array
 import gzip
 import hashlib
 import json
@@ -66,152 +69,154 @@ import subprocess
 import sys
 import tempfile
 import time
+from array import array
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import NamedTuple
 
-GENE_LEVEL = {'gene', 'pseudogene', 'ncRNA_gene', 'region', 'chromosome', 'scaffold', 'contig'}
-CDS_LIKE = {'CDS', 'five_prime_UTR', 'three_prime_UTR', 'UTR', 'start_codon', 'stop_codon'}
-NOT_TRANSCRIPT = {'exon', 'intron', 'polyA_site', 'polyA_signal_sequence', 'TSS', 'transcription_start_site',
-                  'sequence_feature', 'Selenocysteine', 'stop_codon_redefined_as_selenocysteine'} | CDS_LIKE
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fomo_io  # noqa: E402
+import fomo_stats  # noqa: E402
+
 GENERIC_TYPES = {'transcript', 'ncRNA', 'primary_transcript', 'RNA', 'gene', 'pseudogene', 'ncRNA_gene'}
-BIOTYPE_KEYS = ('transcript_biotype', 'transcript_type', 'biotype', 'ncrna_class', 'gene_biotype', 'gene_type', 'gbkey')
+BIOTYPE_KEYS = (
+    'transcript_biotype',
+    'transcript_type',
+    'biotype',
+    'ncrna_class',
+    'gene_biotype',
+    'gene_type',
+    'gbkey',
+)
+SMALL_RNA_MARKERS = (
+    'trna',
+    'rrna',
+    'snorna',
+    'snrna',
+    'mirna',
+    'scrna',
+    'y_rna',
+    'srp',
+    'rnase',
+    'guide',
+    'ncrna',
+    'misc',
+)
 ESCAPE = re.compile(r'[;=&,\t\n\r]')
+MERGED_ID_RE = re.compile(r'(?:^|;)\s*ID=([^;\t\n]+)')
+HASH_LENGTH = 12  # hex digits of the gene content hash in every curated ID
+MAX_PARENT_DEPTH = 10  # Parent hops followed to find a reference feature's gene
+ORPHAN_EXON = '<orphan exon>'  # interval key of a reference exon without Parent
+LOCATIONS = fomo_stats.CURATION_LOCATIONS
+OVERLAPPING = fomo_stats.CURATION_OVERLAPPING
+REPORT_TABLES = ('observed', 'discarded_by_reference', 'novel')
+log = fomo_io.get_logger('curate_models')
 
 
-def log(msg):
-    print(f'[curate_models] {msg}', file=sys.stderr, flush=True)
+def esc(value) -> str:
+    return ESCAPE.sub(lambda c: f'%{ord(c.group(0)):02X}', str(value))
 
 
-def die(msg):
-    log(f'ERROR: {msg}')
-    sys.exit(1)
+def gtf_attrs(col9: str) -> dict[str, str]:
+    attrs: dict[str, str] = {}
+    for key, value in re.findall(r'(\S+)\s+"([^"]*)"', col9):
+        attrs.setdefault(key, value)
+    return attrs
 
 
-def opener(path):
-    return gzip.open(path, 'rt') if path.endswith('.gz') else open(path)
-
-
-def esc(v):
-    return ESCAPE.sub(lambda c: '%{:02X}'.format(ord(c.group(0))), str(v))
-
-
-def gff3_attrs(s):
-    """-> list of (key, raw value), order kept."""
-    out = []
-    for kv in s.strip().rstrip(';').split(';'):
-        if '=' in kv:
-            k, v = kv.split('=', 1)
-            out.append((k.strip(), v.strip()))
-    return out
-
-
-def gtf_attrs(s):
-    d = {}
-    for k, v in re.findall(r'(\S+)\s+"([^"]*)"', s):
-        d.setdefault(k, v)
-    return d
-
-
-def is_gtf(path):
-    with opener(path) as fh:
+def is_gtf(path: str) -> bool:
+    with fomo_io.open_text(path) as fh:
         for line in fh:
             if line[0] != '#':
-                f = line.rstrip('\n').split('\t')
-                if len(f) >= 9:
-                    return '"' in f[8] and '=' not in f[8].split('"')[0]
+                cols = line.rstrip('\n').split('\t')
+                if len(cols) >= 9:
+                    return '"' in cols[8] and '=' not in cols[8].split('"')[0]
     return False
 
 
-def track_info(track):
+def track_info(track: str | None) -> tuple[str, str]:
     """-> (tag, transcript feature type): ('lncRNA' | 'mRNA' | 'decoy_lncRNA' | 'decoy_mRNA', 'lnc_RNA' | 'mRNA').
     The tag is the biotype and the default ID prefix token; decoys keep their real track's feature type."""
-    t = track or ''
-    mrna = bool(re.search(r'(^|[._])mRNA($|[._])', t))
-    return ('decoy_' if 'decoy' in t else '') + ('mRNA' if mrna else 'lncRNA'), ('mRNA' if mrna else 'lnc_RNA')
+    name = track or ''
+    mrna = bool(re.search(r'(^|[._])mRNA($|[._])', name))
+    tag = ('decoy_' if 'decoy' in name else '') + ('mRNA' if mrna else 'lncRNA')
+    return tag, 'mRNA' if mrna else 'lnc_RNA'
 
 
 # ------------------------------------------------------------------ models
+class ChainKey(NamedTuple):
+    chr: str
+    strand: str
+    introns: tuple[tuple[int, int], ...]
+
+
+@dataclass(slots=True)
 class Model:
-    """One projected model. Compact (slots, interned seqid/species); its attributes are not kept,
-    since the curated output carries none of them (plans/25)."""
-    __slots__ = ('id', 'chr', 'strand', 'exons', 'species', 'de', 'chain', 'ref_hits')
+    """One projected model. Its attributes are not kept: the curated output carries none of them."""
 
-    def __getitem__(self, k):
-        return getattr(self, k)
+    id: str
+    chr: str
+    strand: str
+    exons: tuple[tuple[int, int], ...]
+    species: str
+    de: float
+    chain: tuple[tuple[int, int], ...]
+    ref_hits: set = field(default_factory=set)
 
-    def __setitem__(self, k, v):
-        setattr(self, k, v)
+    @property
+    def key(self) -> ChainKey:
+        return ChainKey(self.chr, self.strand, self.chain)
+
+    @property
+    def exonic_len(self) -> int:
+        return sum(e - s + 1 for s, e in self.exons)
 
 
-DE_RE = re.compile(r'(?:^|;)de=([^;]*)')
-SOURCE_RE = re.compile(r'(?:^|;)source=([^;]*)')
-ID_RE = re.compile(r'(?:^|;)ID=([^;]*)')
-PARENT_RE = re.compile(r'(?:^|;)Parent=([^;]*)')
-
-
-def read_models(path):
-    """fomo GFF3 -> (list of Model, seqid order). Exits 1 on structural problems."""
-    tx, exons, order = {}, {}, {}
-    intern = sys.intern
-    with opener(path) as fh:
-        for n, line in enumerate(fh, 1):
-            if line[0] == '#' or not line.strip():
-                continue
-            f = line.rstrip('\n').split('\t')
-            if len(f) < 9:
-                die(f'{path}:{n}: not a 9-column GFF3 line')
-            chrom = intern(f[0])
-            order.setdefault(chrom, len(order))
-            if f[2] == 'exon':
-                m = PARENT_RE.search(f[8])
-                if not m:
-                    die(f'{path}:{n}: exon without Parent')
-                for p in m.group(1).split(','):
-                    e = exons.get(p)
-                    if e is None:
-                        exons[p] = [chrom, f[6], [(int(f[3]), int(f[4]))]]
-                    elif e[0] is not chrom or e[1] != f[6]:
-                        die(f'transcript {p}: exons on several seqids/strands')
-                    else:
-                        e[2].append((int(f[3]), int(f[4])))
-            elif f[2] not in GENE_LEVEL and f[2] not in NOT_TRANSCRIPT:
-                m = ID_RE.search(f[8])
-                if not m:
-                    continue
-                tid = m.group(1).strip()
-                if tid in tx:
-                    die(f'{path}:{n}: duplicate transcript ID {tid}')
-                tx[tid] = line
-    missing = set(exons) - set(tx)
+def read_models(path: str) -> list[Model]:
+    """fomo GFF3 -> models in transcript order. Exits 1 on structural problems."""
+    transcripts: dict[str, tuple[str, str, dict[str, str]]] = {}  # ID -> (seqid, strand, attributes)
+    exons: dict[str, list] = {}  # transcript ID -> [seqid, strand, [(start, end)]]
+    for lineno, cols in fomo_io.iter_gff(path, strict=True):
+        chrom = sys.intern(cols[0])
+        attrs = fomo_io.parse_attrs(cols[8])
+        if cols[2].lower() == 'exon':
+            if 'Parent' not in attrs:
+                fomo_io.die(f'{path}:{lineno}: exon without Parent')
+            for parent in fomo_io.split_ids(attrs['Parent']):
+                entry = exons.get(parent)
+                if entry is None:
+                    exons[parent] = [chrom, cols[6], [(int(cols[3]), int(cols[4]))]]
+                elif entry[0] is not chrom or entry[1] != cols[6]:
+                    fomo_io.die(f'transcript {parent}: exons on several seqids/strands')
+                else:
+                    entry[2].append((int(cols[3]), int(cols[4])))
+        elif fomo_io.is_transcript(cols[2]) and attrs.get('ID'):
+            if attrs['ID'] in transcripts:
+                fomo_io.die(f'{path}:{lineno}: duplicate transcript ID {attrs["ID"]}')
+            transcripts[attrs['ID']] = (chrom, cols[6], attrs)
+    missing = set(exons) - set(transcripts)
     if missing:
-        die(f'{len(missing)} exon parent(s) not defined as transcripts, e.g. {sorted(missing)[0]}')
-    models = []
-    for tid, line in tx.items():
-        e = exons.pop(tid, None)
-        if not e:
-            continue                                              # transcript-like rows without exons
-        f = line.split('\t', 9)
-        chrom, strand, ex = e
-        if (chrom, strand) != (f[0], f[6]):
-            die(f'transcript {tid}: exons on {chrom}{strand}, transcript row on {f[0]}{f[6]}')
-        ex = tuple(sorted(ex))
-        for (s1, e1), (s2, e2) in zip(ex, ex[1:]):
-            if s2 <= e1 + 1:
-                die(f'transcript {tid}: overlapping or abutting exons {s1}-{e1} / {s2}-{e2}')
-        ms = SOURCE_RE.search(f[8])
-        sp = ms.group(1).strip() if ms else (tid.rsplit('|', 1)[1] if '|' in tid else '')
-        if not sp:
-            die(f'transcript {tid}: no source= attribute and no |<source> ID suffix')
-        md = DE_RE.search(f[8])
-        try:
-            de = float(md.group(1)) if md else float('nan')
-        except ValueError:
-            de = float('nan')
-        m = Model()
-        m.id, m.chr, m.strand, m.exons, m.species = tid, chrom, strand, ex, intern(sp)
-        m.de = de if not math.isnan(de) else float('inf')
-        m.chain = tuple((ex[i][1], ex[i + 1][0]) for i in range(len(ex) - 1))
-        m.ref_hits = set()
-        models.append(m)
-    return models, list(order)
+        fomo_io.die(f'{len(missing)} exon parent(s) not defined as transcripts, e.g. {sorted(missing)[0]}')
+    return [model_of(tid, row, exons[tid]) for tid, row in transcripts.items() if exons.get(tid)]
+
+
+def model_of(tid: str, row: tuple, exon_entry: list) -> Model:
+    chrom, strand, attrs = row
+    if (exon_entry[0], exon_entry[1]) != (chrom, strand):
+        fomo_io.die(f'transcript {tid}: exons on {exon_entry[0]}{exon_entry[1]}, transcript row on {chrom}{strand}')
+    exs = tuple(sorted(exon_entry[2]))
+    for (s1, e1), (s2, e2) in zip(exs, exs[1:], strict=False):
+        if s2 <= e1 + 1:
+            fomo_io.die(f'transcript {tid}: overlapping or abutting exons {s1}-{e1} / {s2}-{e2}')
+    species = attrs['source'] if 'source' in attrs else (tid.rsplit('|', 1)[1] if '|' in tid else '')
+    if not species:
+        fomo_io.die(f'transcript {tid}: no source= attribute and no |<source> ID suffix')
+    try:
+        de = float(attrs['de']) if 'de' in attrs else math.nan
+    except ValueError:
+        de = math.nan
+    chain = tuple((exs[i][1], exs[i + 1][0]) for i in range(len(exs) - 1))
+    return Model(tid, chrom, strand, exs, sys.intern(species), math.inf if math.isnan(de) else de, chain)
 
 
 # ------------------------------------------------------------------ reference
@@ -228,78 +233,212 @@ class RefIndex:
         self.build = collections.defaultdict(lambda: (array('l'), array('l'), array('l')))
         self.idx = {}
 
-    def add(self, chrom, strand, s, e, key):
-        st, en, kb = self.build[(chrom, strand)]
-        st.append(s)
-        en.append(e)
-        kb.append(key)
+    def add(self, chrom, strand, start, end, key):
+        starts, ends, keys = self.build[(chrom, strand)]
+        starts.append(start)
+        ends.append(end)
+        keys.append(key)
 
     def freeze(self, key_labels):
         """key_labels: list, key -> label."""
-        lab_idx, kl = {}, []
-        for lab in key_labels:
-            li = lab_idx.get(lab)
+        label_index, key_label = {}, []
+        for label in key_labels:
+            li = label_index.get(label)
             if li is None:
-                li = lab_idx[lab] = len(self.labels)
-                self.labels.append(lab)
-            kl.append(li)
-        for key, (st, en, kb) in self.build.items():
-            order = sorted(range(len(st)), key=st.__getitem__)
-            st2 = array('l', (st[k] for k in order))
-            en2 = array('l', (en[k] for k in order))
-            lb2 = array('l', (kl[kb[k]] for k in order))
-            self.idx[key] = (st2, en2, lb2, max(e - s for s, e in zip(st2, en2)) + 1)
+                li = label_index[label] = len(self.labels)
+                self.labels.append(label)
+            key_label.append(li)
+        for chrom_strand, (starts, ends, keys) in self.build.items():
+            order = sorted(range(len(starts)), key=starts.__getitem__)
+            st = array('l', (starts[k] for k in order))
+            en = array('l', (ends[k] for k in order))
+            lb = array('l', (key_label[keys[k]] for k in order))
+            self.idx[chrom_strand] = (st, en, lb, max(e - s for s, e in zip(st, en, strict=True)) + 1)
         self.build = None
         return self
-
-    def hits(self, chrom, strand, a, b):
-        x = self.idx.get((chrom, strand))
-        out = set()
-        if x:
-            st, en, lb, ml = x
-            for i in range(bisect.bisect_left(st, a - ml), bisect.bisect_right(st, b)):
-                if en[i] >= a:
-                    out.add(self.labels[lb[i]])
-        return out
 
     def intervals(self, chrom, strand, a, b):
         """-> [(start, end, label)] overlapping [a, b]."""
         x = self.idx.get((chrom, strand))
         out = []
         if x:
-            st, en, lb, ml = x
-            for i in range(bisect.bisect_left(st, a - ml), bisect.bisect_right(st, b)):
+            st, en, lb, max_len = x
+            for i in range(bisect.bisect_left(st, a - max_len), bisect.bisect_right(st, b)):
                 if en[i] >= a:
                     out.append((st[i], en[i], self.labels[lb[i]]))
         return out
+
+    def hits(self, chrom, strand, a, b):
+        return {label for _, _, label in self.intervals(chrom, strand, a, b)}
 
     def nearest(self, chrom, strand, a, b):
         """-> (distance, label) of the closest interval to [a, b] (0 if overlapping), or None."""
         x = self.idx.get((chrom, strand))
         if not x:
             return None
-        st, en, lb, ml = x
+        st, en, lb, max_len = x
+        overlapping = self.intervals(chrom, strand, a, b)
+        if overlapping:
+            return (0, min(label for _, _, label in overlapping))
         best = None
-        ov = self.intervals(chrom, strand, a, b)
-        if ov:
-            return (0, min(l for _, _, l in ov))
-        j = bisect.bisect_right(st, b)                          # first interval starting right of b
+        j = bisect.bisect_right(st, b)  # first interval starting right of b
         if j < len(st):
             best = (st[j] - b, self.labels[lb[j]])
-        i = bisect.bisect_left(st, a) - 1                       # intervals starting left of a: max end
-        max_end, lab = None, None
+        i = bisect.bisect_left(st, a) - 1  # intervals starting left of a: max end
+        max_end, label = None, None
         while i >= 0:
-            if max_end is not None and st[i] + ml <= max_end:
+            if max_end is not None and st[i] + max_len <= max_end:
                 break
             if max_end is None or en[i] > max_end:
-                max_end, lab = en[i], self.labels[lb[i]]
+                max_end, label = en[i], self.labels[lb[i]]
             i -= 1
         if max_end is not None and (best is None or a - max_end < best[0]):
-            best = (a - max_end, lab)
+            best = (a - max_end, label)
         return best
 
 
-def read_reference(path):
+class _RefBuilder:
+    """Collects the reference while it is read: exon intervals keyed by their parent, per-parent
+    spans, the CDS/UTR and childless fallbacks, and what resolves a parent to its gene."""
+
+    def __init__(self):
+        self.feature_label = {}  # feature id -> type label
+        self.parent_of = {}  # feature id -> first Parent (GFF3) / gene_id (GTF)
+        self.name = {}  # id -> Name / gene_name / gene
+        self.alt_name = {}  # transcript id -> gene_name / gene
+        self.biotype = {}  # id -> gene biotype
+        self.keys, self.key_ids = {}, []  # parent id -> interval key, and back
+        self.cds = collections.defaultdict(list)  # parent -> CDS/UTR intervals (used if it has no exon)
+        self.with_exons, self.has_child, self.parented = set(), set(), []
+        self.spans = {}  # (key, chrom, strand) -> (min, max)
+        self.ex_idx = RefIndex()
+        self.origin = collections.Counter()
+
+    @staticmethod
+    def label(ftype: str, attrs: dict[str, str]) -> str:
+        """The type, refined by the biotype for generic types (e.g. transcript:misc_RNA)."""
+        if ftype in GENERIC_TYPES:
+            biotype = next((attrs[k] for k in BIOTYPE_KEYS if attrs.get(k)), None)
+            if biotype and biotype != ftype:
+                return sys.intern(f'{ftype}:{biotype}')
+        return sys.intern(ftype)
+
+    def _key(self, pid: str) -> int:
+        key = self.keys.get(pid)
+        if key is None:
+            key = self.keys[pid] = len(self.key_ids)
+            self.key_ids.append(pid)
+        return key
+
+    def add_interval(self, pid, chrom, strands, start, end):
+        key = self._key(pid)
+        for strand in strands:
+            self.ex_idx.add(chrom, strand, start, end, key)
+            span_key = (key, chrom, strand)
+            span = self.spans.get(span_key)
+            self.spans[span_key] = (start, end) if span is None else (min(span[0], start), max(span[1], end))
+
+    def add_gtf_row(self, cols, chrom, strands, start, end):
+        attrs = gtf_attrs(cols[8])
+        tid = attrs.get('transcript_id')
+        if not tid:
+            return
+        ftype = cols[2].lower()
+        if ftype == 'transcript' or (ftype == 'exon' and tid not in self.feature_label):
+            self.feature_label[tid] = self.label('transcript', attrs)
+            gid = attrs.get('gene_id') or tid
+            self.parent_of[tid] = gid
+            if attrs.get('gene_name'):
+                self.name.setdefault(gid, attrs['gene_name'])
+            biotype = attrs.get('gene_biotype') or attrs.get('gene_type')
+            if biotype:
+                self.biotype.setdefault(gid, biotype)
+        if ftype == 'exon':
+            self.with_exons.add(tid)
+            self.add_interval(tid, chrom, strands, start, end)
+            self.origin['exon'] += 1
+        elif ftype in fomo_io.CDS_LIKE_TYPES:
+            self.cds[tid].append((chrom, strands, start, end))
+
+    def add_gff3_row(self, cols, chrom, strands, start, end):
+        attrs = fomo_io.parse_attrs(cols[8])
+        parents = fomo_io.split_ids(attrs.get('Parent', ''))
+        ftype = cols[2].lower()
+        if ftype == 'exon':
+            self.origin['exon'] += 1
+            for parent in parents or [ORPHAN_EXON]:
+                self.with_exons.add(parent)
+                self.add_interval(parent, chrom, strands, start, end)
+            return
+        if ftype in fomo_io.CDS_LIKE_TYPES:
+            for parent in parents:
+                self.cds[parent].append((chrom, strands, start, end))
+            return
+        fid = attrs.get('ID')
+        if fid:
+            self.describe(fid, cols[2], attrs, parents)
+        self.has_child.update(parents)
+        if parents and fid and fomo_io.is_transcript(cols[2]):
+            self.parented.append((fid, chrom, strands, start, end))
+
+    def describe(self, fid, ftype, attrs, parents):
+        self.feature_label[fid] = self.label(ftype, attrs)
+        if parents:
+            self.parent_of[fid] = parents[0]
+        name = attrs.get('Name') or attrs.get('gene_name') or attrs.get('gene')
+        if name:
+            self.name[fid] = name
+        alt = attrs.get('gene_name') or attrs.get('gene')
+        if alt:
+            self.alt_name[fid] = alt
+        biotype = attrs.get('gene_biotype') or attrs.get('biotype') or attrs.get('gene_type')
+        if biotype:
+            self.biotype[fid] = biotype
+
+    def add_fallback_intervals(self):
+        """A transcript-like feature without exons counts by its CDS/UTR rows or, with no children
+        at all, by its own span."""
+        for parent, rows in self.cds.items():
+            if parent in self.with_exons:
+                continue
+            for chrom, strands, start, end in rows:
+                self.add_interval(parent, chrom, strands, start, end)
+                self.origin['cds_utr_without_exon'] += 1
+        for fid, chrom, strands, start, end in self.parented:
+            if fid in self.has_child or fid in self.with_exons or fid in self.cds:
+                continue
+            self.add_interval(fid, chrom, strands, start, end)
+            self.origin['childless_feature_span'] += 1
+
+    def gene_of(self, pid: str) -> str:
+        """The top of pid's Parent chain (GTF: its gene_id)."""
+        gene, depth = pid, 0
+        while gene in self.parent_of and depth < MAX_PARENT_DEPTH:
+            gene = self.parent_of[gene]
+            depth += 1
+        return gene
+
+    def resolve_genes(self):
+        """-> (exon RefIndex, transcript-span RefIndex, gene_meta), every interval labelled
+        (type, gene); gene_meta: gene -> (name, biotype)."""
+        gene_meta, key_labels = {}, []
+        for pid in self.key_ids:
+            gene = self.gene_of(pid)
+            ftype = self.feature_label.get(pid, 'unknown_parent')
+            if gene not in gene_meta:
+                name = self.name.get(gene) if gene != pid else None  # a transcript's own Name is not a gene name
+                gene_meta[gene] = (
+                    name or self.alt_name.get(pid) or self.name.get(pid) or '.',
+                    self.biotype.get(gene) or ftype,
+                )
+            key_labels.append((ftype, gene))
+        tx_idx = RefIndex()
+        for (key, chrom, strand), (lo, hi) in self.spans.items():
+            tx_idx.add(chrom, strand, lo, hi, key)
+        return self.ex_idx.freeze(key_labels), tx_idx.freeze(key_labels), gene_meta
+
+
+def read_reference(path: str):
     """-> (exon RefIndex, transcript-span RefIndex, Counter of interval origins, is GTF, gene_meta).
 
     Every exon row counts. A transcript-like feature without exons counts by its CDS/UTR rows or,
@@ -310,261 +449,147 @@ def read_reference(path):
     gene, else the transcript's gene_name / gene, else '.'; biotype = the gene's gene_biotype /
     biotype / gene_type, else the transcript's type label."""
     gtf = is_gtf(path)
-    intern = sys.intern
-    feat = {}                                  # feature id -> type label
-    parent_of = {}                             # feature id -> first Parent (GFF3)
-    gname, galt, gbio = {}, {}, {}             # id -> Name/gene_name/gene; transcript gene_name/gene; biotype
-    keys, key_ids = {}, []                     # parent id -> int key (interval label key)
-    cds = collections.defaultdict(list)        # parent -> CDS/UTR intervals (used only if it has no exon)
-    with_exons, has_child, parented = set(), set(), []
-    spans = {}                                 # (key, chrom, strand) -> (min, max)
-    ex_idx = RefIndex()
-    origin = collections.Counter()
-
-    def lab_of(t, a):
-        if t in GENERIC_TYPES:
-            bt = next((a[k] for k in BIOTYPE_KEYS if a.get(k)), None)
-            if bt and bt != t:
-                return intern(f'{t}:{bt}')
-        return intern(t)
-
-    def key_of(pid):
-        k = keys.get(pid)
-        if k is None:
-            k = keys[pid] = len(key_ids)
-            key_ids.append(pid)
-        return k
-
-    def add_iv(pid, chrom, strands, s, e):
-        k = key_of(pid)
-        for st in strands:
-            ex_idx.add(chrom, st, s, e, k)
-            sk = (k, chrom, st)
-            lo_hi = spans.get(sk)
-            spans[sk] = (s, e) if lo_hi is None else (min(lo_hi[0], s), max(lo_hi[1], e))
-
-    with opener(path) as fh:
-        for line in fh:
-            if line[0] == '#':
-                if line.startswith('##FASTA'):
-                    break
-                continue
-            f = line.rstrip('\n').split('\t')
-            if len(f) < 9:
-                continue
-            chrom = intern(f[0])
-            strands = (f[6],) if f[6] in ('+', '-') else ('+', '-')      # '.' / '?' -> both
-            s, e = int(f[3]), int(f[4])
-            if gtf:
-                a = gtf_attrs(f[8])
-                tid = a.get('transcript_id')
-                if not tid:
-                    continue
-                if f[2] == 'transcript' or (f[2] == 'exon' and tid not in feat):
-                    feat[tid] = lab_of('transcript', a)
-                    gid = a.get('gene_id') or tid
-                    parent_of[tid] = gid
-                    if a.get('gene_name'):
-                        gname.setdefault(gid, a['gene_name'])
-                    bt = a.get('gene_biotype') or a.get('gene_type')
-                    if bt:
-                        gbio.setdefault(gid, bt)
-                if f[2] == 'exon':
-                    with_exons.add(tid)
-                    add_iv(tid, chrom, strands, s, e)
-                    origin['exon'] += 1
-                elif f[2] in CDS_LIKE:
-                    cds[tid].append((chrom, strands, s, e))
-                continue
-            t = f[2]
-            if t == 'exon':
-                m = PARENT_RE.search(f[8])
-                origin['exon'] += 1
-                for p in (m.group(1).split(',') if m else ['<orphan exon>']):
-                    with_exons.add(p)
-                    add_iv(p, chrom, strands, s, e)
-                continue
-            if t in CDS_LIKE:
-                m = PARENT_RE.search(f[8])
-                for p in (m.group(1).split(',') if m else ()):
-                    cds[p].append((chrom, strands, s, e))
-                continue
-            a = dict(gff3_attrs(f[8]))
-            parents = [p for p in a.get('Parent', '').split(',') if p]
-            fid = a.get('ID')
-            if fid:
-                feat[fid] = lab_of(t, a)
-                if parents:
-                    parent_of[fid] = parents[0]
-                nm = a.get('Name') or a.get('gene_name') or a.get('gene')
-                if nm:
-                    gname[fid] = nm
-                alt = a.get('gene_name') or a.get('gene')
-                if alt:
-                    galt[fid] = alt
-                bt = a.get('gene_biotype') or a.get('biotype') or a.get('gene_type')
-                if bt:
-                    gbio[fid] = bt
-            has_child.update(parents)
-            if parents and fid and t not in NOT_TRANSCRIPT and t not in GENE_LEVEL:
-                parented.append((fid, chrom, strands, s, e))
-    for p, rows in cds.items():                                 # CDS/UTR of a model without exons
-        if p in with_exons:
-            continue
-        for chrom, strands, s, e in rows:
-            add_iv(p, chrom, strands, s, e)
-            origin['cds_utr_without_exon'] += 1
-    for fid, chrom, strands, s, e in parented:                  # childless transcript-like features
-        if fid in has_child or fid in with_exons or fid in cds:
-            continue
-        add_iv(fid, chrom, strands, s, e)
-        origin['childless_feature_span'] += 1
-
-    # resolve every interval key to (type label, gene) now that the whole file is read
-    gene_meta, key_labels = {}, []
-    for pid in key_ids:
-        g, depth = pid, 0
-        while g in parent_of and depth < 10:                    # top of the Parent chain (GTF: gene_id)
-            g = parent_of[g]
-            depth += 1
-        typ = feat.get(pid, 'unknown_parent')
-        if g not in gene_meta:
-            nm = gname.get(g) if g != pid else None             # a transcript's own Name is not a gene name
-            gene_meta[g] = (nm or galt.get(pid) or gname.get(pid) or '.', gbio.get(g) or typ)
-        key_labels.append((typ, g))
-    tx_idx = RefIndex()
-    for (k, chrom, st), (lo, hi) in spans.items():
-        tx_idx.add(chrom, st, lo, hi, k)
-    return ex_idx.freeze(key_labels), tx_idx.freeze(key_labels), origin, gtf, gene_meta
+    builder = _RefBuilder()
+    add_row = builder.add_gtf_row if gtf else builder.add_gff3_row
+    for _, cols in fomo_io.iter_gff(path):
+        strands = (cols[6],) if cols[6] in ('+', '-') else ('+', '-')  # '.' / '?' -> both
+        add_row(cols, sys.intern(cols[0]), strands, int(cols[3]), int(cols[4]))
+    builder.add_fallback_intervals()
+    ex_idx, tx_idx, gene_meta = builder.resolve_genes()
+    return ex_idx, tx_idx, builder.origin, gtf, gene_meta
 
 
 # ------------------------------------------------------------------ gffcompare
-def run_gffcompare(models, tmp, exe):
-    """-> list of cliques (lists of model indices); writes one GTF per species with integer IDs."""
-    by_sp = collections.defaultdict(list)
+def run_gffcompare(models: list[Model], tmp: str, exe: str):
+    """-> (cliques as lists of model indices, number of input files); writes one GTF per species
+    with integer IDs."""
+    by_species = collections.defaultdict(list)
     for i, m in enumerate(models):
-        by_sp[m['species']].append(i)
+        by_species[m.species].append(i)
     files = []
-    for k, sp in enumerate(sorted(by_sp)):
+    for k, species in enumerate(sorted(by_species)):
         path = os.path.join(tmp, f'q{k}.gtf')
-        with open(path, 'w') as o:
-            for i in by_sp[sp]:
+        with open(path, 'w', encoding='utf-8') as out:
+            for i in by_species[species]:
                 m = models[i]
                 tag = f'gene_id "g{i}"; transcript_id "t{i}";'
-                o.write(f"{m['chr']}\tfomo\ttranscript\t{m['exons'][0][0]}\t{m['exons'][-1][1]}\t.\t{m['strand']}\t.\t{tag}\n")
-                for s, e in m['exons']:
-                    o.write(f"{m['chr']}\tfomo\texon\t{s}\t{e}\t.\t{m['strand']}\t.\t{tag}\n")
+                out.write(f'{m.chr}\tfomo\ttranscript\t{m.exons[0][0]}\t{m.exons[-1][1]}\t.\t{m.strand}\t.\t{tag}\n')
+                for s, e in m.exons:
+                    out.write(f'{m.chr}\tfomo\texon\t{s}\t{e}\t.\t{m.strand}\t.\t{tag}\n')
         files.append(path)
-    with open(os.path.join(tmp, 'inputs.txt'), 'w') as o:
-        o.write('\n'.join(files) + '\n')
-    r = subprocess.run([exe, '--no-merge', '-o', 'cmp', '-i', 'inputs.txt'], cwd=tmp, capture_output=True)
+    with open(os.path.join(tmp, 'inputs.txt'), 'w', encoding='utf-8') as out:
+        out.write('\n'.join(files) + '\n')
+    r = subprocess.run([exe, '--no-merge', '-o', 'cmp', '-i', 'inputs.txt'], cwd=tmp, capture_output=True, check=False)
     if r.returncode != 0:
-        die(f"gffcompare failed (exit {r.returncode}):\n{r.stderr.decode('utf-8', 'replace')}")
+        fomo_io.die(f'gffcompare failed (exit {r.returncode}):\n{r.stderr.decode("utf-8", "replace")}')
     cliques = []
-    with open(os.path.join(tmp, 'cmp.tracking')) as fh:
+    with open(os.path.join(tmp, 'cmp.tracking'), encoding='utf-8') as fh:
         for line in fh:
-            f = line.rstrip('\n').split('\t')
             ids = []
-            for q in f[4:]:
-                if q == '-':
+            for query in line.rstrip('\n').split('\t')[4:]:
+                if query == '-':
                     continue
-                for item in q.split(','):                             # qN:g<i>|t<i>|exons|fpkm|tpm|cov|len
+                for item in query.split(','):  # qN:g<i>|t<i>|exons|fpkm|tpm|cov|len
                     ids.append(int(item.split(':', 1)[1].split('|')[1][1:]))
             cliques.append(ids)
     return cliques, len(files)
 
 
-def exact_chains(models, tmp, exe):
-    """-> {chain key: [models]} as decided by gffcompare, verified against the chains derived here."""
+def exact_chains(models: list[Model], tmp: str, exe: str):
+    """-> ({chain key: [models]} as decided by gffcompare, verified against the chains derived here,
+    number of gffcompare inputs, models restored that gffcompare dropped as duplicates)."""
     if not models:
         return {}, 0, 0
     cliques, n_files = run_gffcompare(models, tmp, exe)
-    key = lambda m: (m['chr'], m['strand'], m['chain'])
     by_key = collections.defaultdict(list)
     for m in models:
-        by_key[key(m)].append(m)
+        by_key[m.key].append(m)
     seen = set()
     for ids in cliques:
-        ks = {key(models[i]) for i in ids}
-        if len(ks) != 1:
-            die(f'gffcompare clique with {len(ks)} different intron chains (ids {ids[:5]}); check gffcompare version/options')
-        k = ks.pop()
-        if k in seen:
-            die(f'intron chain {k[0]}:{k[1]} reported in two gffcompare cliques')
-        seen.add(k)
+        keys = {models[i].key for i in ids}
+        if len(keys) != 1:
+            fomo_io.die(
+                f'gffcompare clique with {len(keys)} different intron chains (ids {ids[:5]}); '
+                f'check gffcompare version/options'
+            )
+        key = keys.pop()
+        if key in seen:
+            fomo_io.die(f'intron chain {key[0]}:{key[1]} reported in two gffcompare cliques')
+        seen.add(key)
     if seen != set(by_key):
-        die(f'{len(set(by_key) - seen)} intron chain(s) missing from gffcompare tracking')
-    dup = sum(len(by_key[k]) for k in seen) - sum(len(c) for c in cliques)
-    return by_key, n_files, dup
+        fomo_io.die(f'{len(set(by_key) - seen)} intron chain(s) missing from gffcompare tracking')
+    restored = sum(len(by_key[k]) for k in seen) - sum(len(c) for c in cliques)
+    return by_key, n_files, restored
 
 
 # ------------------------------------------------------------------ genes / representative
-def link_genes(chains):
-    """chains: iterable of chain keys -> list of lists of chain keys sharing >= 1 intron (connected)."""
+def link_genes(chains) -> list[list[ChainKey]]:
+    """chain keys -> groups of chain keys sharing >= 1 intron (connected components)."""
     chains = sorted(chains)
-    par = list(range(len(chains)))
+    parent = list(range(len(chains)))
 
     def find(x):
-        while par[x] != x:
-            par[x] = par[par[x]]
-            x = par[x]
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
         return x
 
     first = {}
-    for i, (c, s, ch) in enumerate(chains):
-        for j in ch:
-            k = (c, s, j)
+    for i, (chrom, strand, introns) in enumerate(chains):
+        for intron in introns:
+            k = (chrom, strand, intron)
             if k in first:
-                par[find(i)] = find(first[k])
+                parent[find(i)] = find(first[k])
             else:
                 first[k] = i
-    g = collections.defaultdict(list)
-    for i, k in enumerate(chains):
-        g[find(i)].append(k)
-    return list(g.values())
+    groups = collections.defaultdict(list)
+    for i, key in enumerate(chains):
+        groups[find(i)].append(key)
+    return list(groups.values())
 
 
-def exonic_len(m):
-    return sum(e - s + 1 for s, e in m['exons'])
-
-
-def qstats(vals):
+def qstats(vals) -> dict:
     if not vals:
-        return dict(n=0)
+        return {'n': 0}
     v = sorted(vals)
-    q = lambda p: v[min(len(v) - 1, int(round(p * (len(v) - 1))))]
-    return dict(n=len(v), min=v[0], p25=q(.25), median=statistics.median(v), mean=round(statistics.fmean(v), 2),
-                p75=q(.75), max=v[-1])
+
+    def quantile(p):
+        return v[min(len(v) - 1, int(round(p * (len(v) - 1))))]
+
+    return {
+        'n': len(v),
+        'min': v[0],
+        'p25': quantile(0.25),
+        'median': statistics.median(v),
+        'mean': round(statistics.fmean(v), 2),
+        'p75': quantile(0.75),
+        'max': v[-1],
+    }
 
 
-def primary_type(types):
-    def rank(t):
-        tl = t.lower()
-        if t == 'mRNA' or 'protein_coding' in tl:
-            return 0
-        if t in ('lnc_RNA', 'lncRNA') or 'lncrna' in tl or 'lincrna' in tl:
-            return 1
-        if 'antisense' in tl:
-            return 2
-        if 'pseudo' in tl:
-            return 5
-        if t.startswith('transcript'):
-            return 3
-        if any(x in tl for x in ('trna', 'rrna', 'snorna', 'snrna', 'mirna', 'scrna', 'y_rna', 'srp', 'rnase', 'guide', 'ncrna', 'misc')):
-            return 4
-        return 6
-    return min(types, key=lambda t: (rank(t), t))
+def type_rank(ftype: str) -> int:
+    lower = ftype.lower()
+    if ftype == 'mRNA' or 'protein_coding' in lower:
+        return 0
+    if ftype in ('lnc_RNA', 'lncRNA') or 'lncrna' in lower or 'lincrna' in lower:
+        return 1
+    if 'antisense' in lower:
+        return 2
+    if 'pseudo' in lower:
+        return 5
+    if ftype.startswith('transcript'):
+        return 3
+    if any(x in lower for x in SMALL_RNA_MARKERS):
+        return 4
+    return 6
 
 
-LOCATIONS = ('antisense_exonic', 'intronic', 'sense_span_overlap', 'antisense_intronic', 'divergent',
-             'intergenic', 'no_reference')
+def primary_type(types) -> str:
+    return min(types, key=lambda t: (type_rank(t), t))
 
 
-OVERLAPPING = ('antisense_exonic', 'intronic', 'sense_span_overlap', 'antisense_intronic')
-
-
-def ref_location(r, ex_idx, tx_idx, gene_meta, divergent_dist):
-    """-> (class, ref) of r (a gene footprint: chr, strand, sorted disjoint exons) vs the reference.
+def ref_location(gene, ex_idx, tx_idx, gene_meta, divergent_dist):
+    """-> (class, ref) of a gene footprint (chr, strand, sorted disjoint exons) vs the reference.
     ref = dict(gene, name, biotype, orientation, distance) for the reference gene the class refers
     to: the gene of the overlapping opposite-strand exon (antisense_exonic), of the innermost
     containing same-strand transcript (intronic), of an overlapping transcript (sense_span_overlap /
@@ -574,59 +599,88 @@ def ref_location(r, ex_idx, tx_idx, gene_meta, divergent_dist):
     (adjacent = 1)."""
     if ex_idx is None:
         return 'no_reference', None
-    c, strand, ex = r['chr'], r['strand'], r['exons']
-    S, E = ex[0][0], ex[-1][1]
+    chrom, strand, exons = gene['chr'], gene['strand'], gene['exons']
+    start, end = exons[0][0], exons[-1][1]
     opp = '-' if strand == '+' else '+'
 
-    def mk(g, orientation, d):
-        name, bio = gene_meta[g]
-        return dict(gene=g, name=name, biotype=bio, orientation=orientation, distance=d)
+    def tag(g, orientation, distance):
+        name, biotype = gene_meta[g]
+        return {'gene': g, 'name': name, 'biotype': biotype, 'orientation': orientation, 'distance': distance}
 
-    anti = {g for s, e in ex for _, g in ex_idx.hits(c, opp, s, e)}
+    anti = {g for s, e in exons for _, g in ex_idx.hits(chrom, opp, s, e)}
     if anti:
-        return 'antisense_exonic', mk(min(anti), 'antisense', 0)
-    same = tx_idx.intervals(c, strand, S, E)
-    cont = [(e2 - s2, g) for s2, e2, (_, g) in same if s2 <= S and e2 >= E]
-    if cont:
-        return 'intronic', mk(min(cont)[1], 'sense', 0)
+        return 'antisense_exonic', tag(min(anti), 'antisense', 0)
+    same = tx_idx.intervals(chrom, strand, start, end)
+    containing = [(e2 - s2, g) for s2, e2, (_, g) in same if s2 <= start and e2 >= end]
+    if containing:
+        return 'intronic', tag(min(containing)[1], 'sense', 0)
     if same:
-        return 'sense_span_overlap', mk(min(g for _, _, (_, g) in same), 'sense', 0)
-    oppov = tx_idx.intervals(c, opp, S, E)
-    if oppov:
-        return 'antisense_intronic', mk(min(g for _, _, (_, g) in oppov), 'antisense', 0)
+        return 'sense_span_overlap', tag(min(g for _, _, (_, g) in same), 'sense', 0)
+    opposite = tx_idx.intervals(chrom, opp, start, end)
+    if opposite:
+        return 'antisense_intronic', tag(min(g for _, _, (_, g) in opposite), 'antisense', 0)
     # head-to-head: an opposite-strand transcript whose 5' end lies within divergent_dist upstream of ours
     if divergent_dist > 0:
-        win = (S - divergent_dist, S - 1) if strand == '+' else (E + 1, E + divergent_dist)
-        part = tx_idx.intervals(c, opp, *win)
-        if part:
-            d, g = min(((S - e2) if strand == '+' else (s2 - E), g) for s2, e2, (_, g) in part)
-            return 'divergent', mk(g, 'antisense', d)
+        window = (start - divergent_dist, start - 1) if strand == '+' else (end + 1, end + divergent_dist)
+        partners = tx_idx.intervals(chrom, opp, *window)
+        if partners:
+            d, g = min(((start - e2) if strand == '+' else (s2 - end), g) for s2, e2, (_, g) in partners)
+            return 'divergent', tag(g, 'antisense', d)
     near = []
-    for st, o in ((strand, 0), (opp, 1)):
-        n = tx_idx.nearest(c, st, S, E)
+    for st, orientation in ((strand, 0), (opp, 1)):
+        n = tx_idx.nearest(chrom, st, start, end)
         if n:
-            near.append((n[0], o, n[1][1]))
+            near.append((n[0], orientation, n[1][1]))
     if not near:
         return 'intergenic', None
-    d, o, g = min(near)
-    return 'intergenic', mk(g, 'sense' if o == 0 else 'antisense', d)
+    d, orientation, g = min(near)
+    return 'intergenic', tag(g, 'sense' if orientation == 0 else 'antisense', d)
 
 
 def check_location(loc, ref, divergent_dist, rid):
-    """Exit 1 if the tag contradicts the class (it cannot by construction; this guards changes)."""
+    """Fail if the tag contradicts the class (it cannot by construction; this guards changes)."""
     ok = True
     if loc in OVERLAPPING:
-        ok = ref is not None and ref['distance'] == 0 and \
-            ref['orientation'] == ('antisense' if loc.startswith('antisense') else 'sense')
+        expected = 'antisense' if loc.startswith('antisense') else 'sense'
+        ok = ref is not None and ref['distance'] == 0 and ref['orientation'] == expected
     elif loc == 'divergent':
         ok = ref is not None and ref['orientation'] == 'antisense' and 0 < ref['distance'] <= divergent_dist
     elif loc == 'intergenic':
         ok = ref is None or ref['distance'] > 0
     if not ok:
-        die(f'inconsistent reference tag for {rid}: ref_location={loc}, {ref}')
+        fomo_io.die(f'inconsistent reference tag for {rid}: ref_location={loc}, {ref}')
 
 
-# ------------------------------------------------------------------ output
+# ------------------------------------------------------------------ curated genes
+@dataclass(slots=True)
+class CuratedTranscript:
+    rep: Model
+    key: ChainKey
+    species: list[str]
+    support: list[Model]
+    id: str = ''
+    exon_prefix: str = ''
+
+
+@dataclass(slots=True)
+class CuratedGene:
+    gene_id: str
+    hash: str
+    chr: str
+    strand: str
+    start: int
+    end: int
+    tx: list[CuratedTranscript]
+    chains: list[ChainKey]
+    species: list[str]
+    location: str
+    ref: dict | None
+
+    @property
+    def n_chains(self) -> int:
+        return len(self.chains)
+
+
 def merge_exons(exons):
     """-> sorted, disjoint union of (start, end) intervals (overlapping or abutting ones merged)."""
     out = []
@@ -638,129 +692,145 @@ def merge_exons(exons):
     return tuple(out)
 
 
-def gene_hash(track, chr_, strand, chains, n=12):
-    """plans/25: content ID of a gene = its track, seqid, strand and sorted intron chains."""
-    key = f'{track}|{chr_}|{strand}|' + ';'.join(sorted(','.join(f'{a}-{b}' for a, b in ch) for ch in chains))
-    return hashlib.sha1(key.encode()).hexdigest()[:n]
+def gene_hash(track, chrom, strand, chains, n=HASH_LENGTH):
+    """Content ID of a gene: its track, seqid, strand and sorted intron chains."""
+    chain_text = ';'.join(sorted(','.join(f'{a}-{b}' for a, b in ch) for ch in chains))
+    return hashlib.sha1(f'{track}|{chrom}|{strand}|{chain_text}'.encode()).hexdigest()[:n]
 
 
 def ref_attrs(loc, ref):
     """-> [(key, value)] of the gene's reference tags; keys without a value are omitted."""
-    a = [('ref_location', loc)]
+    attrs = [('ref_location', loc)]
     if loc == 'no_reference' or not ref:
-        return a
-    for k, v in (('ref_gene_id', esc(ref['gene'])), ('ref_gene_name', esc(ref['name'])),
-                 ('ref_gene_biotype', esc(ref['biotype'])), ('ref_gene_orientation', ref['orientation']),
-                 ('ref_distance', str(ref['distance']))):
-        if v not in ('', '.'):
-            a.append((k, v))
-    return a
+        return attrs
+    for key, value in (
+        ('ref_gene_id', esc(ref['gene'])),
+        ('ref_gene_name', esc(ref['name'])),
+        ('ref_gene_biotype', esc(ref['biotype'])),
+        ('ref_gene_orientation', ref['orientation']),
+        ('ref_distance', str(ref['distance'])),
+    ):
+        if value not in ('', '.'):
+            attrs.append((key, value))
+    return attrs
 
 
-def gene_blocks(genes, tag, ftype):
+def gff_line(chrom, ftype, start, end, strand, attrs):
+    col9 = ';'.join(f'{k}={v}' for k, v in attrs)
+    return '\t'.join([chrom, 'fomo', ftype, str(start), str(end), '.', strand, '.', col9])
+
+
+def gene_blocks(genes: list[CuratedGene], tag: str, ftype: str):
     """-> list of (seqid, start, [lines]) per curated gene: gene, then t1 + its exons, t2 + ..."""
     blocks = []
     for g in genes:
-        gid = g['gene_id']
-        a = [('ID', gid), ('biotype', tag), ('n_chains', str(g['n_chains'])), ('n_species', str(len(g['species'])))]
-        a += ref_attrs(g['location'], g['ref'])
-        lines = ['\t'.join([g['chr'], 'fomo', 'gene', str(g['start']), str(g['end']), '.', g['strand'], '.',
-                            ';'.join(f'{k}={v}' for k, v in a)])]
-        for t in g['tx']:
-            r, tid = t['rep'], t['id']
-            a = [('ID', tid), ('Parent', gid), ('biotype', tag), ('representative_transcript', esc(r['id'])),
-                 ('supporting_transcripts', ','.join(esc(m['id']) for m in t['support'])),
-                 ('supporting_species', ','.join(esc(x) for x in t['species'])), ('n_sj', str(len(r['chain'])))]
-            lines.append('\t'.join([r['chr'], 'fomo', ftype, str(r['exons'][0][0]), str(r['exons'][-1][1]), '.',
-                                    r['strand'], '.', ';'.join(f'{k}={v}' for k, v in a)]))
-            n = len(r['exons'])
-            for j, (xs, xe) in enumerate(r['exons']):
-                k = j + 1 if r['strand'] == '+' else n - j                       # exon number 5'->3'
-                lines.append('\t'.join([r['chr'], 'fomo', 'exon', str(xs), str(xe), '.', r['strand'], '.',
-                                        f"ID={t['exon_prefix']}e{k}_{g['hash']};Parent={tid}"]))
-        blocks.append((g['chr'], g['start'], lines))
+        attrs = [('ID', g.gene_id), ('biotype', tag), ('n_chains', str(g.n_chains)), ('n_species', str(len(g.species)))]
+        lines = [gff_line(g.chr, 'gene', g.start, g.end, g.strand, attrs + ref_attrs(g.location, g.ref))]
+        for t in g.tx:
+            r = t.rep
+            attrs = [
+                ('ID', t.id),
+                ('Parent', g.gene_id),
+                ('biotype', tag),
+                ('representative_transcript', esc(r.id)),
+                ('supporting_transcripts', ','.join(esc(m.id) for m in t.support)),
+                ('supporting_species', ','.join(esc(x) for x in t.species)),
+                ('n_sj', str(len(r.chain))),
+            ]
+            lines.append(gff_line(r.chr, ftype, r.exons[0][0], r.exons[-1][1], r.strand, attrs))
+            n = len(r.exons)
+            for j, (xs, xe) in enumerate(r.exons):
+                k = j + 1 if r.strand == '+' else n - j  # exon number 5'->3'
+                exon_attrs = [('ID', f'{t.exon_prefix}e{k}_{g.hash}'), ('Parent', t.id)]
+                lines.append(gff_line(r.chr, 'exon', xs, xe, r.strand, exon_attrs))
+        blocks.append((g.chr, g.start, lines))
     return blocks
 
 
-def all_ids(genes):
+def all_ids(genes: list[CuratedGene]) -> set[str]:
     """-> every gene / transcript / exon ID written for these genes."""
     ids = set()
     for g in genes:
-        ids.add(g['gene_id'])
-        for t in g['tx']:
-            ids.add(t['id'])
-            ids.update(f"{t['exon_prefix']}e{k}_{g['hash']}" for k in range(1, len(t['rep']['exons']) + 1))
+        ids.add(g.gene_id)
+        for t in g.tx:
+            ids.add(t.id)
+            ids.update(f'{t.exon_prefix}e{k}_{g.hash}' for k in range(1, len(t.rep.exons) + 1))
     return ids
 
 
 def header(args, n_genes, n_tx):
-    return ['##gff-version 3',
-            f'# curate_models: intron chains shared exactly by >={args.min_species} species (gffcompare --no-merge), '
-            f'linked into genes by shared splice junctions; one transcript per supported chain (t1 = most species); '
-            f"reference filter: {'same-strand' if args.strand == 'same' else 'either-strand'} overlap with any reference exon; "
-            f'{n_genes} genes, {n_tx} transcripts']
+    strand = 'same-strand' if args.strand == 'same' else 'either-strand'
+    return [
+        '##gff-version 3',
+        f'# curate_models: intron chains shared exactly by >={args.min_species} species (gffcompare --no-merge), '
+        f'linked into genes by shared splice junctions; one transcript per supported chain (t1 = most species); '
+        f'reference filter: {strand} overlap with any reference exon; '
+        f'{n_genes} genes, {n_tx} transcripts',
+    ]
 
 
 def write_curated(path, args, blocks, n_tx):
-    with open(path, 'w') as o:
-        o.write('\n'.join(header(args, len(blocks), n_tx)) + '\n')
+    with open(path, 'w', encoding='utf-8') as out:
+        out.write('\n'.join(header(args, len(blocks), n_tx)) + '\n')
         for _, _, lines in blocks:
-            o.write('\n'.join(lines) + '\n')
+            out.write('\n'.join(lines) + '\n')
 
 
-def write_merged(path, ref_path, args, blocks, new_ids, n_tx):
-    """Reference verbatim; each seqid's curated blocks right after its last reference feature line.
-    Exits 1 if a curated ID is already used by the reference."""
+def reference_layout(ref_path, new_ids):
+    """-> {seqid: index of its last reference line}. Fails if a curated ID is already used by the
+    reference."""
     last = {}
-    id_re = re.compile(r'(?:^|;)\s*ID=([^;\t\n]+)')
-    with opener(ref_path) as fh:
+    with fomo_io.open_text(ref_path) as fh:
         for n, line in enumerate(fh):
             if line.startswith('##FASTA'):
                 break
             if line[0] != '#' and line.strip():
-                f = line.split('\t', 9)
-                last[f[0]] = n
-                if len(f) >= 9:
-                    m = id_re.search(f[8])
-                    if m and m.group(1).strip() in new_ids:
-                        die(f'curated ID {m.group(1).strip()} already used in the reference; set --id-prefix')
+                cols = line.split('\t', 9)
+                last[cols[0]] = n
+                match = MERGED_ID_RE.search(cols[8]) if len(cols) >= 9 else None
+                if match and match.group(1).strip() in new_ids:
+                    fomo_io.die(f'curated ID {match.group(1).strip()} already used in the reference; set --id-prefix')
+    return last
+
+
+def write_merged(path, ref_path, args, blocks, new_ids, n_tx):
+    """Reference verbatim; each seqid's curated blocks right after its last reference feature line."""
+    last = reference_layout(ref_path, new_ids)
     by_seq = collections.defaultdict(list)
-    for c, _, lines in blocks:
-        by_seq[c].append(lines)
+    for chrom, _, lines in blocks:
+        by_seq[chrom].append(lines)
     rest = [c for c in dict.fromkeys(c for c, _, _ in blocks) if c not in last]
     at = collections.defaultdict(list)
-    for c, n in last.items():
-        at[n].append(c)
-    with opener(ref_path) as fh, open(path, 'w') as o:
-        wrote_hdr = False
+    for chrom, n in last.items():
+        at[n].append(chrom)
+    hdr = header(args, len(blocks), n_tx)
+
+    def write_seqids(out, seqids):
+        for chrom in seqids:
+            for lines in by_seq[chrom]:
+                out.write('\n'.join(lines) + '\n')
+
+    with fomo_io.open_text(ref_path) as fh, open(path, 'w', encoding='utf-8') as out:
         for n, line in enumerate(fh):
             if line.startswith('##FASTA'):
-                for c in rest:
-                    for lines in by_seq[c]:
-                        o.write('\n'.join(lines) + '\n')
+                write_seqids(out, rest)
                 rest = []
-                o.write(line)
-                o.writelines(fh)
+                out.write(line)
+                out.writelines(fh)
                 break
             if not line.endswith('\n'):
                 line += '\n'
             if n == 0 and not line.startswith('##gff-version'):
-                o.write('\n'.join(header(args, len(blocks), n_tx)) + '\n')   # reference has no header: add one
-                wrote_hdr = True
-            o.write(line)
-            if not wrote_hdr and n == 0:
-                o.write(header(args, len(blocks), n_tx)[1] + '\n')
-                wrote_hdr = True
-            for c in at.get(n, ()):
-                for lines in by_seq[c]:
-                    o.write('\n'.join(lines) + '\n')
-        for c in rest:
-            for lines in by_seq[c]:
-                o.write('\n'.join(lines) + '\n')
+                out.write('\n'.join(hdr) + '\n')  # reference has no header: add one
+            out.write(line)
+            if n == 0 and line.startswith('##gff-version'):
+                out.write(hdr[1] + '\n')
+            write_seqids(out, at.get(n, ()))
+        write_seqids(out, rest)
 
 
 def gffread_ok(exe, path):
-    r = subprocess.run([exe, path, '-o', os.devnull], capture_output=True)
+    r = subprocess.run([exe, path, '-o', os.devnull], capture_output=True, check=False)
     return r.returncode == 0, r.stderr.decode('utf-8', 'replace').strip()[-2000:]
 
 
@@ -769,236 +839,367 @@ def gzip_file(src, dst):
         shutil.copyfileobj(i, o)
 
 
-# ------------------------------------------------------------------ main
-def main():
+# ------------------------------------------------------------------ steps of main
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--gff', required=True, help='fomo GFF3 (.gz ok)')
-    p.add_argument('--ref', help='reference annotation of the target (GFF3/GTF, .gz ok); omit for an unannotated target')
+    p.add_argument(
+        '--ref', help='reference annotation of the target (GFF3/GTF, .gz ok); omit for an unannotated target'
+    )
     p.add_argument('--prefix', required=True, help='output path prefix, e.g. outdir/<target>.curated.lnc_RNA')
     p.add_argument('--target', help='target species as written in source= (default: from the --gff file name)')
-    p.add_argument('--track', help='gene type of the input, e.g. lnc_RNA, mRNA, lnc_RNA.decoy (default: from the file name)')
-    p.add_argument('--id-prefix', help='prefix of curated gene / transcript / exon IDs (default: fomo_<tag>, e.g. '
-                   'fomo_lncRNA); change it only if the IDs clash with the reference')
+    p.add_argument(
+        '--track', help='track of the input, e.g. lnc_RNA, mRNA, lnc_RNA.decoy (default: from the file name)'
+    )
+    p.add_argument(
+        '--id-prefix',
+        help='prefix of curated gene / transcript / exon IDs (default: fomo_<tag>, e.g. fomo_lncRNA); '
+        'change it only if the IDs clash with the reference',
+    )
     p.add_argument('--min-species', type=int, default=2)
     p.add_argument('--strand', choices=['same', 'both'], default='same', help='reference overlap strand (default same)')
     p.add_argument('--keep-self', action='store_true', help="count the target's own projections as support")
-    p.add_argument('--divergent-dist', type=int, default=1000,
-                   help="max distance (bp) between the 5' ends of a curated gene and an opposite-strand reference "
-                        "transcript pointing away from it for ref_location=divergent (default 1000; 0 disables)")
+    p.add_argument(
+        '--divergent-dist',
+        type=int,
+        default=1000,
+        help="max distance (bp) between the 5' ends of a curated gene and an opposite-strand reference "
+        'transcript pointing away from it for ref_location=divergent (default 1000; 0 disables)',
+    )
     p.add_argument('--gffcompare', default='gffcompare')
     p.add_argument('--gffread', default='gffread')
     p.add_argument('--skip-gffread', action='store_true', help='do not validate outputs with gffread')
+    p.add_argument('--identity', help='identity of the curation data record (JSON object); without it no record')
     p.add_argument('--keep-tmp', action='store_true', help='keep the gffcompare work directory (<prefix>.gffcompare/)')
-    p.add_argument('--chains-tsv', action='store_true', help='also write <prefix>.chains.tsv.gz: every supported chain (before the '
-                   'reference filter) with its species, status, overlapped reference types and gene (audit)')
-    args = p.parse_args()
-    t0 = time.time()
+    p.add_argument(
+        '--chains-tsv',
+        action='store_true',
+        help='also write <prefix>.chains.tsv.gz: every supported chain (before the reference filter) with its '
+        'species, status, overlapped reference types and gene (audit)',
+    )
+    return p.parse_args()
 
+
+def resolve_track(args):
+    """-> (target, track, tag, transcript feature type, ID prefix)."""
     base = os.path.basename(args.gff)
-    target = args.target or re.sub(r'\.(allModels|top\d+|from_).*$', '', base)
-    track = args.track or next((m.group(1) for m in [re.search(r'\.((?:lnc_RNA|mRNA)(?:\.decoy)?)\.', base)] if m), 'lnc_RNA')
+    target = args.target or re.sub(r'\.(allModels|from_).*$', '', base)
+    match = re.search(r'\.((?:lnc_RNA|mRNA)(?:\.decoy)?)\.', base)
+    track = args.track or (match.group(1) if match else 'lnc_RNA')
     tag, ftype = track_info(track)
-    id_prefix = esc(args.id_prefix or f'fomo_{tag}')
+    return target, track, tag, ftype, esc(args.id_prefix or f'fomo_{tag}')
+
+
+def filter_models(models: list[Model], target: str, keep_self: bool, observed: dict) -> list[Model]:
+    """Drop self projections (unless kept), unstranded and single-exon models; count each step."""
+    observed['n_models'] = len(models)
+    own = [m for m in models if m.species == target]
+    observed['self_excluded'] = 0 if keep_self else len(own)
+    if own and not keep_self:
+        # The pipeline never aligns a species to itself; such models come from an older run.
+        log.warning(f'{len(own):,} self-projected models (source={target}) excluded')
+        models = [m for m in models if m.species != target]
+    observed['unstranded'] = sum(m.strand not in '+-' for m in models)
+    models = [m for m in models if m.strand in '+-']
+    observed['single_exon'] = sum(not m.chain for m in models)
+    models = [m for m in models if m.chain]
+    observed['multi_exon_models'] = len(models)
+    observed['species'] = len({m.species for m in models})
+    return models
+
+
+def tag_ref_hits(models: list[Model], ref: str | None, strand_mode: str):
+    """Set each model's ref_hits (types of the reference exons it overlaps);
+    -> (exon index, transcript-span index, gene_meta, reference is GTF), all None/False without --ref."""
+    if not ref:
+        return None, None, None, False
+    ex_idx, tx_idx, origin, ref_gtf, gene_meta = read_reference(ref)
+    log.info(f'reference {ref}: ' + ', '.join(f'{v:,} {k}' for k, v in origin.items()))
+    for m in models:
+        strands = (m.strand,) if strand_mode == 'same' else ('+', '-')
+        m.ref_hits = {t for st in strands for s, e in m.exons for t, _ in ex_idx.hits(m.chr, st, s, e)}
+    return ex_idx, tx_idx, gene_meta, ref_gtf
+
+
+@dataclass(slots=True)
+class ChainSupport:
+    by_chain: dict
+    species_pre: dict  # chain -> species of its models, before the reference filter
+    species_post: dict  # ... after it
+    supported_pre: set
+    supported_post: set
+
+
+def species_buckets(prefix: str, counts, min_species: int) -> dict:
+    """{<prefix>_<n>sp: count == n} for n up to the last bucket, then <prefix>_ge<n+1>sp."""
+    top = fomo_stats.CURATION_MAX_SPECIES_BUCKET
+    out = {f'{prefix}_{n}sp': sum(c == n for c in counts) for n in range(min_species, top + 1)}
+    out[f'{prefix}_ge{top + 1}sp'] = sum(c >= top + 1 for c in counts)
+    return out
+
+
+def chain_support(models: list[Model], args, observed: dict) -> ChainSupport:
+    """Exact chains (gffcompare) and their species support before and after the reference filter."""
     out_dir = os.path.dirname(os.path.abspath(args.prefix))
-    os.makedirs(out_dir, exist_ok=True)
-
-    models, _ = read_models(args.gff)
-    R = collections.OrderedDict()
-    obs, dis, nov = collections.OrderedDict(), collections.OrderedDict(), collections.OrderedDict()
-    obs['n_models'] = len(models)
-    is_self = [m for m in models if m['species'] == target]
-    obs['self_excluded'] = 0 if args.keep_self else len(is_self)
-    if is_self and not args.keep_self:
-        # Since plans/23 a species is never aligned to its own genome, so this only fires on
-        # inputs from older runs; they are excluded as before (they would never be support).
-        log(f'warning: {len(is_self):,} self-projected models (source={target}) — input predates '
-            f'plans/23; excluded')
-    if not args.keep_self:
-        models = [m for m in models if m['species'] != target]
-    obs['unstranded'] = sum(m['strand'] not in '+-' for m in models)
-    models = [m for m in models if m['strand'] in '+-']
-    obs['single_exon'] = sum(not m['chain'] for m in models)
-    models = [m for m in models if m['chain']]
-    obs['multi_exon_models'] = len(models)
-    obs['species'] = len({m['species'] for m in models})
-    log(f"{obs['n_models']:,} models in {args.gff}; {obs['multi_exon_models']:,} multi-exon non-self from {obs['species']} species")
-
-    # reference filter (per model; the overlapped types are kept for the report)
-    ref_gtf = False
-    ex_idx = tx_idx = gene_meta = None
-    if args.ref:
-        ex_idx, tx_idx, origin, ref_gtf, gene_meta = read_reference(args.ref)
-        log(f'reference {args.ref}: ' + ', '.join(f'{v:,} {k}' for k, v in origin.items()))
-        for m in models:
-            hits = set()
-            strands = (m['strand'],) if args.strand == 'same' else ('+', '-')
-            for st in strands:
-                for s, e in m['exons']:
-                    hits |= {t for t, _ in ex_idx.hits(m['chr'], st, s, e)}
-            m['ref_hits'] = hits
-    else:
-        for m in models:
-            m['ref_hits'] = set()
-
-    # exact chains (gffcompare), support before / after the filter
-    tmp = (os.path.abspath(args.prefix) + '.gffcompare') if args.keep_tmp else tempfile.mkdtemp(prefix='curate_', dir=out_dir)
+    keep = os.path.abspath(args.prefix) + '.gffcompare'
+    tmp = keep if args.keep_tmp else tempfile.mkdtemp(prefix='curate_', dir=out_dir)
     os.makedirs(tmp, exist_ok=True)
-    by_chain, n_files, dup = exact_chains(models, tmp, args.gffcompare)
-    if not args.keep_tmp:
-        shutil.rmtree(tmp, ignore_errors=True)
-    obs['gffcompare_inputs'] = n_files
-    obs['dup_restored'] = dup
-    obs['chains'] = len(by_chain)
-    sp_pre = {k: {m['species'] for m in v} for k, v in by_chain.items()}
-    sp_post = {k: {m['species'] for m in v if not m['ref_hits']} for k, v in by_chain.items()}
-    sup_pre = {k for k, s in sp_pre.items() if len(s) >= args.min_species}
-    sup_post = {k for k, s in sp_post.items() if len(s) >= args.min_species}
-    assert sup_post <= sup_pre
-    obs['supported_chains'] = len(sup_pre)
-    for n in range(args.min_species, 5):
-        obs[f'supported_chains_{n}sp'] = sum(len(sp_pre[k]) == n for k in sup_pre)
-    obs['supported_chains_ge5sp'] = sum(len(sp_pre[k]) >= 5 for k in sup_pre)
-    obs['models_in_supported_chains'] = sum(len(by_chain[k]) for k in sup_pre)
-    genes_pre = link_genes(sup_pre)
-    obs['genes'] = len(genes_pre)
+    try:
+        by_chain, n_files, restored = exact_chains(models, tmp, args.gffcompare)
+    finally:
+        if not args.keep_tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+    observed['gffcompare_inputs'] = n_files
+    observed['dup_restored'] = restored
+    observed['chains'] = len(by_chain)
+    species_pre = {k: {m.species for m in v} for k, v in by_chain.items()}
+    species_post = {k: {m.species for m in v if not m.ref_hits} for k, v in by_chain.items()}
+    supported_pre = {k for k, s in species_pre.items() if len(s) >= args.min_species}
+    supported_post = {k for k, s in species_post.items() if len(s) >= args.min_species}
+    if not supported_post <= supported_pre:
+        fomo_io.die('a chain is supported after the reference filter but not before it')
+    observed['supported_chains'] = len(supported_pre)
+    observed.update(species_buckets('supported_chains', [len(species_pre[k]) for k in supported_pre], args.min_species))
+    observed['models_in_supported_chains'] = sum(len(by_chain[k]) for k in supported_pre)
+    return ChainSupport(by_chain, species_pre, species_post, supported_pre, supported_post)
 
-    # discarded by the reference
-    if args.ref:
-        removed = [m for m in models if m['ref_hits']]
-        dis['models_removed'] = len(removed)
-        dis['models_removed_in_supported_chains'] = sum(1 for k in sup_pre for m in by_chain[k] if m['ref_hits'])
-        lost = sup_pre - sup_post
-        dis['supported_chains_lost'] = len(lost)
-        dis['supported_chains_kept_after_removal'] = sum(1 for k in sup_post if any(m['ref_hits'] for m in by_chain[k]))
-        dis['genes_lost'] = sum(1 for g in genes_pre if not any(k in sup_post for k in g))
-        mt, mp, ct, cp = (collections.Counter() for _ in range(4))
-        for m in removed:
-            mt.update(m['ref_hits'])
-            mp[primary_type(m['ref_hits'])] += 1
-        for k in lost:
-            types = set().union(*(m['ref_hits'] for m in by_chain[k]))
-            if not types:
-                die(f'supported chain lost without a removed model: {k[0]}:{k[1]}')
-            ct.update(types)
-            cp[primary_type(types)] += 1
-        for name, cnt in (('models_by_type', mt), ('models_by_primary_type', mp),
-                          ('chains_lost_by_type', ct), ('chains_lost_by_primary_type', cp)):
-            for t, v in sorted(cnt.items(), key=lambda x: (-x[1], x[0])):
-                dis[f'{name}:{t}'] = v
 
-    # genes: one transcript per supported chain (plans/25)
+def discarded_report(models: list[Model], support: ChainSupport, genes_pre) -> dict:
+    """What the reference filter removed: models, supported chains and genes, by reference type."""
+    by_chain = support.by_chain
+    removed = [m for m in models if m.ref_hits]
+    lost = support.supported_pre - support.supported_post
+    report = {
+        'models_removed': len(removed),
+        'models_removed_in_supported_chains': sum(1 for k in support.supported_pre for m in by_chain[k] if m.ref_hits),
+        'supported_chains_lost': len(lost),
+        'supported_chains_kept_after_removal': sum(
+            1 for k in support.supported_post if any(m.ref_hits for m in by_chain[k])
+        ),
+        'genes_lost': sum(1 for g in genes_pre if not any(k in support.supported_post for k in g)),
+    }
+    models_by_type, models_by_primary, chains_by_type, chains_by_primary = (collections.Counter() for _ in range(4))
+    for m in removed:
+        models_by_type.update(m.ref_hits)
+        models_by_primary[primary_type(m.ref_hits)] += 1
+    for k in lost:
+        types = set().union(*(m.ref_hits for m in by_chain[k]))
+        if not types:
+            fomo_io.die(f'supported chain lost without a removed model: {k[0]}:{k[1]}')
+        chains_by_type.update(types)
+        chains_by_primary[primary_type(types)] += 1
+    for name, counts in (
+        ('models_by_type', models_by_type),
+        ('models_by_primary_type', models_by_primary),
+        ('chains_lost_by_type', chains_by_type),
+        ('chains_lost_by_primary_type', chains_by_primary),
+    ):
+        for ftype, n in sorted(counts.items(), key=lambda x: (-x[1], x[0])):
+            report[f'{name}:{ftype}'] = n
+    return report
+
+
+def curated_transcripts(chains, support: ChainSupport) -> list[CuratedTranscript]:
+    """One transcript per supported chain of a gene, ranked t1, t2, ... (IDs set by the caller)."""
+    tx = []
+    for k in chains:
+        candidates = [m for m in support.by_chain[k] if not m.ref_hits]
+        rep = min(candidates, key=lambda m: (-m.exonic_len, m.de, m.id))
+        species = sorted(support.species_post[k])
+        tx.append(CuratedTranscript(rep, k, species, sorted(candidates, key=lambda m: (m.species, m.id))))
+    tx.sort(
+        key=lambda t: (
+            -len(t.species),
+            -len(t.key.introns),
+            -t.rep.exonic_len,
+            t.rep.exons[0][0],
+            t.rep.exons[-1][1],
+            t.rep.id,
+        )
+    )
+    return tx
+
+
+def build_genes(support: ChainSupport, track, id_prefix, reference, args, seq_rank) -> list[CuratedGene]:
+    """Curated genes from the chains supported after the filter, with IDs and reference location."""
+    ex_idx, tx_idx, gene_meta = reference
     genes, by_hash = [], {}
-    for g in link_genes(sup_post):
-        tx = []
-        for k in g:
-            cand = [m for m in by_chain[k] if not m['ref_hits']]
-            rep = min(cand, key=lambda m: (-exonic_len(m), m['de'], m['id']))
-            tx.append(dict(rep=rep, key=k, species=sorted(sp_post[k]),
-                           support=sorted(cand, key=lambda m: (m['species'], m['id']))))
-        tx.sort(key=lambda t: (-len(t['species']), -len(t['key'][2]), -exonic_len(t['rep']),
-                               t['rep']['exons'][0][0], t['rep']['exons'][-1][1], t['rep']['id']))
-        c, st = g[0][0], g[0][1]
-        foot = merge_exons([x for t in tx for x in t['rep']['exons']])
-        h = gene_hash(track, c, st, [k[2] for k in g])
+    for chains in link_genes(support.supported_post):
+        tx = curated_transcripts(chains, support)
+        chrom, strand = chains[0][0], chains[0][1]
+        footprint = merge_exons([x for t in tx for x in t.rep.exons])
+        h = gene_hash(track, chrom, strand, [k.introns for k in chains])
         if h in by_hash:
-            o = by_hash[h]
-            die(f"gene hash collision {h}: {c}:{st}:{foot[0][0]}-{foot[-1][1]} and {o['chr']}:{o['strand']}:{o['start']}-{o['end']}")
+            other = by_hash[h]
+            fomo_io.die(
+                f'gene hash collision {h}: {chrom}:{strand}:{footprint[0][0]}-{footprint[-1][1]} and '
+                f'{other.chr}:{other.strand}:{other.start}-{other.end}'
+            )
         gid = f'{id_prefix}_g_{h}'
-        loc, ref = ref_location(dict(chr=c, strand=st, exons=foot), ex_idx, tx_idx, gene_meta, args.divergent_dist)
+        location = {'chr': chrom, 'strand': strand, 'exons': footprint}
+        loc, ref = ref_location(location, ex_idx, tx_idx, gene_meta, args.divergent_dist)
         check_location(loc, ref, args.divergent_dist, gid)
         for i, t in enumerate(tx, 1):
-            t['id'], t['exon_prefix'] = f'{id_prefix}_t{i}_{h}', f'{id_prefix}_t{i}'
-        gene = dict(gene_id=gid, hash=h, chr=c, strand=st, start=foot[0][0], end=foot[-1][1], tx=tx,
-                    chains=g, n_chains=len(g), species=sorted(set().union(*(sp_post[k] for k in g))),
-                    location=loc, ref=ref)
+            t.id, t.exon_prefix = f'{id_prefix}_t{i}_{h}', f'{id_prefix}_t{i}'
+        species = sorted(set().union(*(support.species_post[k] for k in chains)))
+        gene = CuratedGene(gid, h, chrom, strand, footprint[0][0], footprint[-1][1], tx, chains, species, loc, ref)
         by_hash[h] = gene
         genes.append(gene)
-    seq_rank = {c: i for i, c in enumerate(dict.fromkeys(m['chr'] for m in models))}
-    genes.sort(key=lambda g: (seq_rank[g['chr']], g['start'], g['strand'], g['end'], g['hash']))
-    blocks = gene_blocks(genes, tag, ftype)
-    txs = [t for g in genes for t in g['tx']]
+    genes.sort(key=lambda g: (seq_rank[g.chr], g.start, g.strand, g.end, g.hash))
+    return genes
 
-    # novel model stats (per gene: species, chains, span, location; per transcript: structure, support)
-    nov['genes'] = len(genes)
-    nov['transcripts'] = len(txs)
-    nov['transcripts_per_gene_mean'] = round(len(txs) / len(genes), 3) if genes else 0
-    for n in range(args.min_species, 5):
-        nov[f'genes_{n}sp'] = sum(len(g['species']) == n for g in genes)
-    nov['genes_ge5sp'] = sum(len(g['species']) >= 5 for g in genes)
+
+def novel_report(genes: list[CuratedGene], min_species: int, has_ref: bool) -> dict:
+    """Per gene: species, chains, span, location; per transcript: structure and support."""
+    txs = [t for g in genes for t in g.tx]
+    report = {
+        'genes': len(genes),
+        'transcripts': len(txs),
+        'transcripts_per_gene_mean': round(len(txs) / len(genes), 3) if genes else 0,
+    }
+    report.update(species_buckets('genes', [len(g.species) for g in genes], min_species))
     for n in (1, 2):
-        nov[f'genes_{n}chain'] = sum(g['n_chains'] == n for g in genes)
-    nov['genes_ge3chain'] = sum(g['n_chains'] >= 3 for g in genes)
-    reps = [t['rep'] for t in txs]
-    for name, vals in (('n_exons', [len(r['exons']) for r in reps]),
-                       ('transcript_length', [exonic_len(r) for r in reps]),
-                       ('gene_span', [g['end'] - g['start'] + 1 for g in genes]),
-                       ('intron_length', [b - a - 1 for r in reps for a, b in r['chain']]),
-                       ('supporting_models', [len(t['support']) for t in txs]),
-                       ('de', [r['de'] for r in reps if r['de'] != float('inf')])):
+        report[f'genes_{n}chain'] = sum(g.n_chains == n for g in genes)
+    report['genes_ge3chain'] = sum(g.n_chains >= 3 for g in genes)
+    reps = [t.rep for t in txs]
+    for name, vals in (
+        ('n_exons', [len(r.exons) for r in reps]),
+        ('transcript_length', [r.exonic_len for r in reps]),
+        ('gene_span', [g.end - g.start + 1 for g in genes]),
+        ('intron_length', [b - a - 1 for r in reps for a, b in r.chain]),
+        ('supporting_models', [len(t.support) for t in txs]),
+        ('de', [r.de for r in reps if r.de != math.inf]),
+    ):
         for k, v in qstats(vals).items():
-            nov[f'{name}_{k}'] = v
-    loc_n = collections.Counter(g['location'] for g in genes)
-    for c in LOCATIONS:
-        nov[f'genes_location:{c}'] = loc_n[c]
-    if args.ref:
-        for k, v in qstats([g['ref']['distance'] for g in genes
-                            if g['location'] == 'intergenic' and g['ref']]).items():
-            nov[f'intergenic_distance_{k}'] = v
+            report[f'{name}_{k}'] = v
+    locations = collections.Counter(g.location for g in genes)
+    for loc in LOCATIONS:
+        report[f'genes_location:{loc}'] = locations[loc]
+    if has_ref:
+        distances = [g.ref['distance'] for g in genes if g.location == 'intergenic' and g.ref]
+        for k, v in qstats(distances).items():
+            report[f'intergenic_distance_{k}'] = v
+    return report
 
-    # write + validate
+
+def write_outputs(args, genes: list[CuratedGene], tag: str, ftype: str, ref_gtf: bool) -> None:
+    """<prefix>.gff3.gz (validated with gffread) and, with --ref, <prefix>.merged.gff3.gz."""
+    blocks = gene_blocks(genes, tag, ftype)
+    n_tx = sum(len(g.tx) for g in genes)
     out_plain = args.prefix + '.gff3'
-    write_curated(out_plain, args, blocks, len(txs))
+    write_curated(out_plain, args, blocks, n_tx)
     if not args.skip_gffread:
         ok, err = gffread_ok(args.gffread, out_plain)
         if not ok:
-            die(f'gffread rejected {out_plain}:\n{err}')
+            fomo_io.die(f'gffread rejected {out_plain}:\n{err}')
     gzip_file(out_plain, out_plain + '.gz')
     os.remove(out_plain)
-    if args.ref:
-        new_ids = all_ids(genes)
-        ref_for_merge = args.ref
-        if ref_gtf:
-            ref_for_merge = args.prefix + '.ref_from_gtf.gff3'
-            r = subprocess.run([args.gffread, args.ref, '--keep-genes', '-F', '-o', ref_for_merge], capture_output=True)
-            if r.returncode != 0:
-                die(f"gffread could not convert the GTF reference:\n{r.stderr.decode('utf-8', 'replace')}")
-            log('reference is GTF: converted with gffread --keep-genes -F for the merged output')
-        merged_plain = args.prefix + '.merged.gff3'
-        # not re-validated with gffread: the reference part is copied verbatim (gffread hard-errors on some
-        # real references, e.g. RefSeq trans-spliced strand '?'), and the curated part was validated above
-        write_merged(merged_plain, ref_for_merge, args, blocks, new_ids, len(txs))
-        gzip_file(merged_plain, merged_plain + '.gz')
-        os.remove(merged_plain)
-        if ref_gtf:
-            os.remove(ref_for_merge)
+    if not args.ref:
+        return
+    ref_for_merge = args.ref
+    if ref_gtf:
+        ref_for_merge = args.prefix + '.ref_from_gtf.gff3'
+        cmd = [args.gffread, args.ref, '--keep-genes', '-F', '-o', ref_for_merge]
+        r = subprocess.run(cmd, capture_output=True, check=False)
+        if r.returncode != 0:
+            fomo_io.die(f'gffread could not convert the GTF reference:\n{r.stderr.decode("utf-8", "replace")}')
+        log.info('reference is GTF: converted with gffread --keep-genes -F for the merged output')
+    merged_plain = args.prefix + '.merged.gff3'
+    # Not re-validated with gffread: the reference part is copied verbatim (gffread hard-errors on
+    # some real references, e.g. trans-spliced strand '?'), and the curated part is validated above.
+    write_merged(merged_plain, ref_for_merge, args, blocks, all_ids(genes), n_tx)
+    gzip_file(merged_plain, merged_plain + '.gz')
+    os.remove(merged_plain)
+    if ref_gtf:
+        os.remove(ref_for_merge)
 
+
+def write_chains_tsv(path: str, support: ChainSupport, genes: list[CuratedGene], seq_rank: dict) -> None:
+    gene_of = {k: g.gene_id for g in genes for k in g.chains}
+    tx_of = {t.key: t for g in genes for t in g.tx}
+    columns = 'chr strand introns n_species_pre n_species_post status ref_types gene_id transcript_id representative'
+    with gzip.open(path, 'wt', encoding='utf-8') as out:
+        out.write('\t'.join(columns.split() + ['species_pre', 'models']) + '\n')
+        for k in sorted(support.supported_pre, key=lambda k: (seq_rank.get(k[0], 0), k[2][0], k[1])):
+            types = set().union(*(m.ref_hits for m in support.by_chain[k]))
+            row = [
+                k[0],
+                k[1],
+                ','.join(f'{a}-{b}' for a, b in k[2]),
+                str(len(support.species_pre[k])),
+                str(len(support.species_post[k])),
+                'kept' if k in support.supported_post else 'lost_ref',
+                ','.join(sorted(types)) or '.',
+                gene_of.get(k, '.'),
+                tx_of[k].id if k in tx_of else '.',
+                tx_of[k].rep.id if k in tx_of else '.',
+                ','.join(sorted(support.species_pre[k])),
+                ','.join(m.id for m in support.by_chain[k]),
+            ]
+            out.write('\t'.join(row) + '\n')
+
+
+def write_report(prefix: str, report: dict) -> None:
+    with open(prefix + '.curation.tsv', 'w', encoding='utf-8') as out:
+        out.write('table\tmetric\tvalue\n')
+        for table in REPORT_TABLES:
+            for k, v in report[table].items():
+                out.write(f'{table}\t{k}\t{v}\n')
+    with open(prefix + '.curation.json', 'w', encoding='utf-8') as out:
+        json.dump(report, out, indent=1)
+
+
+def main() -> int:
+    args = parse_args()
+    t0 = time.time()
+    target, track, tag, ftype, id_prefix = resolve_track(args)
+    os.makedirs(os.path.dirname(os.path.abspath(args.prefix)), exist_ok=True)
+
+    observed: dict = {}
+    models = filter_models(read_models(args.gff), target, args.keep_self, observed)
+    log.info(
+        f'{observed["n_models"]:,} models in {args.gff}; {observed["multi_exon_models"]:,} multi-exon non-self '
+        f'from {observed["species"]} species'
+    )
+    ex_idx, tx_idx, gene_meta, ref_gtf = tag_ref_hits(models, args.ref, args.strand)
+    support = chain_support(models, args, observed)
+    genes_pre = link_genes(support.supported_pre)
+    observed['genes'] = len(genes_pre)
+    discarded = discarded_report(models, support, genes_pre) if args.ref else {}
+
+    seq_rank = {c: i for i, c in enumerate(dict.fromkeys(m.chr for m in models))}
+    genes = build_genes(support, track, id_prefix, (ex_idx, tx_idx, gene_meta), args, seq_rank)
+    novel = novel_report(genes, args.min_species, bool(args.ref))
+
+    write_outputs(args, genes, tag, ftype, ref_gtf)
     if args.chains_tsv:
-        gene_of = {k: g['gene_id'] for g in genes for k in g['chains']}
-        tx_of = {t['key']: t for g in genes for t in g['tx']}
-        with gzip.open(args.prefix + '.chains.tsv.gz', 'wt') as o:
-            o.write('chr\tstrand\tintrons\tn_species_pre\tn_species_post\tstatus\tref_types\tgene_id\ttranscript_id\trepresentative\tspecies_pre\tmodels\n')
-            for k in sorted(sup_pre, key=lambda k: (seq_rank.get(k[0], 0), k[2][0], k[1])):
-                types = set().union(*(m['ref_hits'] for m in by_chain[k]))
-                o.write('\t'.join([k[0], k[1], ','.join(f'{a}-{b}' for a, b in k[2]), str(len(sp_pre[k])), str(len(sp_post[k])),
-                                   'kept' if k in sup_post else 'lost_ref', ','.join(sorted(types)) or '.',
-                                   gene_of.get(k, '.'), tx_of[k]['id'] if k in tx_of else '.',
-                                   tx_of[k]['rep']['id'] if k in tx_of else '.', ','.join(sorted(sp_pre[k])),
-                                   ','.join(m['id'] for m in by_chain[k])]) + '\n')
-
-    R['observed'], R['discarded_by_reference'], R['novel'] = obs, dis, nov
-    R['params'] = dict(gff=args.gff, ref=args.ref, target=target, track=track, biotype=tag, id_prefix=id_prefix,
-                       min_species=args.min_species, strand=args.strand, keep_self=args.keep_self,
-                       divergent_dist=args.divergent_dist)
-    with open(args.prefix + '.curation.tsv', 'w') as o:
-        o.write('table\tmetric\tvalue\n')
-        for t in ('observed', 'discarded_by_reference', 'novel'):
-            for k, v in R[t].items():
-                o.write(f'{t}\t{k}\t{v}\n')
-    with open(args.prefix + '.curation.json', 'w') as o:
-        json.dump(R, o, indent=1)
-    log(f"supported chains {obs['supported_chains']:,} -> {len(sup_post):,} after reference filter; "
-        f"{len(genes):,} curated genes, {len(txs):,} transcripts -> {args.prefix}.gff3.gz in {time.time() - t0:.0f}s")
+        write_chains_tsv(args.prefix + '.chains.tsv.gz', support, genes, seq_rank)
+    params = {
+        'gff': args.gff,
+        'ref': args.ref,
+        'target': target,
+        'track': track,
+        'biotype': tag,
+        'id_prefix': id_prefix,
+        'min_species': args.min_species,
+        'strand': args.strand,
+        'keep_self': args.keep_self,
+        'divergent_dist': args.divergent_dist,
+    }
+    report = {'observed': observed, 'discarded_by_reference': discarded, 'novel': novel, 'params': params}
+    write_report(args.prefix, report)
+    if args.identity:
+        data = {table: report[table] for table in REPORT_TABLES} | {'has_reference': bool(args.ref)}
+        record = fomo_stats.make_record('curation', fomo_stats.identity_arg(args.identity), data)
+        fomo_stats.write_records(args.prefix + '.curation.data.json', record)
+    n_tx = sum(len(g.tx) for g in genes)
+    log.info(
+        f'supported chains {observed["supported_chains"]:,} -> {len(support.supported_post):,} after reference '
+        f'filter; {len(genes):,} curated genes, {n_tx:,} transcripts -> {args.prefix}.gff3.gz '
+        f'in {time.time() - t0:.0f}s'
+    )
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    fomo_io.run(main)
