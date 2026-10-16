@@ -2,9 +2,9 @@
 
 Design decisions, one file per plan. Plans 00–26 carry a decision-record header (status, date,
 decision); their bodies are kept as written. Plan 27 is the refactor that produced the current code
-base: a master plan with subplans 27a–27k, a frozen copy of the plan as first approved in
-[27_refactor_original/](27_refactor_original/), and the review of every deviation in
-`27z_deviation_review.md` once 27k is done.
+base: a master plan with subplans 27a–27k and the review of every deviation in
+`27z_deviation_review.md`. The plan as first approved is the `27*` files at commit
+[`c86521c`](https://github.com/apollo994/fomo/tree/c86521c95fb1e1d86eea351cc9e08dd3c4db9ac6/plans/).
 
 | plan | title | status | date |
 |:---|:---|:---|:---|

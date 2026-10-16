@@ -164,9 +164,7 @@ def main():
         sys.exit(check())
     files = tracked()
     files = [
-        f
-        for f in files
-        if not f.startswith(('plans/', 'assets/test_data/', 'ablation/')) and not f.endswith('gff-feature-stats')
+        f for f in files if not f.startswith(('plans/', 'assets/test_data/')) and not f.endswith('gff-feature-stats')
     ]
     rows = []
     for f in files:
