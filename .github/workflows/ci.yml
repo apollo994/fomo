@@ -89,9 +89,12 @@ jobs:
       - name: compare with the golden snapshot
         shell: bash -el {0}
         run: python3 tests/golden/compare.py tests/golden/${{ matrix.variant }}.tsv "$RUNNER_TEMP/${{ matrix.variant }}/snapshot.tsv"
-      - name: keep the run log on failure
+      - name: keep the run log, snapshot and deliverables on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: golden-${{ matrix.variant }}
-          path: ${{ runner.temp }}/${{ matrix.variant }}/nextflow.stdout
+          path: |
+            ${{ runner.temp }}/${{ matrix.variant }}/nextflow.stdout
+            ${{ runner.temp }}/${{ matrix.variant }}/snapshot.tsv
+            ${{ runner.temp }}/${{ matrix.variant }}/results
