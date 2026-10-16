@@ -100,3 +100,13 @@ def test_run_passes_the_status(tmp_path):
         f'import sys\nsys.path.insert(0, {str(BIN)!r})\nimport fomo_io\nfomo_io.run(lambda: 3)\n',
     )
     assert subprocess.run([sys.executable, str(script)]).returncode == 3
+
+
+def test_get_logger_format_and_current_stderr(monkeypatch, capsys):
+    monkeypatch.setattr(sys, 'argv', ['/some/dir/my_script.py', '--flag'])
+    assert fomo_io.script_name() == 'my_script'
+    log = fomo_io.get_logger()
+    assert fomo_io.get_logger('my_script') is log and len(log.handlers) == 1
+    log.warning('careful')
+    log.debug('not shown')
+    assert capsys.readouterr().err == 'my_script: WARNING: careful\n'

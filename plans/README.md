@@ -38,7 +38,7 @@ base: a master plan with subplans 27a–27k, a frozen copy of the plan as first 
 | [24_resource_rightsizing.md](24_resource_rightsizing.md) | Plan: CPU/memory right-sizing — no CPU escalation on retry, smaller batch and minimap2 requests | Implemented; partially superseded by 27 | 2026-10-08 |
 | [25_curated_model_format.md](25_curated_model_format.md) | 25 — Curated GFF3 format: content-hashed IDs, one transcript per supported chain | Implemented | 2026-10-08 |
 | [26_compressed_genome_io.md](26_compressed_genome_io.md) | Plan: keep genomes compressed — decompress on node-local disk, never on NFS | Implemented | 2026-10-14 |
-| [27_refactor.md](27_refactor.md) | 27 — Codebase refactor: reduce complexity (master plan) | in progress (started 2026-10-15) |  |
+| [27_refactor.md](27_refactor.md) | 27 — Codebase refactor: reduce complexity (master plan) | done (2026-10-16) |  |
 | [27a_safety_net.md](27a_safety_net.md) | 27a — Safety net: golden baseline, pytest, nf-test, lint, CI | done (2026-10-15) |  |
 | [27b_delete_and_fix.md](27b_delete_and_fix.md) | 27b — Delete dead code, fix latent bugs, comment sweep | done (2026-10-15) |  |
 | [27c_local_modules.md](27c_local_modules.md) | 27c — All modules local; containers pinned in one place; versions collected; no conda | done (2026-10-15) |  |
@@ -49,4 +49,5 @@ base: a master plan with subplans 27a–27k, a frozen copy of the plan as first 
 | [27h_run_summary_records.md](27h_run_summary_records.md) | 27h — The run summary reads data records | done (2026-10-15) |  |
 | [27i_multiqc_from_records.md](27i_multiqc_from_records.md) | 27i — MultiQC rendered from records; adapters, duplicates and the old TSV path deleted | done (2026-10-15) |  |
 | [27j_docs.md](27j_docs.md) | 27j — Documentation, plan records, dev tools, comment budget | done (2026-10-15) |  |
-| [27k_final_validation.md](27k_final_validation.md) | 27k — Final validation, real-data regression, plan comparison | not started |  |
+| [27k_final_validation.md](27k_final_validation.md) | 27k — Final validation, real-data regression, plan comparison | done (2026-10-16) |  |
+| [27z_deviation_review.md](27z_deviation_review.md) | 27z — Deviation review of the 27 refactor | done (2026-10-16) |  |

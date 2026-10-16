@@ -1,4 +1,4 @@
-"""dev/: the link check, the comment budget and the plans index."""
+"""dev/: the link check, the comment budget, the plans index and the end-of-file fixer."""
 
 import importlib.util
 from pathlib import Path
@@ -16,6 +16,7 @@ def load(name):
 check_links = load('check_links')
 code_metrics = load('code_metrics')
 plans_index = load('plans_index')
+end_of_file = load('end_of_file')
 
 
 def test_links_and_paths(tmp_path):
@@ -47,3 +48,19 @@ def test_plans_index_row(tmp_path):
     assert plans_index.row(plan) == '| [99_x.md](99_x.md) | 99 — Use bin/x.py | Implemented | 2026-01-02 |'
     plan.write_text('# 27z — Review\n\n## Status: done (2026-10-15)\n')
     assert plans_index.row(plan) == '| [99_x.md](99_x.md) | 27z — Review | done (2026-10-15) |  |'
+
+
+def test_end_of_file_fixer(tmp_path, capsys):
+    cases = {'ok.txt': b'a\n', 'none.txt': b'a', 'extra.txt': b'a\n\n\r\n', 'blank.txt': b'\n\n', 'empty.txt': b''}
+    for name, data in cases.items():
+        (tmp_path / name).write_bytes(data)
+    assert end_of_file.main([str(tmp_path / n) for n in cases]) == 1
+    assert {n: (tmp_path / n).read_bytes() for n in cases} == {
+        'ok.txt': b'a\n',
+        'none.txt': b'a\n',
+        'extra.txt': b'a\n',
+        'blank.txt': b'',
+        'empty.txt': b'',
+    }
+    assert capsys.readouterr().out.count('fixed end of file') == 3
+    assert end_of_file.main([str(tmp_path / 'ok.txt')]) == 0

@@ -15,7 +15,7 @@ filename suffixes or `.from_` grammars. The code is split into cached record ind
 ## Steps
 
 - [x] **A1. Extend the regression fixture from 27a** (`tests/run_summary_tables/fixtures/{V1,V2}/`)
-  with the records of the same runs (captured in 27g E1). (updated by D27g-5: every produced
+  with the records of the same runs (captured in 27g E1). (note from 27g's Results, not a deviation: every produced
   `*.data.json` of the V1/V2 gate runs is in `fomo_refactor/gate/27g/V{1,2}/work`, skip staged
   symlinks; the curation record carries `has_reference`; source-side raw gffstats records have
   no `track`.) The existing test (old inputs →
@@ -65,6 +65,10 @@ filename suffixes or `.from_` grammars. The code is split into cached record ind
 | D27h-1 | A2 | the record index reads the records' values | gffstats values go through the same row builders as the MultiQC tables (`fomo_stats.gffstats_transcript_rows` / `gffstats_gene_rows`, moved there from `gff_stats_to_mqc.py`, which imports them) | the old path formatted each value for the table and parsed it back (`fmt` then `num`): a mean of 100.004 became "100.00", then 100.0, then "100". Reading the raw JSON value would print "100.00" and change `summary/tables` bytes | 27i deletes `gff_stats_to_mqc.py`; the builders stay in `fomo_stats.py` for the renderer (updated by D27h-1) |
 
 ## Results
+
+> **Correction (found in 27k D4):** A3 asks for `compute_` + `emit_` per section; overview, species
+> and donors were written inline in `main()`. 27k added `emit_overview`, `emit_species` and
+> `emit_donors` (the V1/V2 fixture test stays byte-identical).
 
 - `run_summary_tables.py` reads only `--records` (a directory of fomo-data/1 records) and the
   roles CSV. `RecordIndex` builds each index once (`cached_property`): annotation rows by

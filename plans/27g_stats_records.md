@@ -31,7 +31,8 @@ everything the old TSVs carry.
   `fomo_stats.py` and tested.
 - `fomo_stats.py` gains `make_record`, `write_records`, `read_records(dir)` (validates the
   schema and section) and `SECTIONS` (section → required identity keys).
-- Groovy builds the identity JSON once per task in the module script block:
+- (updated by D27g-5: one `ext.identity` closure at the end of `conf/modules.config` builds it for
+  every process instead.) Groovy builds the identity JSON once per task in the module script block:
   `groovy.json.JsonOutput.toJson(meta.subMap([...]) + extra)`.
   Batch tasks take per-file identity from the manifest.
 
@@ -42,9 +43,9 @@ everything the old TSVs carry.
 | `transcript_filter` | FILTER_TRANSCRIPT | `filter_transcript.py --record` (Python, 27f) | n_transcripts, n_stranded, n_spliced, n_selected |
 | `gffstats` | GFF_STATS, GFF_STATS_TARGET, GFF_STATS_PROJECTED_BATCH | a bash `printf` wrapper around gff-feature-stats' JSON (works in any image; no parsing) | the gff-feature-stats JSON verbatim |
 | `td2_coding` | TD2_CODING_FILTER | Python | n_in, n_coding, n_kept, stage |
-| `alignment` | SAMTOOLS_STATS | `bin/samtools_stats_record.awk` (the samtools image has no Python, T2) | the `SN` fields that `samtools_to_mqc.py` reads today, plus reads mapped % |
-| `fasta_stats` | SEQKIT_STATS | `bin/seqkit_stats_record.awk` | the seqkit columns `seqkit_to_mqc` keeps today |
-| `accuracy` | GFFCOMPARE_BATCH | Python driver (D below) | for each level: Sn, Pr; the query/ref counts; missed/novel counts if present |
+| `alignment` | SAMTOOLS_STATS | `bin/samtools_stats_record.awk` (the samtools image has no Python, T2; `.sh`, D27g-1) | the `SN` fields that `samtools_to_mqc.py` reads today, plus reads mapped % |
+| `fasta_stats` | SEQKIT_STATS | `bin/seqkit_stats_record.awk` (`.sh`, D27g-1) | the seqkit columns `seqkit_to_mqc` keeps today |
+| `accuracy` | GFFCOMPARE_BATCH | Python driver (D below; a bash driver + `bin/gffcompare_stats_record.sh`, D27g-3) | for each level: Sn, Pr; the query/ref counts; missed/novel counts if present |
 | `curation` | CURATE_MODELS | Python (`curate_models.py --record`, or a 5-line wrapper) | `observed`, `discarded_by_reference`, `novel` (curation.json without `params`) |
 
 ## Steps

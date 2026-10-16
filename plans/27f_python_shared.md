@@ -114,6 +114,10 @@ No Python function exceeds complexity 15. Formatting is automatic (ruff format).
 
 ## Results
 
+> **Correction (found in 27k D4):** B2 asks for a test of every `fomo_io` function; `get_logger` and
+> `script_name` were covered only through `run`. 27k added
+> `test_get_logger_format_and_current_stderr`.
+
 **Equivalence on real data** (`fomo_refactor/27f/equiv.py`, one 8-CPU job, old = the scripts at
 `87fd6a6`, the awk filter run in the pinned `ubuntu` image as the module ran it; summary in
 `27f/equiv/summary.tsv`): every comparison byte-identical.

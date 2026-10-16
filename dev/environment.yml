@@ -15,5 +15,5 @@ dependencies:
   - gffcompare=0.12.6
   - gffread=0.12.7
   - samtools=1.21
-  - nf-test
+  - nf-test=0.9.5
   - openjdk=21

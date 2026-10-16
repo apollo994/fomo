@@ -43,3 +43,8 @@ repos:
         language: pygrep
         types: [text]
         exclude: '\.(md|tsv)$'
+      - id: end-of-file
+        name: one newline at end of file
+        entry: python3 dev/end_of_file.py
+        language: system
+        types: [text]

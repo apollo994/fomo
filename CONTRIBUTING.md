@@ -22,7 +22,8 @@ Every change passes, in order:
 
 1. `pytest -q`
 2. `pre-commit run --all-files` — ruff, ruff format, shellcheck, `dev/nextflow_lint.sh` (errors
-   and warnings), `dev/code_metrics.py --check` (comment budget), `dev/check_links.py`
+   and warnings), `dev/code_metrics.py --check` (comment budget), `dev/check_links.py`, trailing whitespace and
+   `dev/end_of_file.py`
 3. `nf-test test tests/pipeline --profile +singularity` — the stub matrix (task counts,
    published paths)
 4. `tests/golden/gate.sh <scratch dir>` — the golden variants V1–V4; deliverables must be

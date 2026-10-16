@@ -201,6 +201,11 @@ Build the checks that every later subplan relies on **before any pipeline code c
 
 ## Results
 
+> **Correction (found in 27k D4):** D3's end-of-file fixer and E1's Nextflow-assets cache were
+> not made, and B1 left nf-test unpinned; Results below did not say so. 27k added
+> `dev/end_of_file.py` as a pre-commit hook (tested in `tests/dev`), an `actions/cache` step for
+> `~/.nextflow` in the three CI jobs that run Nextflow, and `nf-test=0.9.5` in `dev/environment.yml`.
+
 **Golden baseline (A).**
 - Untouched code at `c86521c`. Each variant was run twice as a SLURM job (4 cpu, test profile,
   singularity). Every run took about 1–2 min.

@@ -1,6 +1,6 @@
 # 27 — Codebase refactor: reduce complexity (master plan)
 
-## Status: in progress (started 2026-10-15)
+## Status: done (2026-10-16)
 
 ## How to run it
 
@@ -44,20 +44,25 @@ prose. Finding IDs (P1, D3, N1, C1, V1, R1, T2, …) refer to `ablation/CODE_REV
 
 **Goals** (measured in 27k):
 
-| metric | before | target |
-|:---|---:|---:|
-| comment : code ratio, Nextflow workflows + config | 0.83 / 0.88 | ≤ 0.40 |
-| run / incident / history phrases in code (`code_metrics.py`) | 78 | 0 |
-| `CLAUDE.md` | 514 lines | ≤ 220 lines |
-| copies of the track-name expression | 35 | 0 (`meta.track`) |
-| parsers of the per-source filename grammar | 3 + 1 partial | 0 (manifest) |
-| MultiQC adapter processes (`*_TO_MQC`, `GFFCOMPARE_TO_SCATTER`) | 5 | 0 |
-| GFF statistics modules | 3 | 1 |
-| `modules/nf-core` | 9 modules, 2 forked | gone |
-| tests | 1 script, not pytest | pytest for every bin script + nf-test stub matrix + golden runs + CI |
-| `nextflow lint` errors | 6 | 0 |
-| Python functions above complexity 15 | 6 | 0 |
-| tasks in variant V2 (test, mRNA + decoy) | baseline from 27a | measurably fewer (recorded) |
+| metric | before | target | after (27k, measured) |
+|:---|---:|---:|---:|
+| comment : code ratio, Nextflow workflows + config | 0.83 / 0.88 | ≤ 0.40 | 0.26 / 0.20 |
+| run / incident / history phrases in code (`code_metrics.py`) | 78 | 0 | 0 (budget lists); 5 with the review's regexes, see below |
+| `CLAUDE.md` | 514 lines | ≤ 220 lines | 150 lines |
+| copies of the track-name expression | 35 | 0 (`meta.track`) | 0 |
+| parsers of the per-source filename grammar | 3 + 1 partial | 0 (manifest) | 0 |
+| MultiQC adapter processes (`*_TO_MQC`, `GFFCOMPARE_TO_SCATTER`) | 5 | 0 | 0 |
+| GFF statistics modules | 3 | 1 | 1 (aliases `GFF_STATS_TARGET`, `GFF_STATS_PROJECTED`) |
+| `modules/nf-core` | 9 modules, 2 forked | gone | gone |
+| tests | 1 script, not pytest | pytest for every bin script + nf-test stub matrix + golden runs + CI | 277 pytest, nf-test S1–S4, golden V1–V4 + real-data snapshot, CI (4 jobs) |
+| `nextflow lint` errors | 6 | 0 | 0 (and 0 warnings, from 15) |
+| Python functions above complexity 15 | 6 | 0 | 0 (maximum 12, from 38) |
+| tasks in variant V2 (test, mRNA + decoy) | baseline from 27a | measurably fewer (recorded) | 167 → 133 (V1 61 → 47, V3 59 → 46; real data 1,154 → 878) |
+
+Every goal is met. The phrase row: the budget check (`dev/code_metrics.py --check`) uses 27b's
+phrase lists and finds nothing; the review's broader regexes still match five present-tense
+lines, four saying what a record "measured" and one docstring saying the gffcompare cliques are
+"verified against" the chains derived in Python (D27b-4).
 
 **Non-goals:**
 
@@ -90,8 +95,8 @@ protocol (§7) as long as no U-decision is affected.
 
 | id | decision | why |
 |:---|:---|:---|
-| T1 | **Data record format `fomo-data/1`**: `{"schema":"fomo-data/1","section":…,"identity":{…},"data":{…}}`, one file `<prefix>.<section>.data.json` per item (a list of records is allowed). Identity keys are drawn from `species, side, target, source, track, label, order, kind`. Payloads are tool-specific; for gff-feature-stats the payload is its JSON verbatim. | U7 |
-| T2 | **The MultiQC renderer (`bin/render_mqc.py`) runs inside the per-target MULTIQC task.** That image has Python 3.14. The tool-only images (samtools, seqkit, gffread, bedtools, minimap2) have no Python, so samtools and seqkit records are emitted by two small tested awk scripts in `bin/`. `GFFCOMPARE_BATCH` moves to the CURATE image, which has Python and gffcompare 0.12.6, the same version. | U6 forbids new images; checked 2026-10-15 by `singularity exec` on the cached images |
+| T1 | **Data record format `fomo-data/1`**: `{"schema":"fomo-data/1","section":…,"identity":{…},"data":{…}}`, one file `<prefix>.<section>.data.json` per item (a list of records is allowed). Identity keys are drawn from `species, side, target, source, track, label, order, kind` (and `stage`, as 27g specifies). Payloads are tool-specific; for gff-feature-stats the payload is its JSON verbatim. | U7 |
+| T2 | **The MultiQC renderer (`bin/render_mqc.py`) runs inside the per-target MULTIQC task.** That image has Python 3.14. The tool-only images (samtools, seqkit, gffread, bedtools, minimap2) have no Python, so samtools and seqkit records are emitted by two small tested awk scripts in `bin/` (bash wrappers around awk, D27g-1). `GFFCOMPARE_BATCH` moves to the CURATE image, which has Python and gffcompare 0.12.6, the same version. (updated by D27g-3: it stays on its BioContainers image, with a bash driver and an awk record emitter, because gffcompare's `.loci` tie order depends on the build.) | U6 forbids new images; checked 2026-10-15 by `singularity exec` on the cached images |
 | T3 | **Per-source identity comes from a manifest** written by the splitter (`gff_by_source.py` → `manifest.tsv`). Filenames are never parsed. | P1 |
 | T4 | **Track registry in one Groovy function file**, `subworkflows/local/fomo_utils.nf`. Meta keys `track` (dot form, e.g. `lnc_RNA.decoy`), `label`, `order` and `td2` are stamped once where tracks are created. Config closures read meta keys only. | N1, P2 |
 | T5 | **Config layout:** nf-core include order (base → profiles → modules); selectors `'.*:NAME$'`; resources only in `conf/base.config`, with labels that state real needs; `conf/crg.config` holds site settings only; containers in `conf/containers.config`, keyed by one `img_*` label per module. | P5, P6, C4, C5 |
@@ -138,6 +143,7 @@ the subplan that owns the test is in brackets.
 7. **A target with nothing projected yields an honest empty result** (`remainder: true` path).
    [27a stub or pytest]
 8. **TD2 guards:** an empty FASTA, and zero complete ORFs, mean "nothing filtered". [27a pytest]
+   (updated by D27j-3: 27a did not write it; `tests/modules/test_td2_predict.py` was added in 27j.)
 9. **`FILTER_TRANSCRIPT` rules:** stranded, spliced, longest isoform, ties broken by the
    smallest id, and the funnel counts. [27a pytest → oracle for 27f]
 10. **Curated IDs are content-hashed and stable.** [existing curate tests → pytest in 27a]
@@ -199,7 +205,7 @@ that a U-decision explicitly allows, and none of U5's changes touches a delivera
 | 27h | [27h_run_summary_records.md](27h_run_summary_records.md) | Run summary reads records | 27g | P2, P4, R5 | 2 d | done (2026-10-15) |
 | 27i | [27i_multiqc_from_records.md](27i_multiqc_from_records.md) | Renderer + section registry; delete adapters, one GFF_STATS | 27h | P3, D2, D4, U5 | 3 d | done (2026-10-15) |
 | 27j | [27j_docs.md](27j_docs.md) | CLAUDE.md, README, docs/, ADR plans, CHANGELOG, budget | 27i | V5–V7, T4, T5 | 2 d | done (2026-10-15) |
-| 27k | [27k_final_validation.md](27k_final_validation.md) | Clean-checkout gates, real-data G5, plan comparison | all | — | 1.5 d | not started |
+| 27k | [27k_final_validation.md](27k_final_validation.md) | Clean-checkout gates, real-data G5, plan comparison | all | — | 1.5 d | done (2026-10-16) |
 
 The estimates are engineering days and are only for ordering. The order matters: 27a protects
 everything after it. 27c–27e restructure without changing logic. 27f–27i change the code paths
@@ -351,7 +357,92 @@ by two files (a filename, a label, a section id) gets a consistency test.
 | 2026-10-15 | 27h | done: the run summary reads only data records (cached indexes, pure compute + emit, no label or filename parsing, no lint ignores), byte-identical on the V1/V2 fixtures and in G4; 1 deviation | 7.0 |
 | 2026-10-15 | 27i | done: MultiQC custom content rendered in MULTIQC from records via one registry; 5 adapter processes, 4 scripts and the producers' tables deleted; one GFF_STATS module; duplicate target rows gone (U5); V2 167 → 133 tasks; G4 identical; 3 deviations | 7.3 |
 | 2026-10-15 | 27j | done: CLAUDE.md 514 → 150 lines with 16 tested invariants, README + docs/, CHANGELOG, CONTRIBUTING, decision-record headers on plans 00–26, dev/ tools with the comment budget and link check in pre-commit; TD2 guard test added; G4 identical; 4 deviations | 7.6 |
+| 2026-10-16 | 27k | done: G1–G4 pass on a clean checkout with a fresh dev env; G5 (23 species, real data) identical to B0 in all 7,666 deliverables with 878 tasks instead of 1,154; goals measured; 65 plan hunks classified, 38 deviations valid (2 retroactive), 8 unfinished items found by the coverage audit and finished; 2 deviations | 15.6 |
 
 ## 11. Outcome
 
-*(filled in by 27k)*
+**Result.** The refactor reached every goal in §2 with identical deliverables. Every gate passes
+on a clean checkout with a dev environment built fresh from `dev/environment.yml`: 277 pytest,
+lint, the nf-test stub matrix S1–S4, and golden V1–V4 identical. On real data (G5: the 23
+Lycaenidae `both` species, lncRNA + decoy, `-profile crg`), all 7,666 deliverables are identical
+to the pre-refactor run B0: 0 missing, 0 extra, 0 changed, `.loci` files included.
+
+**Goals.** The table in §2 has the measured values; every target is met.
+
+**Size.**
+- Pipeline code (`main.nf`, `workflows`, `subworkflows`, `modules`, `conf`, `nextflow.config`,
+  `bin`, `assets/multiqc`): 7,740 → 6,087 lines (`git diff c86521c`: +4,102 / −5,743).
+- Modules: 30 files, 1,563 lines → 22 files, 763 lines; 30 → 22 processes.
+- Code and comment lines per layer, before → after:
+
+  | layer | code | comment |
+  |:---|---:|---:|
+  | workflows + subworkflows | 452 → 358 | 373 → 94 |
+  | modules | 1,189 → 621 | 243 → 43 |
+  | config | 415 → 351 | 366 → 71 |
+  | `bin/` Python | 2,467 → 2,630 | 492 → 376 |
+  | `bin/` shell | 341 → 273 | 102 → 61 |
+  | MultiQC YAML | 355 → 352 | 54 → 40 |
+  | tests (code only) | 467 → 2,075 | 44 → 124 |
+  | `dev/` | — → 413 | — → 55 |
+
+  `bin/` Python grows because of `fomo_io.py`, the records, the renderer and docstrings, while
+  the adapter scripts and five processes are gone. Test fixtures add about 37,000 data lines.
+- Lint: ruff over `bin`, `dev` and `tests` with the 27a rule set went from 251 findings to 0, with
+  no per-file ignores; `nextflow lint` from 6 errors and 15 warnings to 0 and 0.
+
+**Tasks.** V1 61 → 47, V2 167 → 133, V3 59 → 46. On the 23-species run, 1,154 → 878 (−24 %):
+the five adapter processes and the duplicate target-side statistics (U5) are gone, and every
+other process runs the same number of tasks.
+
+**Cluster use.** 15.6 CPU-h in total (27k: 8.0, most of it G5), within the 40 CPU-h budget.
+
+**Deviations** ([27z_deviation_review.md](27z_deviation_review.md)). There are 38 in 27a–27j,
+plus 2 procedural ones in 27k. By class: 20 corrections, 10 improvements, 6 scope cuts and 2
+scope additions. All are valid, and none touched a U-decision.
+
+Findings worth remembering:
+- **27b A2 slip.** 27b recorded deletions it had not made. They were found and made in 27f
+  (D27f-1).
+- **TD2 guard test.** The test 27a owed for invariant 8 was added in 27j (D27j-3).
+- **gffcompare `.loci` tie order** depends on the gffcompare build and the run directory
+  (D27g-3), so GFFCOMPARE_BATCH stays on its image. G5 shows no such difference.
+- **Coverage audit (27k).** It found eight small unfinished items in 27a, 27e, 27f, 27h and 27i,
+  all finished in 27k:
+  - the end-of-file hook;
+  - the CI Nextflow cache;
+  - the nf-test pin;
+  - the `get_logger` test;
+  - three missing run-summary emit steps;
+  - a dead publish filter and a stale comment;
+  - the RUN_SUMMARY_TABLES tag exception (D27e-4).
+- **Propagation misses.** Four places in the plan text did not yet show a recorded deviation.
+  They were fixed in 27k.
+
+**Not verified, because nothing was pushed:**
+- the GitHub-hosted runners;
+- `setup-micromamba` and its cache;
+- `setup-nextflow`;
+- the `~/.nextflow` cache step;
+- artifact upload;
+- Docker execution of the pinned images, including the `linux/amd64` pin on arm64 hosts.
+
+Every CI `run:` command was executed locally with Singularity in place of Docker.
+
+**Follow-ups (candidate plans 28+).** These are the scientific recommendations of
+`ablation/ABLATION_REPORT.md` §5, which this refactor left out by design (§2 non-goals):
+1. **An adaptive donor set:** rank donors by median `de` and curate over the nearest N, with all
+   donors as the fallback. Also publish the nearest donor's projection as a high-recall
+   companion.
+2. **Per-track curation thresholds** (`curate_min_species` per track).
+3. **An mRNA coding mask** for unannotated targets, which would make `--include_mrna` part of
+   their deliverable.
+4. **A `splice:hq` minimap2 option,** or an automatic choice for close donors.
+5. **A decoy FDR estimator** that sends the decoy and real tracks through the same reference
+   filter, or the support calibration in its place.
+6. Smaller items:
+   - re-document or remove `--include_single_exon`, which U5 kept;
+   - review the `antisense_exonic` class.
+
+**Branch.** `refactor` holds one commit per subplan (27a–27k). It is not pushed and is ready for
+review.

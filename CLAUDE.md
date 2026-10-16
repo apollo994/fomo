@@ -66,9 +66,9 @@ Each line: the rule, then what enforces it.
     matrix.
 13. Reports read only records, and records carry every reported value; the run summary is
     byte-identical on the golden fixtures. → `tests/records`, `tests/run_summary_tables`.
-14. Every module: one `img_*` label, a stub, versions on the topic (not MULTIQC), the tag rule,
-    no `when:`; every `bin/` script with a shebang is executable; the vendored
-    `bin/gff-feature-stats` matches its checksum. → `tests/test_repo_conventions.py`.
+14. Every module: one `img_*` label, a stub, versions on the topic (not MULTIQC), the tag rule
+    (but RUN_SUMMARY_TABLES, which has no meta), no `when:`; every `bin/` script with a shebang is
+    executable; the vendored `bin/gff-feature-stats` matches its checksum. → `tests/test_repo_conventions.py`.
 15. A process-level `ext.*` in `conf/modules.config` stays after every `withName` block (the
     config parser would otherwise capture the later blocks' `ext.*`). →
     `tests/test_repo_conventions.py`.
@@ -142,7 +142,7 @@ counts.
 | gate | command |
 |:---|:---|
 | unit | `pytest -q` (environment: `dev/environment.yml`) |
-| lint | `pre-commit run --all-files` (ruff, ruff format, shellcheck, `dev/nextflow_lint.sh`, `dev/code_metrics.py --check`, `dev/check_links.py`) |
+| lint | `pre-commit run --all-files` (ruff, ruff format, shellcheck, `dev/nextflow_lint.sh`, `dev/code_metrics.py --check`, `dev/check_links.py`, whitespace, `dev/end_of_file.py`) |
 | stub matrix | `nf-test test tests/pipeline --profile +singularity` |
 | golden | `tests/golden/gate.sh <scratch dir>` (V1–V4 on SLURM, compared with `tests/golden/`) |
 

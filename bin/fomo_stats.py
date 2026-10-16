@@ -143,7 +143,7 @@ def f1(sn: float, pr: float) -> float:
     return 0.0 if (sn + pr) == 0 else 2.0 * sn * pr / (sn + pr)
 
 
-# Curation report (curate_models.py) and its MultiQC tables (curation_to_mqc.py).
+# Curation report (curate_models.py), its data record and the tables rendered from it.
 # Locations relative to the reference, in priority order: a gene takes the first that applies.
 CURATION_LOCATIONS = (
     'antisense_exonic',

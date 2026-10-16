@@ -271,6 +271,10 @@ SPECIES_HEADER = [
 ]
 
 
+def emit_overview(metrics: list) -> None:
+    write_tsv('run_overview_mqc.tsv', ['Metric', 'Value'], metrics)
+
+
 def own_annotation(idx: RecordIndex, species: str, info: dict) -> tuple[dict, float | None]:
     """A species' own raw lncRNA row and gene total, from the source side if it donates, else
     the target side (a both species has both, and they are the same annotation)."""
@@ -320,6 +324,12 @@ FUNNEL_HEADER = [
     'mean_exon_length_kept',
     'exons_per_transcript_kept',
 ]
+
+
+def emit_species(species: dict) -> None:
+    write_tsv(
+        'run_species_mqc.tsv', SPECIES_HEADER, [[s] + [r[k] for k in SPECIES_HEADER[1:]] for s, r in species.items()]
+    )
 
 
 def difference(a: float | None, b: float | None) -> float | None:
@@ -675,6 +685,12 @@ def compute_donors(ctx: RunContext, idx: RecordIndex) -> dict:
 
 
 # ── entry point ─────────────────────────────────────────────────────────────────
+def emit_donors(donors: dict) -> None:
+    write_tsv(
+        'run_donor_ranking_mqc.tsv', DONOR_HEADER, [[s] + [r[k] for k in DONOR_HEADER[1:]] for s, r in donors.items()]
+    )
+
+
 def bool_arg(value: str) -> bool:
     return str(value).lower() in ('true', '1', 'yes')
 
@@ -698,11 +714,9 @@ def main() -> int:
     idx = RecordIndex(args.records)
 
     metrics, overview = compute_overview(ctx)
-    write_tsv('run_overview_mqc.tsv', ['Metric', 'Value'], metrics)
+    emit_overview(metrics)
     species = compute_species(ctx, idx)
-    write_tsv(
-        'run_species_mqc.tsv', SPECIES_HEADER, [[s] + [r[k] for k in SPECIES_HEADER[1:]] for s, r in species.items()]
-    )
+    emit_species(species)
     funnel, funnel_plot = compute_source_funnel(ctx, idx)
     emit_source_funnel(funnel, funnel_plot)
     targets = compute_targets(ctx, idx)
@@ -712,9 +726,7 @@ def main() -> int:
     aggregates = compute_aggregates(ctx, idx)
     emit_aggregates(ctx, aggregates)
     donors = compute_donors(ctx, idx)
-    write_tsv(
-        'run_donor_ranking_mqc.tsv', DONOR_HEADER, [[s] + [r[k] for k in DONOR_HEADER[1:]] for s, r in donors.items()]
-    )
+    emit_donors(donors)
 
     accuracy_f1 = {
         source: dict(zip(ctx.targets, row, strict=True)) for source, row in zip(ctx.sources, heatmap['f1'], strict=True)

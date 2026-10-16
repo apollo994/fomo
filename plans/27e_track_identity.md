@@ -73,7 +73,7 @@ hand-written key/strip patterns.
 - [x] ~~**C3. Move the MultiQC input tuple builder, duplicated in `reporting.nf` and
   `run_summary.nf`, into a helper in `fomo_utils.nf`**~~ (or delete it if 27i's design makes it
   moot; note it). → Moot: since 27c each builder is one `tuple(meta, files, [two configs])`, and
-  27i B3 redesigns the MULTIQC inputs.
+  27i B3 redesigns the MULTIQC inputs. (D27e-3, recorded in 27k)
 - [x] **C4. Nextflow lint warnings → 0** (unused params, implicit `it`, deprecated `Channel`).
   Tighten the pre-commit hook so warnings fail too.
 
@@ -90,6 +90,8 @@ hand-written key/strip patterns.
 |:---|:---|:---|:---|:---|:---|
 | D27e-1 | A1 | helpers `trackOf`, `withTrack`, `pairById`, `asList` | `trackOf`, `withTrack`, `pairBy(left, right, key)` + `pairById` (key `meta.id`); no `asList` | the strict syntax allows neither default parameters (`key = {…}`) nor calling a closure variable as `key(x)` (`nextflow lint`: "`key` is not defined"), hence two functions and `key.call(…)`. No `instanceof List` site is left after 27b; the remaining `[x].flatten()` idiom is already one expression | none |
 | D27e-2 | C2 | if `if`-gating warns, keep `ext.when` for curation | both optional branches are gated by emptying their input channel (`params.include_decoy ? ch_sources : channel.empty()`, `params.curate ? ch_allmodels_raw : channel.empty()`); the processes are always invoked and run no task when off. No `when:` in any module, no `ext.when` | `if`-gating does warn: the 27d V1 log has "There's no process matching config selector: .*:BEDTOOLS_COMPLEMENT$" (and EXTRACT_DECOY_SEQUENCES, RELOCATE_LOCI). Keeping `ext.when` for curation would leave two mechanisms and the decoy warnings; an empty input gives one mechanism, no warnings (the S1 stub log has no WARN line) and unchanged task counts (G3) | master §8 "`when:` only where config gates the module" → no module has `when:` (enforced by `tests/test_repo_conventions.py`); 27j documents the gating rule |
+| D27e-3 | C3 | move the MultiQC input tuple builder of `reporting.nf` and `run_summary.nf` into a `fomo_utils.nf` helper, or delete it if 27i makes it moot | neither: both builders stay, each one `tuple(meta, records, files, [main, sections])` expression (recorded retroactively in 27k D2; the step was struck through in 27e without an id) | after 27i the two builders share only the tuple shape: the per-target one joins routed records with routed native files, the run one collects RUN_SUMMARY_TABLES' output, and each passes its own config pair; a helper would take five arguments to build a four-element tuple | none |
+| D27e-4 | B2 | one tag rule in every module | every module but RUN_SUMMARY_TABLES, which is tagged `run_summary` (recorded retroactively in 27k D4; 27e's Results stated it without an id) | RUN_SUMMARY_TABLES runs once per run and has no meta input, so the meta-based rule cannot apply; `tests/test_repo_conventions.py` exempts it by name (`NO_META`), and CLAUDE.md invariant 14 now says so | none |
 
 ## Results
 

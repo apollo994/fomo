@@ -83,7 +83,8 @@ summary stay identical.
   - It routes records by `meta.target_id`, broadcasting the source-side ones, and passes
     records, native files and versions to MULTIQC.
   - The "flatten before combine" handling disappears where every item is one file; keep `asList`
-    only where a list-valued emit remains.
+    only where a list-valued emit remains. (updated by D27e-1: there is no `asList`; the one
+    flattening step is `[p].flatten()` in `routeByTarget` and RUN_SUMMARY.)
 
 ### D. Tests and counts
 
@@ -113,6 +114,10 @@ summary stay identical.
 | D27i-3 | B2 | rendered TSVs compared with today's adapter TSVs (fixtures from 27g E1) | `tests/records/test_render_mqc.py` checks all 121 captured table/record pairs (labels in order, values equal); the 27g bridge test and its capture script are deleted with the adapters, the fixtures stay as the oracle | the adapters no longer exist to produce tables, so the captured pairs are the only reference | none |
 
 ## Results
+
+> **Correction (found in 27k D4):** C5 left the CURATE_MODELS `saveAs` filter on `_mqc.tsv`, a file
+> it no longer writes, and a `fomo_stats.py` comment still named `curation_to_mqc.py`. 27k removed
+> both; the published paths do not change (G4).
 
 - **One place.** `bin/fomo_sections.py` (registry: 10 table sections + the accuracy scatter, the
   row labels and their order tokens) and `bin/render_mqc.py` (runs in MULTIQC on Python 3.14,
