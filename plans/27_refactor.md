@@ -420,15 +420,16 @@ Findings worth remembering:
 - **Propagation misses.** Four places in the plan text did not yet show a recorded deviation.
   They were fixed in 27k.
 
-**Not verified, because nothing was pushed:**
-- the GitHub-hosted runners;
-- `setup-micromamba` and its cache;
-- `setup-nextflow`;
-- the `~/.nextflow` cache step;
-- artifact upload;
-- Docker execution of the pinned images, including the `linux/amd64` pin on arm64 hosts.
+**CI on GitHub** (after the push, 2026-10-16). Every job passes on `776b1f9`, in both the push
+and the pull-request run: lint, pytest, the nf-test stub matrix and golden V1–V4, all under
+Docker.
 
-Every CI `run:` command was executed locally with Singularity in place of Docker.
+The first run found that gffcompare's `.loci` tie order depends on the filesystem's block size.
+The gate now compares `.loci` with sorted entries (D27k-3, user decision); published files are
+unchanged.
+
+Still unverified: Docker on arm64 hosts (the `linux/amd64` pin), since GitHub's runners are
+x86-64.
 
 **Follow-ups (candidate plans 28+).** These are the scientific recommendations of
 `ablation/ABLATION_REPORT.md` §5, which this refactor left out by design (§2 non-goals):

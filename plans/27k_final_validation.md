@@ -172,3 +172,6 @@ D27k-3 follows from this. After it:
 - V1–V4 of the 27k cluster gate are identical to the new golden files;
 - GitHub's V2 results are identical;
 - G5's 1,058 `.loci` files are identical.
+
+On `776b1f9` every CI job passes, in both the push and
+the pull-request run (GitHub Actions runs 38891360192 and 38891365163).
