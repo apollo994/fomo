@@ -179,6 +179,7 @@ Every subplan ends by running the gates listed in its **Acceptance** section.
 | `targets/*/annotation/*.gff3`, `sources/*/annotation/*.gff3` | bytes |
 | `targets/*/alignment/*.bam` | `samtools view` records (no header) |
 | `targets/*/gffcompare/*.stats` | lines not starting with `#` (the header holds the command line) |
+| `targets/*/gffcompare/*.loci` | the entries of each column sorted: gffcompare orders tied entries by heap layout, which follows the filesystem's block size (D27k-3, user decision 2026-10-16) |
 | other `targets/*/gffcompare/*` | bytes |
 | `targets/*/curated/*.gff3.gz` | decompressed bytes |
 | `targets/*/curated/*.curation.tsv` | bytes |

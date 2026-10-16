@@ -7,6 +7,8 @@ Usage: snapshot.py OUTDIR [--info INFO.tsv] > snapshot.tsv
 Normalisation (a deliverable is compared on what it means, not on incidental bytes):
   *.bam                      samtools view records, no header (SAMTOOLS env var overrides the binary)
   gffcompare/*.stats         lines not starting with '#' (the header holds the command line)
+  gffcompare/*.loci          the entries of each column sorted: gffcompare orders tied entries by
+                             heap layout, which follows the filesystem's block size
   *.gff3.gz / *.gz           decompressed bytes
   *.curation.json            canonical JSON without params.gff / params.ref (staging paths)
   run_summary.json           canonical JSON
@@ -39,6 +41,14 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sorted_entries(data: bytes) -> bytes:
+    """Each line of a gffcompare .loci file with the comma-separated entries of every column sorted."""
+    return b''.join(
+        b'\t'.join(b','.join(sorted(col.split(b','))) for col in line.split(b'\t')) + b'\n'
+        for line in data.splitlines()
+    )
+
+
 def normalise(path: Path) -> tuple:
     name = path.name
     if name.endswith('.bam'):
@@ -48,6 +58,8 @@ def normalise(path: Path) -> tuple:
     if path.parent.name == 'gffcompare' and name.endswith('.stats'):
         lines = [ln for ln in path.read_bytes().splitlines(keepends=True) if not ln.startswith(b'#')]
         return 'no_comment_lines', digest(b''.join(lines))
+    if path.parent.name == 'gffcompare' and name.endswith('.loci'):
+        return 'sorted_entries', digest(sorted_entries(path.read_bytes()))
     if name.endswith('.curation.json'):
         doc = json.loads(path.read_text(encoding='utf-8'))
         for key in ('gff', 'ref'):

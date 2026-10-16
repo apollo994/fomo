@@ -137,3 +137,17 @@ rests on G5, which matched B0 in all 7,666 deliverables (27k B2).
 
 The two 27k deviations (D27k-1, D27k-2: how the plan diff and the clean checkout were made) are
 procedural, change no code and are valid by the same test.
+
+**D27k-3** (after the push, when CI ran on GitHub; it changes the gate, so it was escalated): the
+golden gate compares gffcompare `.loci` files with the entries of each column sorted. Class:
+correction. U1 holds: no published byte changes. The gate changed with the user's decision of
+2026-10-16, recorded in 27k and master §5. Evidence:
+- the same binary on the same inputs gives the golden order on NFS and another order on local
+  disk or tmpfs;
+- CI's files equal a local-disk rerun byte for byte;
+- re-snapshotting the original pre-refactor outputs changes only the `.loci` rows (V1–V4 and
+  B0);
+- the refactored outputs match the new golden files on the cluster (V1–V4, G5) and on GitHub
+  (V2).
+
+Verdict: valid.

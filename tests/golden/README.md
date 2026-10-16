@@ -5,7 +5,7 @@ sha256); `compare.py` diffs two snapshots. The rules are in plans/27_refactor.md
 
 | file | produced by |
 |:---|:---|
-| `V1.tsv` … `V4.tsv` | `run_variant.sh V1..V4` on the pre-refactor code (commit `c86521c`), run twice each: identical |
+| `V1.tsv` … `V4.tsv` | `run_variant.sh V1..V4` on the pre-refactor code (commit `c86521c`), run twice each: identical. The `.loci` rows were recomputed from the same outputs when their rule became `sorted_entries` |
 | `V*.info.tsv` | informational: row count and columns of every MultiQC data table |
 | `realdata_B0.tsv` | the 23 Lycaenidae `both` species (`realdata_B0.samplesheet.csv`), lncRNA + decoy |
 

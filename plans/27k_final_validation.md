@@ -109,6 +109,7 @@ Then **compare the working plan with the frozen original** and validate every de
 |:---|:---|:---|:---|:---|:---|
 | D27k-1 | D1 | `diff -ru plans/27_refactor_original/ plans/ --include` the `27*.md` files | `diff -u` per file, concatenated into `plan_diff.txt` | GNU diff has no `--include` ("unrecognized option '--include=27*.md'") | none |
 | D27k-2 | A1, A2 | gates on a clean checkout of `refactor` | the clean worktree is `67ccc93` (detached: `refactor` is checked out in the repository) plus the 27k fixes applied with `git apply`; `diff -r` against the working tree shows no difference but untracked tool state | D4 found work to finish (27z), and the gates must cover it; the 27k commit holds exactly that tree. G5 ran on `67ccc93` itself: of the fixes only `run_summary_tables.py` changes a code path, and it was rerun on G5's records (13/13 tables byte-identical) | none |
+| D27k-3 | after E2 (CI on GitHub) | §5: other gffcompare files are compared as bytes | `.loci` files are compared with the comma-separated entries of each column sorted (`snapshot.py` rule `sorted_entries`); the golden `.loci` rows of V1–V4 and `realdata_B0.tsv` were recomputed from the original pre-refactor outputs (`fomo_refactor/golden/V*/run{1,2}`, B0) with the new rule; only `.loci` rows changed | GitHub's golden V2 failed on two mRNA `.loci` files. The same gffcompare binary (both images: sha256 `d620f7a1…`) on the same inputs writes the golden order on NFS (65,536-byte blocks) and swaps two tied query entries of one locus on local disk or tmpfs (4,096-byte blocks); CI's files are byte-identical to a local-disk rerun; `.tracking` and `.stats` never change. User decision (2026-10-16): normalise in the gate, published files unchanged | none: U1 holds (no published byte changes); master §5 has the new row |
 
 ## Results
 
@@ -153,3 +154,21 @@ and D27e-4), all valid; the coverage audit found eight unfinished items in 27a, 
 27i, finished here, each noted in its subplan's Results.
 
 **E.** Master §11 written; `dev/plans_index.py` rerun.
+
+**After the push (2026-10-16), CI on GitHub.** Lint, pytest, the nf-test stub matrix (Docker) and
+golden V1, V3 and V4 passed at once. Golden V2 failed on two `.loci` files
+(`Lycaena_alciphron_282377.from_{Lycaena_thersamon_265360,allModels_raw}.mRNA.gffcompare.loci`):
+one line of 804 in each, locus `XLOC_000201`, two query transcripts in swapped order.
+- **Not the build or the image:** the gffcompare binary is identical in the Galaxy-depot
+  Singularity image and the quay.io Docker image.
+- **Not the directory:** rerunning the task from directories of 65–100 characters on NFS
+  always gives the golden bytes.
+- **The filesystem:** the same run on node-local disk or `/dev/shm` (4,096-byte blocks, NFS has
+  65,536) gives CI's bytes exactly.
+- `ci.yml` now uploads the snapshot and the deliverables of a failing golden variant, which is
+  how CI's files were obtained.
+
+D27k-3 follows from this. After it:
+- V1–V4 of the 27k cluster gate are identical to the new golden files;
+- GitHub's V2 results are identical;
+- G5's 1,058 `.loci` files are identical.
