@@ -6,7 +6,8 @@ Part of [27_refactor.md](27_refactor.md); written in [27k](27k_final_validation.
 
 ## Method
 
-- **D1.** `diff -u` of every `plans/27_refactor_original/27*.md` against the working copy, saved to
+- **D1.** `diff -u` of every `plans/27_refactor_original/27*.md` (now only in git: the plans at
+  commit [`c86521c`](https://github.com/apollo994/fomo/tree/c86521c95fb1e1d86eea351cc9e08dd3c4db9ac6/plans/)) against the working copy, saved to
   `/nfs/scratch01/rg/fzanarello/fomo_refactor/plan_diff.txt` (1,697 lines, 65 hunks). (`diff -ru
   --include` does not exist in GNU diff, so the files are diffed one by one.)
 - **D2.** Every hunk is classified as bookkeeping (status, checkboxes, Results, status log), a
