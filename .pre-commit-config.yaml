@@ -1,6 +1,6 @@
 # Local hooks only: the tools come from dev/environment.yml (conda env fomo-dev), so the hooks run
 # offline and with the same versions as CI.
-exclude: '^(assets/test_data/|ablation/|plans/27_refactor_original/|tests/.*/fixtures/|tests/golden/.*\.tsv$|bin/gff-feature-stats$)'
+exclude: '^(assets/test_data/|tests/.*/fixtures/|tests/golden/.*\.tsv$|bin/gff-feature-stats$)'
 repos:
   - repo: local
     hooks:

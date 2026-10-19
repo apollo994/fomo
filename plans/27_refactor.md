@@ -2,6 +2,10 @@
 
 ## Status: done (2026-10-16)
 
+> After the refactor, `ablation/` and the frozen copy `plans/27_refactor_original/` were removed
+> from the tree. They remain at commit `dda0535` ([ablation/](https://github.com/apollo994/fomo/blob/dda0535bb62f10be53291d9a320efa46af20234c/ablation/)) and commit `c86521c`
+> ([the plan as first approved](https://github.com/apollo994/fomo/tree/c86521c95fb1e1d86eea351cc9e08dd3c4db9ac6/plans/)); the paths below name them as they were.
+
 ## How to run it
 
 Trigger the whole implementation with this single prompt:
@@ -18,7 +22,7 @@ change, change the plan first.
 
 ## 1. Why
 
-The code review ([`ablation/CODE_REVIEW.md`](../ablation/CODE_REVIEW.md), 2026-10-15) found three
+The code review ([`ablation/CODE_REVIEW.md`](https://github.com/apollo994/fomo/blob/dda0535bb62f10be53291d9a320efa46af20234c/ablation/CODE_REVIEW.md), 2026-10-15) found three
 root causes behind most of the maintenance cost.
 
 1. **Identity is carried in strings and recovered by parsing.**
@@ -67,7 +71,7 @@ lines, four saying what a record "measured" and one docstring saying the gffcomp
 **Non-goals:**
 
 - **No scientific behaviour changes.** The curation rule, donor selection, TD2 thresholds,
-  `splice:hq` and the mRNA coding mask recommended in `ablation/ABLATION_REPORT.md` are future
+  `splice:hq` and the mRNA coding mask recommended in [`ablation/ABLATION_REPORT.md`](https://github.com/apollo994/fomo/blob/dda0535bb62f10be53291d9a320efa46af20234c/ablation/ABLATION_REPORT.md) are future
   plans.
 - No new container images (U6).
 - No change to the published directory layout or deliverable file names. The only exception is
@@ -432,7 +436,7 @@ Still unverified: Docker on arm64 hosts (the `linux/amd64` pin), since GitHub's 
 x86-64.
 
 **Follow-ups (candidate plans 28+).** These are the scientific recommendations of
-`ablation/ABLATION_REPORT.md` §5, which this refactor left out by design (§2 non-goals):
+[`ablation/ABLATION_REPORT.md`](https://github.com/apollo994/fomo/blob/dda0535bb62f10be53291d9a320efa46af20234c/ablation/ABLATION_REPORT.md) §5, which this refactor left out by design (§2 non-goals):
 1. **An adaptive donor set:** rank donors by median `de` and curate over the nearest N, with all
    donors as the fallback. Also publish the nearest donor's projection as a high-recall
    companion.

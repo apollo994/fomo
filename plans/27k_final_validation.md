@@ -91,7 +91,7 @@ Then **compare the working plan with the frozen original** and validate every de
   - the deviation summary (counts by class, all valid);
   - what CI could not verify;
   - follow-ups. These include the scientific recommendations from
-    `ablation/ABLATION_REPORT.md` (adaptive donor set, per-track thresholds, mRNA coding mask,
+    [`ablation/ABLATION_REPORT.md`](https://github.com/apollo994/fomo/blob/dda0535bb62f10be53291d9a320efa46af20234c/ablation/ABLATION_REPORT.md) (adaptive donor set, per-track thresholds, mRNA coding mask,
     `splice:hq` option, decoy FDR estimator) as candidate plans 28+.
 - [x] **E2. Final commit:** `refactor(27k): final validation and plan comparison`. Set the master
   status to `done (YYYY-MM-DD)`. Do not push; tell the user the branch is ready for review.
